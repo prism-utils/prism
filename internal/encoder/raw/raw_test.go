@@ -11,8 +11,8 @@ import (
 
 func TestEncode_NewlineDelimits(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0) // the encoder owns and releases its input's buffers
 	in := data.NewLinesBatch(mem, "s", [][]byte{[]byte("x"), []byte("y"), []byte("z")})
-	defer in.Release()
 
 	block, err := encoder{}.Encode(context.Background(), in)
 	if err != nil {
