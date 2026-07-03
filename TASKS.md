@@ -20,40 +20,40 @@ template → buffer → {parquet→file, summary→json→file}`). No ML, no scr
       `output/stdout`, `output/file` (append), `components.Default()`, `cmd/prism`
 
 ## Ordered build (each = one spec + PR)
-1. [ ] **config-multipipeline** — koanf YAML + `${ENV}`; reshape config to
+1. [x] **config-multipipeline** — koanf YAML + `${ENV}`; reshape config to
        `pipelines: []` with `input/parser/processors/buffer/branches`; total
        `Validate()` with path-named errors.
-2. [ ] **data-arrow** — swap `RecordBatch` internals to Apache Arrow
+2. [x] **data-arrow** — swap `RecordBatch` internals to Apache Arrow
        (`apache/arrow-go/v18`): schema + column arrays + allocator; linear
        ownership; allocator-balance assertion helper.
-3. [ ] **runtime-multiworker** — per-input worker pipelines under a parent
+3. [x] **runtime-multiworker** — per-input worker pipelines under a parent
        errgroup; per-stage bounded channels; fan-out branches (each branch owns
        its batch); failure policy (`drop | block`); per-pipeline isolation;
        goleak + backpressure tests.
-4. [ ] **buffer-window** — accumulation buffer flushing on first of
+4. [x] **buffer-window** — accumulation buffer flushing on first of
        `max_age` (30s) / `max_rows` / `max_bytes` (12MiB); flush-on-drain.
 5. [ ] **input-file-tail** — `mode: tail` via `nxadm/tail` + rotation test +
        constant-memory streaming benchmark.
-6. [ ] **input-prometheus** — scrape `/metrics` exposition on an interval
+6. [x] **input-prometheus** — scrape `/metrics` exposition on an interval
        (`prometheus/common/expfmt`) → structured samples; target/interval config.
 7. [ ] **parsers** — `parser/json`, `parser/logfmt`, `parser/regex`,
        `parser/prometheus`; schema auto-discovery (infer+evolve, deterministic
        type precedence); fuzz (never panic; malformed → routed error).
 8. [ ] **processor-template** — log-template mining (lessence; Drain-style
        in-tree fallback); adds a `template` column; `enabled:false` = identity.
-9. [ ] **processor-summary** — windowed group-by aggregates
+9. [x] **processor-summary** — windowed group-by aggregates
        (`count/sum/avg/min/max/pXX`) over Arrow columns → aggregate `RecordBatch`.
-10. [ ] **encoders** — `encoder/parquet` (Arrow→Parquet, compression + row-group)
+10. [x] **encoders** — `encoder/parquet` (Arrow→Parquet, compression + row-group)
        with round-trip test; `encoder/json` (`[{…}]`) for summaries.
-11. [ ] **output-file-rotation** — size/time rotation + atomic rename; no partial
+11. [x] **output-file-rotation** — size/time rotation + atomic rename; no partial
        files visible.
-12. [ ] **assembly** — `components.Default()` registers the new built-ins;
+12. [x] **assembly** — `components.Default()` registers the new built-ins;
        `cmd/prism run/validate/version` drives multi-pipeline configs; `validate`
        rejects bad configs with a path-accurate message.
 13. [ ] **e2e-logging** — `file(tail) → logfmt → template → buffer →
        {parquet→file, summary→json→file}`; assert parquet reads back + summary
        JSON rows.
-14. [ ] **e2e-metrics** — `prometheus → buffer → {parquet→file,
+14. [x] **e2e-metrics** — `prometheus → buffer → {parquet→file,
        summary→json→file}` against a fake `/metrics` server; assert both sinks.
 15. [ ] **integration-packaging** — `make full-tests` green (compose/httptest);
        container runs non-root end-to-end.

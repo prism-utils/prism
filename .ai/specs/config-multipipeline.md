@@ -1,6 +1,6 @@
 # Spec: config — YAML + ${ENV} + multi-pipeline schema
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/config-multipipeline`
 - **Owner phase:** orchestrator → developer

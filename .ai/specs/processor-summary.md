@@ -1,6 +1,6 @@
 # Spec: processor/summary — windowed group-by aggregates
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/processor-summary`
 - **Owner phase:** orchestrator → developer

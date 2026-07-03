@@ -1,0 +1,31 @@
+# Metrics pipeline: scrape a Prometheus /metrics endpoint, then fan out to a
+# durable Parquet sink and a windowed JSON summary (for server-side SQL).
+#
+#   prism run -config configs/metrics.yaml
+#
+# Environment:
+#   PRISM_METRICS_URL  the /metrics endpoint to scrape (e.g. http://localhost:9100/metrics)
+#   PRISM_OUT          output root directory
+pipelines:
+  - name: metrics
+    input:
+      type: prometheus
+      options:
+        targets: ["${PRISM_METRICS_URL}"]
+        interval: "1s"
+    parser: { type: prometheus }
+    buffer:
+      max_age: "5s"
+      max_bytes: "12MiB"
+    branches:
+      - name: data
+        encoder: { type: parquet, options: { compression: snappy } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/metrics/data", prefix: "m-" } }
+      - name: summary
+        processors:
+          - type: summary
+            options:
+              group_by: ["__name__"]
+              aggregates: ["count", "sum:value", "avg:value", "max:value"]
+        encoder: { type: json }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/metrics/summary", prefix: "s-" } }

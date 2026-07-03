@@ -1,6 +1,6 @@
 # Spec: e2e — metrics path
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/e2e-metrics`
 - **Owner phase:** orchestrator → developer

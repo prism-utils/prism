@@ -1,6 +1,6 @@
 # Spec: assembly — Default() + cmd/prism for multi-pipeline
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/assembly-multipipeline`
 - **Owner phase:** orchestrator → developer
