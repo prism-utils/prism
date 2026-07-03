@@ -32,14 +32,32 @@ total and path-accurate.
 
 ## 4. Decision log
 
-- Loader library: **koanf/v2** (yaml + env providers, json struct tags).
-  - ref: https://github.com/knadh/koanf — layered providers, pure-Go, one struct.
+- Loader: koanf's **YAML parser** as a yaml→map shim, then `json.Marshal` the map
+  and `json.Decode` (DisallowUnknownFields) into the typed struct.
+  - ref: https://github.com/knadh/koanf — pure-Go yaml parser (honors the
+    DESIGN §13 dependency budget).
+  - ref: DESIGN.md §7 — "YAML parsed via a yaml→json shim so a single struct +
+    encoding/json serves both."
   - perf: load-time only; negligible; no hot-path cost.
-  - product: single source of truth for both encodings; no divergent code paths.
-- `${ENV}` interpolation at load: expand only in string leaves after decode.
-  - ref: https://pkg.go.dev/os#Expand — standard, predictable expansion.
+  - product: one code path for YAML and JSON (JSON is a subset of YAML); custom
+    `UnmarshalJSON` for Duration/ByteSize works; unknown keys rejected by the
+    json decoder.
+- `${ENV}` interpolation at load: expand `${VAR}` in the raw bytes before parse
+  via a precise regex (`\$\{[A-Za-z_][A-Za-z0-9_]*\}`); unset → empty (documented).
+  - ref: https://pkg.go.dev/os#Expand — standard expansion semantics.
   - perf: one pass at load; none at runtime.
   - product: secrets stay out of committed config (DESIGN §12).
+- Buffer defaults (30s / 12MiB) applied at load when all bounds are zero.
+  - ref: DESIGN.md §6.1 — documented defaults.
+  - perf: none.
+  - product: config is self-consistent; the buffer component trusts it.
+
+### Sequencing note (keeps `main` green)
+
+This slice is **additive**: it adds `config.Config`/`PipelineConfig`/`Branch`/
+`Buffer` + `LoadConfig` and leaves the existing linear `config.Pipeline`/`Load`
+untouched so `pipeline`/`cmd` keep compiling. The `runtime-multiworker` slice
+migrates callers to `config.Config` and removes the old linear type.
 
 ## 5. Acceptance checklist
 

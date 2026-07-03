@@ -56,8 +56,8 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 		{`"12MiB"`, 12 * mib, false},
 		{`"1KiB"`, kib, false},
 		{`"2GiB"`, 2 * gib, false},
-		{`"1000"`, 1000, false},   // plain bytes as string
-		{`4096`, 4096, false},     // plain bytes as number
+		{`"1000"`, 1000, false},     // plain bytes as string
+		{`4096`, 4096, false},       // plain bytes as number
 		{`"1MB"`, 1_000_000, false}, // decimal SI
 		{`"nope"`, 0, true},
 		{`"-5MiB"`, 0, true},
