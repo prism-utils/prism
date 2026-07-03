@@ -1,6 +1,6 @@
 # Spec: integration & packaging — full-tests + non-root container
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/integration-packaging`
 - **Owner phase:** orchestrator → developer

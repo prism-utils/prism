@@ -23,4 +23,4 @@ COPY --from=build /out/prism /usr/local/bin/prism
 # Config is mounted at /etc/prism/prism.yaml; secrets come from env (${VAR}).
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/prism"]
-CMD ["run", "-c", "/etc/prism/prism.yaml"]
+CMD ["run", "-config", "/etc/prism/prism.yaml"]
