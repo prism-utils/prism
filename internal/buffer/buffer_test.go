@@ -18,6 +18,15 @@ func lines(mem memory.Allocator, n int) data.RecordBatch {
 	return data.NewLinesBatch(mem, "s", rows)
 }
 
+func mustFlush(t *testing.T, acc *buffer.Accumulator) (data.RecordBatch, bool) {
+	t.Helper()
+	win, ok, err := acc.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	return win, ok
+}
+
 func TestAccumulator_FlushOnRows(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	acc := buffer.New(buffer.Config{MaxRows: 5}, mem)
@@ -29,15 +38,16 @@ func TestAccumulator_FlushOnRows(t *testing.T) {
 	if !acc.Add(lines(mem, 4), t0) {
 		t.Fatal("7 rows should trigger a flush (max 5)")
 	}
-	win, ok := acc.Flush()
+	win, ok := mustFlush(t, acc)
 	if !ok {
 		t.Fatal("Flush: expected a window")
 	}
-	defer win.Release()
 	if win.Len() != 7 {
+		win.Release()
 		t.Fatalf("window rows = %d, want 7", win.Len())
 	}
-	mem.AssertSize(t, int(mem.CurrentAlloc())) // sanity: no negative
+	win.Release()
+	mem.AssertSize(t, 0)
 }
 
 func TestAccumulator_FlushOnBytes(t *testing.T) {
@@ -47,7 +57,7 @@ func TestAccumulator_FlushOnBytes(t *testing.T) {
 	if !acc.Add(lines(mem, 1), time.Unix(0, 0)) {
 		t.Fatal("a non-empty batch should exceed a 1-byte cap")
 	}
-	win, ok := acc.Flush()
+	win, ok := mustFlush(t, acc)
 	if !ok {
 		t.Fatal("expected a window")
 	}
@@ -73,7 +83,7 @@ func TestAccumulator_AgeExceeded(t *testing.T) {
 	if !ok || !dl.Equal(t0.Add(30*time.Second)) {
 		t.Fatalf("deadline = %v ok=%v, want %v", dl, ok, t0.Add(30*time.Second))
 	}
-	win, _ := acc.Flush()
+	win, _ := mustFlush(t, acc)
 	win.Release()
 }
 
@@ -82,7 +92,7 @@ func TestAccumulator_FlushEmptyReturnsFalse(t *testing.T) {
 	defer mem.AssertSize(t, 0)
 	acc := buffer.New(buffer.Config{MaxRows: 10}, mem)
 
-	if _, ok := acc.Flush(); ok {
+	if _, ok := mustFlush(t, acc); ok {
 		t.Fatal("Flush on empty accumulator should return ok=false")
 	}
 	if _, ok := acc.Deadline(); ok {
@@ -97,8 +107,9 @@ func TestAccumulator_ConcatenatesAndBalances(t *testing.T) {
 	t0 := time.Unix(0, 0)
 	acc.Add(lines(mem, 2), t0)
 	acc.Add(lines(mem, 3), t0)
-	win, ok := acc.Flush()
+	win, ok := mustFlush(t, acc)
 	if !ok || win.Len() != 5 {
+		win.Release()
 		t.Fatalf("combined window rows = %d ok=%v, want 5", win.Len(), ok)
 	}
 	win.Release()
@@ -111,10 +122,10 @@ func TestAccumulator_ResetsAfterFlush(t *testing.T) {
 	acc := buffer.New(buffer.Config{MaxRows: 100}, mem)
 
 	acc.Add(lines(mem, 2), time.Unix(0, 0))
-	w1, _ := acc.Flush()
+	w1, _ := mustFlush(t, acc)
 	w1.Release()
 
-	if _, ok := acc.Flush(); ok {
+	if _, ok := mustFlush(t, acc); ok {
 		t.Fatal("second Flush should be empty after reset")
 	}
 }
