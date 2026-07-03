@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/apache/arrow-go/v18/arrow/array"
+
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
 )
@@ -43,10 +45,32 @@ func (encoder) Start(context.Context, component.Host) error { return nil }
 func (encoder) Shutdown(context.Context) error              { return nil }
 
 func (encoder) Encode(_ context.Context, in data.RecordBatch) (data.EncodedBlock, error) {
-	var buf bytes.Buffer
-	for _, rec := range in.Records {
-		buf.Write(rec)
-		buf.WriteByte('\n')
+	rec := in.Record()
+	if rec == nil || rec.NumRows() == 0 {
+		return data.EncodedBlock{Format: Type, Rows: 0}, nil
 	}
-	return data.EncodedBlock{Format: Type, Bytes: buf.Bytes(), Rows: in.Len()}, nil
+	if rec.NumCols() == 0 {
+		return data.EncodedBlock{}, fmt.Errorf("encoder/raw: record has no columns")
+	}
+
+	var buf bytes.Buffer
+	switch col := rec.Column(0).(type) {
+	case *array.Binary:
+		for i := 0; i < col.Len(); i++ {
+			if !col.IsNull(i) {
+				buf.Write(col.Value(i))
+			}
+			buf.WriteByte('\n')
+		}
+	case *array.String:
+		for i := 0; i < col.Len(); i++ {
+			if !col.IsNull(i) {
+				buf.WriteString(col.Value(i))
+			}
+			buf.WriteByte('\n')
+		}
+	default:
+		return data.EncodedBlock{}, fmt.Errorf("encoder/raw: first column is %s, want binary or string", rec.Column(0).DataType())
+	}
+	return data.EncodedBlock{Format: Type, Bytes: buf.Bytes(), Rows: int(rec.NumRows())}, nil
 }
