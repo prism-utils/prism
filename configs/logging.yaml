@@ -1,0 +1,33 @@
+# Logging pipeline: tail a logfmt file, mine a stable template per line, then
+# fan out to a durable Parquet sink and a per-level JSON count summary.
+#
+#   prism run -config configs/logging.yaml
+#
+# Environment:
+#   PRISM_LOG   the log file to tail (logfmt lines)
+#   PRISM_OUT   output root directory
+pipelines:
+  - name: logs
+    input:
+      type: file
+      options:
+        path: "${PRISM_LOG}"
+        mode: tail
+        batch_size: 500
+    parser: { type: logfmt }
+    processors:
+      - type: template
+        options: { source: msg, target: template }
+    buffer:
+      max_age: "2s"
+      max_bytes: "12MiB"
+    branches:
+      - name: data
+        encoder: { type: parquet, options: { compression: snappy } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/logs/data", prefix: "l-" } }
+      - name: summary
+        processors:
+          - type: summary
+            options: { group_by: ["level"], aggregates: ["count"] }
+        encoder: { type: json }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/logs/summary", prefix: "s-" } }

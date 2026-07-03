@@ -1,6 +1,6 @@
 # Spec: input/file — tail mode
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/input-file-tail`
 - **Owner phase:** orchestrator → developer

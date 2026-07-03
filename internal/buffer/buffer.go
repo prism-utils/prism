@@ -10,6 +10,7 @@ package buffer
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -123,41 +124,140 @@ func (a *Accumulator) reset() {
 	a.hasData = false
 }
 
-// concat merges same-schema batches column-by-column into one RecordBatch.
+// concat merges batches into one RecordBatch over the union of their columns.
+// Real logs are heterogeneous: a key present in one line may be absent in the
+// next, or typed differently. Rather than fail, concat aligns to a union schema
+// (first-seen column order): a column absent from a batch contributes nulls,
+// and a column whose type differs across batches is widened to string. Only
+// same-typed windows stay narrow.
 func concat(mem memory.Allocator, batches []data.RecordBatch) (data.RecordBatch, error) {
-	first := batches[0].Record()
-	if first == nil {
-		return data.RecordBatch{}, fmt.Errorf("buffer: concat: first batch has no record")
+	recs := make([]arrow.RecordBatch, 0, len(batches))
+	for _, b := range batches {
+		if rec := b.Record(); rec != nil {
+			recs = append(recs, rec)
+		}
 	}
-	schema := first.Schema()
-	ncols := int(first.NumCols())
+	if len(recs) == 0 {
+		return data.RecordBatch{}, fmt.Errorf("buffer: concat: no records to merge")
+	}
 
-	cols := make([]arrow.Array, ncols)
+	order, types := unionSchema(recs)
+	fields := make([]arrow.Field, len(order))
+	for i, name := range order {
+		fields[i] = arrow.Field{Name: name, Type: types[name], Nullable: true}
+	}
+
+	cols := make([]arrow.Array, len(order))
+	built := 0
 	var total int64
-	for c := 0; c < ncols; c++ {
-		parts := make([]arrow.Array, 0, len(batches))
-		for _, b := range batches {
-			rec := b.Record()
-			if rec == nil {
-				continue
+	for _, rec := range recs {
+		total += rec.NumRows()
+	}
+	for ci, name := range order {
+		target := types[name]
+		parts := make([]arrow.Array, 0, len(recs))
+		temps := make([]arrow.Array, 0, len(recs))
+		for _, rec := range recs {
+			part, owned, err := alignColumn(mem, rec, name, target)
+			if err != nil {
+				releaseArrays(temps)
+				releaseArrays(cols[:built])
+				return data.RecordBatch{}, err
 			}
-			if !rec.Schema().Equal(schema) {
-				releaseArrays(cols[:c])
-				return data.RecordBatch{}, fmt.Errorf("buffer: concat: mismatched schema across window batches")
+			parts = append(parts, part)
+			if owned {
+				temps = append(temps, part)
 			}
-			parts = append(parts, rec.Column(c))
 		}
 		merged, err := array.Concatenate(parts, mem)
+		releaseArrays(temps)
 		if err != nil {
-			releaseArrays(cols[:c])
-			return data.RecordBatch{}, fmt.Errorf("buffer: concat column %d: %w", c, err)
+			releaseArrays(cols[:built])
+			return data.RecordBatch{}, fmt.Errorf("buffer: concat column %q: %w", name, err)
 		}
-		cols[c] = merged
-		total = int64(merged.Len())
+		cols[ci] = merged
+		built++
 	}
-	rec := array.NewRecordBatch(schema, cols, total)
+
+	rec := array.NewRecordBatch(arrow.NewSchema(fields, nil), cols, total)
 	releaseArrays(cols) // NewRecordBatch retained them
 	return data.NewRecordBatch(batches[0].Source, rec), nil
+}
+
+// unionSchema returns the union column names in first-seen order and the
+// resolved type per column (string when types conflict across batches).
+func unionSchema(recs []arrow.RecordBatch) ([]string, map[string]arrow.DataType) {
+	var order []string
+	types := map[string]arrow.DataType{}
+	conflict := map[string]bool{}
+	for _, rec := range recs {
+		for _, f := range rec.Schema().Fields() {
+			if _, seen := types[f.Name]; !seen {
+				types[f.Name] = f.Type
+				order = append(order, f.Name)
+				continue
+			}
+			if !conflict[f.Name] && !arrow.TypeEqual(types[f.Name], f.Type) {
+				conflict[f.Name] = true
+			}
+		}
+	}
+	for name := range conflict {
+		types[name] = arrow.BinaryTypes.String
+	}
+	return order, types
+}
+
+// alignColumn returns rec's column `name` coerced to target. owned reports
+// whether the returned array was freshly built (and must be released by the
+// caller after concatenation); a borrowed source column must not be released.
+func alignColumn(mem memory.Allocator, rec arrow.RecordBatch, name string, target arrow.DataType) (arr arrow.Array, owned bool, err error) {
+	idx := rec.Schema().FieldIndices(name)
+	if len(idx) == 0 {
+		a, err := nullArray(mem, target, int(rec.NumRows()))
+		return a, true, err
+	}
+	col := rec.Column(idx[0])
+	if arrow.TypeEqual(col.DataType(), target) {
+		return col, false, nil
+	}
+	a, err := castToString(mem, col)
+	return a, true, err
+}
+
+// nullArray builds an all-null array of the given type and length.
+func nullArray(mem memory.Allocator, dt arrow.DataType, n int) (arrow.Array, error) {
+	b := array.NewBuilder(mem, dt)
+	defer b.Release()
+	b.AppendNulls(n)
+	return b.NewArray(), nil
+}
+
+// castToString renders any supported array as a string array (nulls preserved).
+func castToString(mem memory.Allocator, col arrow.Array) (arrow.Array, error) {
+	b := array.NewStringBuilder(mem)
+	defer b.Release()
+	for i := 0; i < col.Len(); i++ {
+		if col.IsNull(i) {
+			b.AppendNull()
+			continue
+		}
+		switch a := col.(type) {
+		case *array.String:
+			b.Append(a.Value(i))
+		case *array.Binary:
+			b.Append(string(a.Value(i)))
+		case *array.Int64:
+			b.Append(strconv.FormatInt(a.Value(i), 10))
+		case *array.Float64:
+			b.Append(strconv.FormatFloat(a.Value(i), 'g', -1, 64))
+		case *array.Boolean:
+			b.Append(strconv.FormatBool(a.Value(i)))
+		default:
+			return nil, fmt.Errorf("buffer: cannot widen %s to string", col.DataType())
+		}
+	}
+	return b.NewArray(), nil
 }
 
 func releaseArrays(arrs []arrow.Array) {
