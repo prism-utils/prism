@@ -8,12 +8,18 @@ import (
 	"fmt"
 
 	"github.com/elk-utilities/prism/internal/component"
+	encoderjson "github.com/elk-utilities/prism/internal/encoder/json"
+	encoderparquet "github.com/elk-utilities/prism/internal/encoder/parquet"
 	encoderraw "github.com/elk-utilities/prism/internal/encoder/raw"
 	inputfile "github.com/elk-utilities/prism/internal/input/file"
+	inputprom "github.com/elk-utilities/prism/internal/input/prometheus"
 	"github.com/elk-utilities/prism/internal/input/stdin"
+	outputdir "github.com/elk-utilities/prism/internal/output/dir"
 	outputfile "github.com/elk-utilities/prism/internal/output/file"
 	"github.com/elk-utilities/prism/internal/output/stdout"
+	parserprom "github.com/elk-utilities/prism/internal/parser/prometheus"
 	parserraw "github.com/elk-utilities/prism/internal/parser/raw"
+	procsummary "github.com/elk-utilities/prism/internal/processor/summary"
 )
 
 // Default returns a Registry populated with every built-in component. Adding a
@@ -21,23 +27,23 @@ import (
 func Default() (*component.Registry, error) {
 	reg := component.NewRegistry()
 
-	if err := reg.RegisterInput(stdin.NewFactory()); err != nil {
-		return nil, fmt.Errorf("components: %w", err)
-	}
-	if err := reg.RegisterInput(inputfile.NewFactory()); err != nil {
-		return nil, fmt.Errorf("components: %w", err)
-	}
-	if err := reg.RegisterParser(parserraw.NewFactory()); err != nil {
-		return nil, fmt.Errorf("components: %w", err)
-	}
-	if err := reg.RegisterEncoder(encoderraw.NewFactory()); err != nil {
-		return nil, fmt.Errorf("components: %w", err)
-	}
-	if err := reg.RegisterOutput(stdout.NewFactory()); err != nil {
-		return nil, fmt.Errorf("components: %w", err)
-	}
-	if err := reg.RegisterOutput(outputfile.NewFactory()); err != nil {
-		return nil, fmt.Errorf("components: %w", err)
+	for _, err := range []error{
+		reg.RegisterInput(stdin.NewFactory()),
+		reg.RegisterInput(inputfile.NewFactory()),
+		reg.RegisterInput(inputprom.NewFactory()),
+		reg.RegisterParser(parserraw.NewFactory()),
+		reg.RegisterParser(parserprom.NewFactory()),
+		reg.RegisterProcessor(procsummary.NewFactory()),
+		reg.RegisterEncoder(encoderraw.NewFactory()),
+		reg.RegisterEncoder(encoderjson.NewFactory()),
+		reg.RegisterEncoder(encoderparquet.NewFactory()),
+		reg.RegisterOutput(stdout.NewFactory()),
+		reg.RegisterOutput(outputfile.NewFactory()),
+		reg.RegisterOutput(outputdir.NewFactory()),
+	} {
+		if err != nil {
+			return nil, fmt.Errorf("components: %w", err)
+		}
 	}
 
 	return reg, nil

@@ -1,6 +1,6 @@
 # Spec: data — Arrow-backed RecordBatch
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/data-arrow`
 - **Owner phase:** orchestrator → developer

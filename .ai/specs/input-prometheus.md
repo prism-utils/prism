@@ -1,6 +1,6 @@
 # Spec: input/prometheus — scrape
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/input-prometheus`
 - **Owner phase:** orchestrator → developer

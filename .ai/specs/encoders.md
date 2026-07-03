@@ -1,6 +1,6 @@
 # Spec: encoders — parquet + json
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/encoders`
 - **Owner phase:** orchestrator → developer

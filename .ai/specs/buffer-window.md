@@ -1,6 +1,6 @@
 # Spec: buffer — accumulation / windowing
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/buffer-window`
 - **Owner phase:** orchestrator → developer

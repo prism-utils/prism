@@ -1,6 +1,6 @@
 # Spec: output/file — rotation + atomic rename
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/output-file-rotation`
 - **Owner phase:** orchestrator → developer
