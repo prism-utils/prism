@@ -1,0 +1,41 @@
+# systemd unit for running prism on Linux bare metal.
+# Install: copy the binary to /usr/local/bin, this file to
+# /etc/systemd/system/prism.service, config to /etc/prism/prism.yaml, then
+#   systemctl daemon-reload && systemctl enable --now prism
+#
+# Secrets are provided via an environment file (never in the config on disk);
+# the config references them as ${VAR}.
+
+[Unit]
+Description=prism edge collector
+Documentation=https://github.com/elk-utilities/prism
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/prism run -c /etc/prism/prism.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Run unprivileged.
+DynamicUser=yes
+EnvironmentFile=-/etc/prism/prism.env
+
+# Hardening (prism only needs to read its inputs and reach its output).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Grant read access to the log directory prism tails; adjust to your inputs.
+ReadOnlyPaths=/var/log
+# If the file output writes locally, grant exactly that path:
+# ReadWritePaths=/var/lib/prism
+
+[Install]
+WantedBy=multi-user.target

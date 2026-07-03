@@ -1,0 +1,21 @@
+# Build output
+/bin/
+/dist/
+prism
+*.exe
+
+# Go
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Local artifacts produced by the file/parquet outputs during manual runs
+*.parquet
+/tmp/
+/testdata/tmp/
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp

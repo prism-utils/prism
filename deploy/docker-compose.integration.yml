@@ -1,0 +1,37 @@
+# Integration dependencies for `make integration` / `make full-tests`.
+# These stand in for the real sinks a prism output talks to, so integration
+# tests exercise actual network/transport behavior (see docs/TESTING.md §5).
+#
+# Kept intentionally tiny: an HTTP sink for the `http` output and a MinIO
+# S3-compatible endpoint for object-store-style upload tests. Add services here
+# as new outputs land (e.g. a ClickHouse for a future ClickHouse output).
+
+services:
+  # Records uploaded bodies so tests can assert what the http output sent.
+  http-sink:
+    image: ghcr.io/mendhak/http-https-echo:37
+    environment:
+      HTTP_PORT: "8080"
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  # S3-compatible object store for Parquet upload/round-trip tests.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: prism
+      MINIO_ROOT_PASSWORD: prismprism
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 2s
+      retries: 10

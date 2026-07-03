@@ -1,0 +1,6 @@
+{
+  "input":  { "type": "stdin",  "options": { "batch_size": 100 } },
+  "parser": { "type": "raw" },
+  "encoder": { "type": "raw" },
+  "output": { "type": "stdout" }
+}

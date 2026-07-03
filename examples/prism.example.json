@@ -1,0 +1,37 @@
+{
+  "input": {
+    "type": "file",
+    "options": { "path": "/var/log/app.log", "mode": "tail" }
+  },
+  "parser": {
+    "type": "logfmt",
+    "options": { "autodiscover_fields": true }
+  },
+  "processors": [
+    {
+      "type": "summary",
+      "options": { "window": "30s", "group_by": ["level", "service"], "aggregates": ["count", "p95(latency)"] }
+    },
+    {
+      "type": "ml",
+      "options": { "enabled": true, "detector": "anomaly", "sensitivity": 0.95 }
+    },
+    {
+      "type": "script",
+      "options": { "engine": "starlark", "source_file": "enrich.star" }
+    }
+  ],
+  "encoder": {
+    "type": "parquet",
+    "options": { "compression": "zstd", "row_group_rows": 50000 }
+  },
+  "output": {
+    "type": "http",
+    "options": {
+      "url": "https://sink.example/ingest",
+      "method": "POST",
+      "headers": { "Authorization": "Bearer ${PRISM_TOKEN}" },
+      "retry": { "max_attempts": 5, "backoff": "exponential" }
+    }
+  }
+}

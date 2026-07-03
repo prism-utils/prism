@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast gate on every PR: lint + unit/golden tests with the race detector.
+  fast:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: tidy check
+        run: make tidy
+      - name: lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+      - name: test
+        run: make test
+
+  # Merge-blocking gate: brings up docker-compose deps and runs integration+e2e.
+  full:
+    runs-on: ubuntu-24.04
+    needs: fast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: integration + e2e
+        run: |
+          make integration
+          make e2e

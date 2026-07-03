@@ -1,0 +1,51 @@
+# golangci-lint v2 configuration for prism.
+# Rationale for the enabled set lives in CONTRIBUTING.md ("Static analysis").
+# Keep this strict from day one — it is far cheaper to relax a linter than to
+# retrofit one onto a large codebase.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck        # never silently drop an error
+    - govet
+    - staticcheck     # (subsumes gosimple + stylecheck in v2)
+    - ineffassign
+    - unused
+    - gocritic
+    - revive          # style / exported-doc discipline
+    - gosec           # security smells (we read files + do HTTP)
+    - bodyclose       # HTTP response bodies must be closed (output/http)
+    - contextcheck    # context must be plumbed, not dropped
+    - errorlint       # use errors.Is/As + %w
+    - copyloopvar     # loop-var capture correctness
+    - misspell
+    - unconvert
+    - wastedassign
+    - nilerr
+    - noctx           # no HTTP requests without a context
+    - prealloc        # slice preallocation where it matters for memory
+  settings:
+    revive:
+      rules:
+        # Require docs on genuinely exported API; do not force boilerplate docs
+        # on interface-satisfying methods of unexported factory/component types.
+        - name: exported
+          arguments: ["disableStutteringCheck"]
+    gocritic:
+      enabled-tags: [diagnostic, performance]
+    gosec:
+      excludes:
+        - G304 # file path from config is expected for a file input/output agent
+  exclusions:
+    rules:
+      # Test files may allocate freely and skip some doc/style rules.
+      - path: _test\.go
+        linters: [gosec, prealloc, revive]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
