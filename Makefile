@@ -29,7 +29,7 @@ build: ## Build the static binary into ./bin/prism
 
 .PHONY: test
 test: ## Fast tests: unit + golden + fuzz seeds, with the race detector
-	go test $(GOFLAGS) -race ./...
+	CGO_ENABLED=1 go test $(GOFLAGS) -race ./...
 
 .PHONY: lint
 lint: ## Run golangci-lint (config in .golangci.yml)
