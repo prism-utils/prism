@@ -99,6 +99,22 @@ These are the patterns DESIGN.md relies on. Deviating breaks extensibility.
 - No log spam on the hot path (per-record logging is banned; aggregate + sample).
 - Emit the internal counters DESIGN.md §10 lists for anything you add.
 
+### 3.8 Comments are atomic
+A comment must be understandable **on its own** and stay true even as the rest
+of the codebase moves. Therefore:
+- **Never reference another code location** from a comment — no other file,
+  package, type, function, or line number ("see `pipeline.go`", "like
+  `fooBar()` above", "mirrors the parser"). Such references rot silently the
+  moment the referenced code is renamed, moved, or deleted.
+- Describe the **intent, constraint, or trade-off of the code the comment sits
+  on** — not what some other code does.
+- If two pieces of code must agree, enforce it with a **test or a compile-time
+  assertion**, not a prose comment pointing between them.
+- Referencing a durable design **doc by name** (e.g. `docs/DESIGN.md`) is
+  allowed for rationale, but prefer a short local explanation; do not scatter
+  volatile pointers.
+- Do not narrate the obvious (banned examples in the intro of this file).
+
 ---
 
 ## 4. Static analysis
@@ -127,6 +143,8 @@ suppress, use an inline `//nolint:<linter> // reason` with a real reason — a b
 - ❌ A component importing `pipeline` or another component. (Import cycle / leak.)
 - ❌ Adding a CGO dependency or anything that breaks cross-compilation.
 - ❌ Hidden behavior toggles read from env at random call sites. Config only.
+- ❌ Comments that reference other code locations (files/symbols/line numbers).
+  Comments must be atomic (§3.8) — enforce cross-file agreement with a test.
 - ❌ Landing code that makes DESIGN.md wrong without updating DESIGN.md.
 
 ---

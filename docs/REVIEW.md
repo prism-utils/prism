@@ -10,6 +10,28 @@
 
 ---
 
+## Mandatory gates (these four block `ALL_OK`)
+
+Every task's spec carries these as checkboxes. The reviewer **unchecks** any
+that fail (with a one-line reason) and only signs `ALL_OK` when all four — plus
+the full checklist below — hold. Their definitions live in the linked docs so
+they are never restated:
+
+1. **Follows the guidelines** — the change obeys
+   [`CONTRIBUTING.md`](../CONTRIBUTING.md) (patterns + anti-patterns) and
+   [`DESIGN.md`](DESIGN.md) (architecture, data flow, layout).
+2. **Tests cover edge cases** — per [`TESTING.md`](TESTING.md): failure paths,
+   boundaries, empty/oversized inputs, cancellation, and `Validate()`
+   rejection — not just the happy path.
+3. **Docs & comments match the task and the delivered code** — the task
+   description, `DESIGN.md`/`PLAN.md`, doc comments, and the actual behavior
+   agree. No drift.
+4. **Comments are atomic** — no comment references another code location
+   (file/package/symbol/line); see [`CONTRIBUTING.md`](../CONTRIBUTING.md) §3.8.
+   Cross-file agreement is enforced by tests, not prose.
+
+---
+
 ## How to review (order of operations)
 
 1. **Read the PR description + the phase in [`PLAN.md`](PLAN.md)** it claims to
@@ -75,10 +97,12 @@
       versions); `make tidy` clean.
 - [ ] CGO_ENABLED=0 build still works; cross-compile not broken.
 
-**Observability & docs**
+**Observability & docs (mandatory gates 3 & 4)**
 - [ ] slog only (no fmt.Println/log.*); no per-record logging on hot path.
 - [ ] New counters emitted per DESIGN.md §10 where relevant.
+- [ ] Docs & comments match the task description AND the delivered code (gate 3).
 - [ ] DESIGN.md / PLAN.md updated if behavior or topology changed.
+- [ ] Comments are ATOMIC — none reference another code location (gate 4, §3.8).
 
 **Verdict**
 - [ ] APPROVE  /  [ ] REQUEST CHANGES  — with specific, actionable reasons.

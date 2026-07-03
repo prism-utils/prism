@@ -54,6 +54,14 @@ Read these, in order:
 4. [`docs/TESTING.md`](docs/TESTING.md) — test layers and how to run them.
 5. [`docs/REVIEW.md`](docs/REVIEW.md) — the reviewer checklist.
 
+### Working with agents
+
+`prism` ships an orchestrator → developer → reviewer agent loop. Start at
+[`AGENTS.md`](AGENTS.md); the process lives in
+[`.ai/workflows/feature-loop.md`](.ai/workflows/feature-loop.md). Every task
+begins from `main` in a fresh worktree, is specified in `.ai/specs/<slug>.md`,
+and finishes only when the reviewer signs `ALL_OK` and it merges.
+
 ## Quickstart (target UX — not all wired yet)
 
 ```bash
