@@ -11,6 +11,26 @@ Legend: each phase lists **Deliverables**, **Tests written first**, and
 
 ---
 
+## Revision 2026-07 — target: working metrics + logging e2e
+
+The build is re-scoped toward two concrete end-to-end paths (see
+[`DESIGN.md`](DESIGN.md) §1 "In scope"). Deltas vs. the original phases below:
+
+- **Topology change:** config is now a **list of pipelines**, each running in
+  its **own worker** (one worker per input); each pipeline **fans out** after an
+  **accumulation buffer** into a `data` branch (→parquet→file) and a `summary`
+  branch (→json→file). `DESIGN.md` §6/§6.1/§7 are authoritative.
+- **Prometheus scrape input** is pulled from "Deferred" into scope (Phase 3).
+- **`summary`** emits aggregate rows encoded as **JSON** (`[{…}]`); prism embeds
+  **no SQL** (storage/query is server-side).
+- **`template`** = log-template mining (lessence, Drain-style fallback).
+- **Dropped from this cut:** `ml` (Phase 6) and the entire scripted processor
+  (Phase 7) — deferred, additive later via the registry.
+- Each item is tracked as a spec under `.ai/specs/` and driven through the loop
+  individually; [`../TASKS.md`](../TASKS.md) is the ordered tracker.
+
+---
+
 ## Phase 0 — Foundation & tooling  *(this repo, mostly done)*
 
 **Deliverables**
@@ -182,6 +202,8 @@ non-root and processes a sample end-to-end; `validate` catches bad configs.
   in the same PR.
 
 ## Deferred (post-foundation, registry makes them additive)
-- Outputs: `sqlite` cache, S3-native, ClickHouse. - Config hot-reload.
-- Dead-letter queue. - Metrics input (Prometheus scrape) + OTLP receiver.
-- Multi-pipeline (fan-out to >1 output) in a single process.
+- Processors: `ml` (anomaly/aggregate detection) and `script`
+  (Starlark/expr/wazero) — out of this cut, additive later.
+- Outputs: `sqlite` cache, S3-native, ClickHouse, `http` on the critical path.
+- Config hot-reload. - Dead-letter queue failure policy. - OTLP receiver.
+- Prometheus `remote_write` receiver (this cut does scrape/pull only).
