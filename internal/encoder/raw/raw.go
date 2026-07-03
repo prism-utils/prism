@@ -45,6 +45,7 @@ func (encoder) Start(context.Context, component.Host) error { return nil }
 func (encoder) Shutdown(context.Context) error              { return nil }
 
 func (encoder) Encode(_ context.Context, in data.RecordBatch) (data.EncodedBlock, error) {
+	defer in.Release() // encoders own their input's buffers (component.Encoder)
 	rec := in.Record()
 	if rec == nil || rec.NumRows() == 0 {
 		return data.EncodedBlock{Format: Type, Rows: 0}, nil
