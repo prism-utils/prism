@@ -10,8 +10,11 @@
 ## 1. Goals and non-goals
 
 ### Goals
-- **Config-driven pipeline**: `input → processors → output`, declared in
-  YAML/JSON, no recompilation to change topology.
+- **Config-driven pipelines**: a config declares a **list of pipelines**, each
+  `input → parser → processors → buffer → fan-out branches (encoder → output)`,
+  in YAML/JSON, no recompilation to change topology.
+- **Concurrent by construction**: each pipeline (one per input) runs in its own
+  worker — inputs are processed independently, in isolation, in parallel.
 - **Cleanly extensible**: adding an input, processor, encoder, or output is
   *implement one interface + register one factory*. Zero edits to core wiring.
 - **Memory-efficient by construction**: bounded, streaming, columnar. Steady
@@ -23,11 +26,20 @@
 
 ### Non-goals (for the foundation)
 - Not a general stream-processing platform (no clustering, no exactly-once,
-  no distributed state). It is an **edge agent**.
-- No SQLite/ClickHouse/S3-SDK outputs *yet* — the initial output set is
-  `stdout | file | http`. Those are future components the registry makes
-  trivial to add; they are explicitly out of scope for the first cut.
+  no distributed state, no cross-process coordination). It is an **edge agent**.
+- **No ML and no scripted/plugin processors in this cut.** The `ml` detector and
+  the `script` (Starlark/expr/wazero) engines remain future components the
+  registry makes trivial to add; they are explicitly out of scope here.
+- No embedded SQL/OLAP engine in the agent. The agent emits *summaries* as JSON;
+  storing/querying them in SQLite is a **server-side (sink) concern**, not
+  prism's. No SQLite/ClickHouse/S3-SDK outputs in the agent yet.
 - No hot-reload of config in v1 (documented as a future extension point).
+
+### In scope for this cut (the two working end-to-end paths)
+- **Metrics:** `prometheus (scrape /metrics) → buffer → { parquet→file,
+  summary→json→file }`.
+- **Logging:** `file (tail) → parse → template → buffer → { parquet→file,
+  summary→json→file }`.
 
 ---
 
@@ -213,26 +225,60 @@ allocations in the hot path.
 
 ## 6. Pipeline runtime
 
-A pipeline is a linear chain built from config:
+The runtime runs a **set of pipelines concurrently** — one per input, each in
+its own worker, fully isolated from the others (a crash-safe error in one does
+not stop the rest; see §10). A single pipeline is:
 
 ```
-input ──chan RawBatch──► parser ──► [processor…]* ──► encoder ──► output
+input ─chan RawBatch─► parser ─► [pre-processor…]* ─► buffer(window) ─┬─► [proc…]* ─► encoder ─► output   (branch: data)
+                                                                       └─► [proc…]* ─► encoder ─► output   (branch: summary)
 ```
 
+- **One worker per input.** The runtime builds N pipelines from `pipelines: [ … ]`
+  and runs each under its own `errgroup` sub-context. Inputs never share state;
+  parallelism is "N inputs → N workers". This is the concurrency model: isolate
+  per input, not a shared thread pool fighting over one queue.
 - **Stages communicate over bounded channels.** Channel capacity *is* the
-  backpressure mechanism: a slow output blocks the encoder, which blocks
-  processors, which blocks the input. No unbounded in-memory queue.
-- **One goroutine per stage** (or a small worker pool for CPU-heavy processors,
-  configurable), each owning a `for range ch { … }` loop with `ctx` selected.
+  backpressure mechanism: a slow output blocks its branch, which (once every
+  branch is blocked) blocks the buffer, which blocks the parser, which blocks
+  the input. No unbounded in-memory queue.
+- **Accumulation buffer (§6.1).** Between the parser/pre-processors and the
+  fan-out sits a windowing buffer that accumulates records and flushes a bounded
+  `RecordBatch` on the first of: max age, max rows, or max bytes. "Process"
+  (summary, encode) happens per flushed window, not per record.
+- **Fan-out branches.** After the buffer, the flushed window is dispatched to
+  each configured branch. Every branch gets its **own** `RecordBatch` (a
+  retained/sliced view — never a shared mutable batch), owns releasing it, and
+  runs its own `[processors] → encoder → output` tail. A branch is where
+  "data → parquet" and "summary → json" diverge from the same window.
+- **One goroutine per stage** within a pipeline (buffer, each branch), each
+  owning a `for range ch { … }` loop with `ctx` selected.
 - **Graceful shutdown**: `ctx` cancel → inputs stop emitting and close their
-  channel → close propagates downstream → each stage flushes and returns →
-  `Shutdown` called in reverse order. Batch/stdin inputs reach natural EOF and
-  drive the same drain.
+  channel → close propagates downstream → the buffer flushes its partial window
+  → branches drain → `Shutdown` called in reverse order. Batch/stdin inputs
+  reach natural EOF and drive the same drain.
 - **Goroutine hygiene**: every goroutine is owned by an `errgroup` tied to the
   run context. `goleak` in tests guarantees no leaks.
 
-`prism run` = build registry → load+validate config → build pipeline →
-`errgroup.Run` → wait for EOF or signal → drain → exit code reflects success.
+`prism run` = build registry → load+validate config → build pipelines →
+run each pipeline's `errgroup` under a parent `errgroup` → wait for all inputs
+to reach EOF or for a signal → drain → exit code reflects success.
+
+### 6.1 Accumulation buffer (windowing)
+
+The buffer is the "accumulate before processing" stage. It is bounded three
+ways, and flushes the accumulated window on **whichever bound is hit first**:
+
+- `max_age` — wall-clock age of the oldest buffered record (**default `30s`**).
+- `max_rows` — number of buffered rows (default: unset/no row cap).
+- `max_bytes` — accumulated in-memory size (**default `12MiB`**) — the "agent
+  memory queue" cap; this is the hard ceiling that keeps steady-state memory
+  flat regardless of input rate.
+
+A flush emits one bounded `RecordBatch` downstream to the fan-out. On shutdown
+or EOF the buffer flushes whatever partial window it holds so no data is lost.
+Because it enforces `max_bytes`, the buffer — not the input — is the component
+that guarantees the memory discipline of §11 for windowed pipelines.
 
 ---
 
@@ -248,66 +294,93 @@ input ──chan RawBatch──► parser ──► [processor…]* ──► en
   offending path (`processors[2].ml.window: must be > 0`).
 - **Defaults come from the factory**, not from scattered literals.
 
-Shape — every stage is `type` (selects the factory) + `options` (the
+Shape — the top level is `pipelines: [ … ]`. Each pipeline has an `input`, a
+`parser`, optional pre-buffer `processors`, a `buffer`, and one or more
+`branches`; each branch has optional `processors`, an `encoder`, and an
+`output`. Every stage is `type` (selects the factory) + `options` (the
 type-specific block the factory decodes into its own typed struct + validates).
 Keeping `options` opaque at the top level is what lets `internal/config` stay
 free of any component import (dependencies point inward, §14):
 
 ```yaml
-input:
-  type: file
-  options:
-    path: /var/log/app.log
-    mode: tail                # tail | batch
-parser:
-  type: logfmt                # json | logfmt | regex | template(lessence)
-  options:
-    autodiscover_fields: true
-processors:
-  - type: summary             # built-in, compiled
-    options: { window: 30s, group_by: [level, service], aggregates: [count, "p95(latency)"] }
-  - type: ml                  # built-in, compiled; toggle with `enabled: false`
-    options: { enabled: true, detector: anomaly, sensitivity: 0.95 }
-  - type: script              # runtime, no rebuild
-    options: { engine: starlark, source_file: enrich.star }
-encoder:
-  type: parquet
-  options: { compression: zstd, row_group_rows: 50000 }
-output:
-  type: http
-  options:
-    url: https://sink.example/ingest
-    method: POST
-    headers: { Authorization: "Bearer ${PRISM_TOKEN}" }
-    retry: { max_attempts: 5, backoff: exponential }
+pipelines:
+  # ── metrics: prometheus → buffer → { parquet, summary } ──
+  - name: metrics
+    input:
+      type: prometheus
+      options:
+        targets: ["http://localhost:9100/metrics"]
+        interval: 15s
+    parser:
+      type: prometheus            # exposition text → columnar samples
+    buffer:
+      max_age: 30s                # flush on first of these three
+      max_bytes: 12MiB
+      max_rows: 0                 # 0 = no row cap
+    branches:
+      - name: data
+        encoder: { type: parquet, options: { compression: zstd, row_group_rows: 50000 } }
+        output:  { type: file, options: { dir: /var/lib/prism/metrics, rotate: { max_bytes: 128MiB } } }
+      - name: summary
+        processors:
+          - type: summary         # windowed group-by aggregates over columns
+            options: { group_by: [__name__, instance], aggregates: [count, "avg(value)", "p95(value)"] }
+        encoder: { type: json }   # emits [{...}, ...]
+        output:  { type: file, options: { dir: /var/lib/prism/metrics-summary } }
+
+  # ── logging: file(tail) → parse → template → buffer → { parquet, summary } ──
+  - name: logging
+    input:
+      type: file
+      options: { path: /var/log/app.log, mode: tail }
+    parser:
+      type: logfmt                # json | logfmt | regex
+      options: { autodiscover_fields: true }
+    processors:
+      - type: template            # built-in; normalizes lines into a template key
+        options: { field: message, target: template }
+    buffer:
+      max_age: 30s
+      max_bytes: 12MiB
+    branches:
+      - name: data
+        encoder: { type: parquet, options: { compression: zstd } }
+        output:  { type: file, options: { dir: /var/lib/prism/logs } }
+      - name: summary
+        processors:
+          - type: summary
+            options: { group_by: [level, service, template], aggregates: [count] }
+        encoder: { type: json }
+        output:  { type: file, options: { dir: /var/lib/prism/logs-summary } }
 ```
+
+Secrets in any `options` block use `${VAR}` env interpolation (§12).
 
 ---
 
-## 8. Processors: built-in (compiled) vs scripted
+## 8. Processors: built-in (compiled)
 
-Two families, **same `Processor` interface**, different cost/flexibility:
+All processors in this cut are **built-in / compiled** Go, sharing the one
+`Processor` interface. Fast (no interpreter), toggled by config
+(`enabled: true|false`, where a disabled processor is a proven identity no-op).
 
-- **Built-in / compiled** (`summary`, `ml`, `template`, `autodiscover`):
-  Go code compiled into the binary. Fast (no interpreter), toggled by config
-  (`enabled: true|false`). This is where the expensive, hot-path work lives.
-  - `template` wraps the Go logging-normalization library
-    (`github.com/air-gapped/lessence`) — in-process, no subprocess, because it
-    is Go and so are we (a key reason prism is native rather than a Vector fork).
-  - `ml` hosts the edge detections (anomaly/aggregate signals). Model execution
-    is pluggable behind a `Detector` interface (pure-Go stats first; a
-    `wazero` WASM detector for heavier user models later).
-  - `summary` does the roll-ups (count/sum/avg/percentiles, grouped, windowed)
-    over Arrow columns.
-- **Scripted** (`script`): runtime code injection, **no rebuild**. Pluggable
-  engines behind a `ScriptEngine` interface:
-  - **Starlark** (`go.starlark.net`) — default; deterministic, sandboxed,
-    Python-ish; good for record shaping. (Same lineage as Telegraf's Starlark
-    processor.)
-  - **expr** (`expr-lang/expr`) — fast expressions for predicates/derived
-    fields where a full script is overkill.
-  - **wazero** (WASM) — run user-supplied *precompiled* modules with a Go-native
-    runtime; bridges "compiled extension" and "no rebuild".
+- `template` normalizes semi-structured log lines into a stable **template key**
+  (the invariant skeleton with variable tokens masked, e.g.
+  `user <*> logged in from <*>`), so summaries can group by log shape rather
+  than by unique message. It wraps the Go logging-normalization library
+  (`github.com/air-gapped/lessence`, in-process, pure-Go) when available; the
+  fallback is a Drain-style streaming template miner implemented in-tree (a
+  fixed-depth parse tree that clusters lines into templates online). Either way
+  it adds a `template` column and never drops data.
+- `summary` does the roll-ups — `count/sum/avg/min/max/percentiles`, grouped by
+  configured columns — over the Arrow columns of one flushed window. Its output
+  is a small `RecordBatch` of aggregate rows; paired with the `json` encoder
+  (§9) it becomes the `[{...}, ...]` summary the sink stores. prism itself does
+  **no** SQL — the "store in SQLite / query" step is server-side.
+
+Deferred (registry makes them additive later, out of scope now): `ml`
+(anomaly/aggregate detection behind a `Detector` interface) and `script`
+(Starlark/expr/wazero runtime engines).
 
 **Ordering is explicit and honored.** `processors:` is an ordered list;
 prism runs them in exactly that order. No implicit reordering.
@@ -317,14 +390,20 @@ prism runs them in exactly that order. No implicit reordering.
 ## 9. Encoders & outputs
 
 - **Encoders**: `parquet` (Arrow→Parquet via `apache/arrow-go`, configurable
-  compression + row-group sizing) and `raw`/`json` (debug/stdout). An encoder
-  emits a self-contained `EncodedBlock` (a complete Parquet file or a framed
-  byte blob) plus metadata (row count, byte size, schema fingerprint).
+  compression + row-group sizing) encodes the full window; `json` serializes a
+  batch as a JSON array `[{col: val, …}, …]` (one object per row) — this is the
+  encoder the `summary` branch uses to emit its aggregate rows. `raw` remains
+  for debug/passthrough. An encoder emits a self-contained `EncodedBlock` (a
+  complete Parquet file or a framed byte blob) plus metadata (row count, byte
+  size).
 - **Outputs**:
-  - `stdout` — write block bytes (debug/pipe).
   - `file` — write blocks to files with time/size rotation and atomic rename.
+    This is the sink for both end-to-end paths in this cut (parquet blocks to
+    one dir, JSON summaries to another).
+  - `stdout` — write block bytes (debug/pipe).
   - `http` — POST the block as a binary body, configurable method/headers/auth,
-    with bounded exponential backoff + retry and a clear give-up path.
+    with bounded exponential backoff + retry and a clear give-up path (available;
+    not on the critical path for this cut).
 
 Outputs own transport-level retry. Cross-cutting failure policy (drop vs block
 vs dead-letter) is a pipeline concern (§10), configured once.
@@ -337,6 +416,9 @@ vs dead-letter) is a pipeline concern (§10), configured once.
   route to a configurable failure policy: `drop` (count it), `block`
   (backpressure), or `dead_letter` (future). Parsers/processors return errors;
   the runtime applies policy.
+- **Per-pipeline isolation.** Each input's pipeline runs in its own worker; a
+  fatal error in one pipeline is logged and stops *that* pipeline, but the
+  others keep running. One bad input never takes down the agent.
 - **Errors wrap with `%w`** and are inspected with `errors.Is/As`. Sentinel
   errors for expected conditions (EOF, config-not-found).
 - **Self-observability**: structured logs via `log/slog`; internal metrics
@@ -387,9 +469,10 @@ We reuse libraries aggressively but each one must earn its place. Intended set
 | Columnar model + Parquet | `github.com/apache/arrow-go/v18` | native Arrow↔Parquet, pure Go, poolable buffers |
 | Config (yaml+json+env) | `github.com/knadh/koanf/v2` | layered config, light, one struct for both formats |
 | File tailing | `github.com/nxadm/tail` | rotation-aware follow |
-| CLI | `github.com/spf13/cobra` | `run` / `validate` / `version` subcommands |
-| Scripting | `go.starlark.net`, `github.com/expr-lang/expr`, `github.com/tetratelabs/wazero` | runtime injection, all pure-Go, sandboxed |
-| Logging normalization | `github.com/air-gapped/lessence` | the `template` built-in (Go, in-process) |
+| Prometheus scrape | `github.com/prometheus/common/expfmt` | parse `/metrics` exposition text (pure-Go) |
+| CLI | stdlib `flag` (cobra a possible later swap) | `run` / `validate` / `version` subcommands |
+| Scripting *(deferred)* | `go.starlark.net`, `github.com/expr-lang/expr`, `github.com/tetratelabs/wazero` | runtime injection — out of scope this cut |
+| Logging normalization | `github.com/air-gapped/lessence` | the `template` built-in (Go, in-process); Drain-style in-tree fallback |
 | Retry/backoff | `github.com/cenkalti/backoff/v4` | http output retry |
 | Metrics | `github.com/prometheus/client_golang` | self-observability |
 | Testing | `github.com/stretchr/testify`, `go.uber.org/goleak`, `github.com/google/go-cmp` | assertions, leak detection, diffs |
@@ -403,16 +486,18 @@ piece ourselves.
 ## 14. Package layout
 
 ```
-cmd/prism/                 # main: cobra commands, wires components.Default()
+cmd/prism/                 # main: run/validate/version, wires components.Default()
 internal/
   component/               # the interfaces + Registry + Factory + Host (§3,§4)
-  config/                  # typed config tree, loader, Validate()
-  pipeline/                # runtime: builder + staged channels + errgroup (§6)
+  config/                  # typed config tree (pipelines[]), loader, Validate()
+  pipeline/                # runtime: builder + per-input workers + buffer +
+                           #   fan-out branches + staged channels + errgroup (§6)
+  buffer/                  # windowing accumulator (max_age/max_rows/max_bytes) (§6.1)
   data/                    # RecordBatch/RawBatch/EncodedBlock + Arrow helpers (§5)
-  input/{file,stdin}/      # Input implementations
-  parser/{json,logfmt,regex,template}/
-  processor/{summary,ml,autodiscover,script}/
-  encoder/{parquet,raw}/
+  input/{stdin,file,prometheus}/   # Input implementations (prometheus = scrape)
+  parser/{raw,json,logfmt,regex,prometheus}/
+  processor/{summary,template}/    # built-ins in this cut (ml, script deferred)
+  encoder/{raw,parquet,json}/
   output/{stdout,file,http}/
   obs/                     # slog + metrics + pprof wiring
   components/              # Default() assembler: registers the built-ins

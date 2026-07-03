@@ -1,74 +1,67 @@
 # prism — Task list
 
-At-a-glance tracker derived from [`docs/PLAN.md`](docs/PLAN.md). Each phase is
-built test-first (see [`CONTRIBUTING.md`](CONTRIBUTING.md)); check a box only
-when its acceptance criteria in PLAN.md are met and `main` is green.
+At-a-glance tracker derived from [`docs/PLAN.md`](docs/PLAN.md) and its
+2026-07 revision. Each item is a spec under [`.ai/specs/`](.ai/specs/) built
+test-first (see [`CONTRIBUTING.md`](CONTRIBUTING.md)); check a box only when its
+acceptance criteria are met, its PR is merged, and `main` is green.
 
-## Phase 0 — Foundation & tooling
-- [x] Module, `.gitignore`, `.editorconfig`, `.golangci.yml`
-- [x] `Makefile` (`build`/`test`/`full-tests`/`lint`/`bench`/`tidy`/`cover`/…)
-- [x] `Dockerfile` (multi-stage, static, distroless-nonroot) + `deploy/` (compose, systemd)
-- [x] CI workflow (fast gate: tidy+lint+test; full gate: integration+e2e)
-- [x] Docs: DESIGN, PLAN, CONTRIBUTING, TESTING, REVIEW
-- [x] Pin foundation deps via `go get` (`errgroup`, `goleak`) — no invented versions
+Target: two working end-to-end paths — **metrics** (`prometheus → buffer →
+{parquet→file, summary→json→file}`) and **logging** (`file(tail) → parse →
+template → buffer → {parquet→file, summary→json→file}`). No ML, no scripting.
 
-## Phase 1 — Core contracts
-- [x] `component`: interfaces (Component/Input/Parser/Processor/Encoder/Output), `Factory[T]`, `Host`, `Settings`
-- [x] `component.Registry` (register/lookup per kind; duplicate/unknown/nil errors) + tests
-- [x] `config`: typed tree + loader + total `Validate()` with path-named errors + tests
+## Foundation (done)
+- [x] Module, tooling, Makefile, Dockerfile, CI, docs
+- [x] `component`: interfaces + `Factory[T]` + `Host` + `Registry` + tests
+- [x] `config`: typed tree + JSON loader + total `Validate()` + tests
 - [x] `obs`: slog logger + `Host`
-- [ ] YAML loading + `${ENV}` interpolation (koanf yaml→json shim)
+- [x] `data`: interim row-oriented `RawBatch`/`RecordBatch`/`EncodedBlock`
+- [x] `pipeline`: single linear builder + run loop + errgroup + goleak tests
+- [x] `input/stdin`, `input/file` (batch), `parser/raw`, `encoder/raw`,
+      `output/stdout`, `output/file` (append), `components.Default()`, `cmd/prism`
 
-## Phase 2 — Data model (Arrow) & runtime
-- [x] `data`: `RawBatch`/`RecordBatch`/`EncodedBlock` (interim row payload)
-- [x] `pipeline`: builder (config→wired chain) + run loop + errgroup lifecycle + graceful drain + tests (goleak)
-- [ ] Swap `RecordBatch` internals to Apache Arrow columns (schema + arrays + allocator)
-- [ ] Per-stage bounded channels between every stage + backpressure test
-- [ ] Configurable failure policy (drop | block | dead-letter)
-
-## Phase 3 — Inputs
-- [x] `input/stdin` + tests (bounded batches, cancel, goleak)
-- [x] `input/file` mode `batch` (read whole file → EOF → stop)
-- [ ] `input/file` mode `tail` (follow + rotation via `nxadm/tail`) + rotation test
-- [ ] Constant-memory streaming benchmark for tail
-
-## Phase 4 — Parsers & field auto-discovery
-- [x] `parser/raw` (passthrough) — foundation
-- [ ] `parser/json`, `parser/logfmt`, `parser/regex` (golden-tested)
-- [ ] Schema auto-discovery (infer + evolve) with deterministic type precedence
-- [ ] Fuzz the parsers (never panic; malformed → routed error)
-
-## Phase 5 — Parquet encoder & outputs
-- [x] `encoder/raw` (newline passthrough) — foundation
-- [x] `output/stdout`
-- [x] `output/file` (append) — foundation
-- [ ] `encoder/parquet` (Arrow→Parquet, compression + row-group) + round-trip test
-- [ ] `output/file` rotation (size/time) + atomic rename
-- [ ] `output/http` (binary POST + backoff retry + give-up) + httptest coverage
-
-## Phase 6 — Built-in compiled processors
-- [ ] `processor/summary` (windowed group-by aggregates over columns)
-- [ ] `processor/ml` (behind a `Detector` interface; pure-Go stat detector first)
-- [ ] `processor/template` (wrap `air-gapped/lessence`)
-- [ ] `enabled: false` is a proven identity no-op for each; no per-record allocs (bench)
-
-## Phase 7 — Scripted processor
-- [ ] `processor/script` + `ScriptEngine` interface
-- [ ] Starlark engine (default) + expr engine + shared engine contract test
-- [ ] wazero WASM engine
-- [ ] Sandbox + resource bounds proven (bad script fails safe: no crash, no hang)
-
-## Phase 8 — Assembly, packaging, e2e
-- [x] `components.Default()` assembler (registers built-ins)
-- [x] `cmd/prism` (`run`/`validate`/`version`) — runs a real pipeline
-- [ ] `make full-tests` integration layer green (docker-compose: http sink + MinIO)
-- [ ] e2e: `file → parse → summary+ml → parquet → http` lands + reads back
-- [ ] Container runs non-root end-to-end; `validate` catches bad configs (CLI test)
-- [ ] Consider swapping stdlib flag → cobra
+## Ordered build (each = one spec + PR)
+1. [ ] **config-multipipeline** — koanf YAML + `${ENV}`; reshape config to
+       `pipelines: []` with `input/parser/processors/buffer/branches`; total
+       `Validate()` with path-named errors.
+2. [ ] **data-arrow** — swap `RecordBatch` internals to Apache Arrow
+       (`apache/arrow-go/v18`): schema + column arrays + allocator; linear
+       ownership; allocator-balance assertion helper.
+3. [ ] **runtime-multiworker** — per-input worker pipelines under a parent
+       errgroup; per-stage bounded channels; fan-out branches (each branch owns
+       its batch); failure policy (`drop | block`); per-pipeline isolation;
+       goleak + backpressure tests.
+4. [ ] **buffer-window** — accumulation buffer flushing on first of
+       `max_age` (30s) / `max_rows` / `max_bytes` (12MiB); flush-on-drain.
+5. [ ] **input-file-tail** — `mode: tail` via `nxadm/tail` + rotation test +
+       constant-memory streaming benchmark.
+6. [ ] **input-prometheus** — scrape `/metrics` exposition on an interval
+       (`prometheus/common/expfmt`) → structured samples; target/interval config.
+7. [ ] **parsers** — `parser/json`, `parser/logfmt`, `parser/regex`,
+       `parser/prometheus`; schema auto-discovery (infer+evolve, deterministic
+       type precedence); fuzz (never panic; malformed → routed error).
+8. [ ] **processor-template** — log-template mining (lessence; Drain-style
+       in-tree fallback); adds a `template` column; `enabled:false` = identity.
+9. [ ] **processor-summary** — windowed group-by aggregates
+       (`count/sum/avg/min/max/pXX`) over Arrow columns → aggregate `RecordBatch`.
+10. [ ] **encoders** — `encoder/parquet` (Arrow→Parquet, compression + row-group)
+       with round-trip test; `encoder/json` (`[{…}]`) for summaries.
+11. [ ] **output-file-rotation** — size/time rotation + atomic rename; no partial
+       files visible.
+12. [ ] **assembly** — `components.Default()` registers the new built-ins;
+       `cmd/prism run/validate/version` drives multi-pipeline configs; `validate`
+       rejects bad configs with a path-accurate message.
+13. [ ] **e2e-logging** — `file(tail) → logfmt → template → buffer →
+       {parquet→file, summary→json→file}`; assert parquet reads back + summary
+       JSON rows.
+14. [ ] **e2e-metrics** — `prometheus → buffer → {parquet→file,
+       summary→json→file}` against a fake `/metrics` server; assert both sinks.
+15. [ ] **integration-packaging** — `make full-tests` green (compose/httptest);
+       container runs non-root end-to-end.
 
 ---
 
 ### Current status
-Foundation is **runnable**: `make build` + `make test` (with `-race`) green;
-`prism run` executes a real `stdin|file → raw → raw → stdout|file` pipeline. Next
-up: Arrow-backed `RecordBatch` (Phase 2) and the JSON/logfmt parsers (Phase 4).
+Foundation is runnable (`prism run` executes a linear
+`stdin|file → raw → raw → stdout|file` pipeline). Next: config reshape +
+Arrow-backed batches, then the multi-worker fan-out runtime and the two e2e
+paths. ML and scripting are deferred.
