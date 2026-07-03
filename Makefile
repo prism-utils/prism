@@ -63,14 +63,22 @@ fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it 
 
 .PHONY: integration
 integration: ## Integration layer only: compose up -> tagged tests -> down
-	@command -v docker >/dev/null 2>&1 || { echo "docker required for integration tests"; exit 1; }
-	$(COMPOSE) up -d --wait
-	@trap '$(COMPOSE) down -v' EXIT; \
-		go test $(GOFLAGS) -tags integration ./test/integration/...
+	@if [ -z "$$(find test/integration -name '*.go' 2>/dev/null)" ]; then \
+		echo "integration: no tests under test/integration yet — skipping"; \
+	else \
+		command -v docker >/dev/null 2>&1 || { echo "docker required for integration tests"; exit 1; }; \
+		$(COMPOSE) up -d --wait; \
+		trap '$(COMPOSE) down -v' EXIT; \
+		go test $(GOFLAGS) -tags integration ./test/integration/...; \
+	fi
 
 .PHONY: e2e
 e2e: ## End-to-end pipeline tests (build tag: e2e)
-	go test $(GOFLAGS) -tags e2e ./test/e2e/...
+	@if [ -z "$$(find test/e2e -name '*.go' 2>/dev/null)" ]; then \
+		echo "e2e: no tests under test/e2e yet — skipping"; \
+	else \
+		go test $(GOFLAGS) -tags e2e ./test/e2e/...; \
+	fi
 
 .PHONY: full-tests
 full-tests: lint test integration e2e ## The phase-completion gate: everything
