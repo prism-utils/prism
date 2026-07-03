@@ -12,6 +12,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/apache/arrow-go/v18/arrow/memory"
+
 	"github.com/elk-utilities/prism/internal/data"
 )
 
@@ -38,6 +40,9 @@ type Settings struct {
 type Host interface {
 	// Logger returns the structured logger for this component.
 	Logger() *slog.Logger
+	// Allocator returns the Arrow buffer allocator components must use for
+	// RecordBatch columns, so buffer ownership is accountable and poolable.
+	Allocator() memory.Allocator
 }
 
 // Component is the common lifecycle contract. Start MUST return promptly;

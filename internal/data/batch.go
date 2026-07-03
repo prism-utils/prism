@@ -1,13 +1,18 @@
 // Package data defines the units of information that flow between pipeline
-// stages: RawBatch (pre-parse), RecordBatch (structured), and EncodedBlock
-// (serialized output).
+// stages: RawBatch (pre-parse), RecordBatch (structured, Arrow-backed), and
+// EncodedBlock (serialized output).
 //
-// The interim payload here is row-oriented ([][]byte). Phase 2 of docs/PLAN.md
-// replaces RecordBatch's internals with an Apache Arrow-backed columnar
-// representation (schema + column arrays + poolable buffers) per
-// docs/DESIGN.md §5. The component interfaces do NOT change when that happens —
-// that is the whole point of keeping the payload behind these types.
+// RecordBatch wraps an Apache Arrow record: a schema plus columnar arrays held
+// in poolable allocator buffers (docs/DESIGN.md §5). Ownership is linear —
+// whoever receives a RecordBatch calls Release exactly once. Fan-out gives each
+// branch an independent reference via Retain, so branches release independently.
 package data
+
+import (
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+)
 
 // RawBatch is a bounded group of unparsed records plus their provenance.
 type RawBatch struct {
@@ -21,26 +26,77 @@ type RawBatch struct {
 // Len reports the number of raw records in the batch.
 func (b RawBatch) Len() int { return len(b.Records) }
 
-// RecordBatch is the structured unit that moves through parse → processors →
-// encode. In the foundation it carries rows as byte slices; Phase 2 gives it an
-// Arrow schema and columnar arrays.
-//
-// Ownership is linear: whoever receives a RecordBatch is responsible for
-// calling Release when done (docs/DESIGN.md §5). Release is a no-op placeholder
-// today and becomes an allocator return in Phase 2.
+// LineColumn is the column name used by row-oriented sources whose records are
+// opaque line bytes, before a typed parser imposes structure.
+const LineColumn = "line"
+
+// RecordBatch is the structured, columnar unit that moves through parse →
+// processors → encode. It wraps an Arrow record and carries source provenance.
 type RecordBatch struct {
 	// Source is carried through from the originating RawBatch.
 	Source string
-	// Records is the interim row payload. Phase 2 replaces this with columns.
-	Records [][]byte
+	rec    arrow.RecordBatch
 }
 
-// Len reports the number of rows in the batch.
-func (b RecordBatch) Len() int { return len(b.Records) }
+// NewRecordBatch wraps an existing Arrow record batch. The batch takes ownership
+// of the record's reference; the caller must not Release it separately.
+func NewRecordBatch(source string, rec arrow.RecordBatch) RecordBatch {
+	return RecordBatch{Source: source, rec: rec}
+}
 
-// Release returns any pooled buffers backing the batch. It is safe to call
-// multiple times (idempotent) and must be called exactly once by the owner.
-func (b *RecordBatch) Release() { b.Records = nil }
+// Record returns the underlying Arrow record batch. It is nil for the zero
+// value and for a batch explicitly constructed with none.
+func (b RecordBatch) Record() arrow.RecordBatch { return b.rec }
+
+// Len reports the number of rows in the batch.
+func (b RecordBatch) Len() int {
+	if b.rec == nil {
+		return 0
+	}
+	return int(b.rec.NumRows())
+}
+
+// Retain increments the reference count so an additional owner can Release it
+// independently. Fan-out uses this to hand the same immutable columns to
+// multiple branches without copying.
+func (b RecordBatch) Retain() {
+	if b.rec != nil {
+		b.rec.Retain()
+	}
+}
+
+// Release returns the batch's buffers to the allocator. It is safe to call on
+// the zero value and idempotent for a given RecordBatch variable.
+func (b *RecordBatch) Release() {
+	if b.rec != nil {
+		b.rec.Release()
+		b.rec = nil
+	}
+}
+
+// NewLinesBatch builds a single-column RecordBatch (LineColumn: binary) from
+// raw row bytes, allocating from mem. It is the base row→columnar conversion
+// for opaque line inputs until typed parsers land. A nil mem uses the default
+// allocator.
+func NewLinesBatch(mem memory.Allocator, source string, rows [][]byte) RecordBatch {
+	if mem == nil {
+		mem = memory.DefaultAllocator
+	}
+	schema := arrow.NewSchema(
+		[]arrow.Field{{Name: LineColumn, Type: arrow.BinaryTypes.Binary}},
+		nil,
+	)
+	bld := array.NewBinaryBuilder(mem, arrow.BinaryTypes.Binary)
+	defer bld.Release()
+	bld.Reserve(len(rows))
+	for _, r := range rows {
+		bld.Append(r)
+	}
+	col := bld.NewArray()
+	defer col.Release()
+	rec := array.NewRecordBatch(schema, []arrow.Array{col}, int64(len(rows)))
+	return RecordBatch{Source: source, rec: rec}
+}
 
 // EncodedBlock is a self-contained serialized artifact ready for an output —
 // e.g. a complete Parquet file or a framed byte blob (docs/DESIGN.md §9).

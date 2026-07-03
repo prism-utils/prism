@@ -4,11 +4,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/apache/arrow-go/v18/arrow/memory"
+
 	"github.com/elk-utilities/prism/internal/data"
 )
 
 func TestEncode_NewlineDelimits(t *testing.T) {
-	in := data.RecordBatch{Records: [][]byte{[]byte("x"), []byte("y"), []byte("z")}}
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	in := data.NewLinesBatch(mem, "s", [][]byte{[]byte("x"), []byte("y"), []byte("z")})
+	defer in.Release()
+
 	block, err := encoder{}.Encode(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
