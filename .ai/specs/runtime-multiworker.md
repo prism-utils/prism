@@ -1,6 +1,6 @@
 # Spec: runtime — multi-pipeline, per-input worker, fan-out branches
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/runtime-multiworker`
 - **Owner phase:** orchestrator → developer

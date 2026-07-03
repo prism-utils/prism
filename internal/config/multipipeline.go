@@ -34,6 +34,10 @@ type PipelineConfig struct {
 	Processors []Stage  `json:"processors,omitempty"`
 	Buffer     Buffer   `json:"buffer"`
 	Branches   []Branch `json:"branches"`
+	// OnError selects how malformed data (a parser/processor error) is handled:
+	// "drop" logs and skips the offending window and keeps the pipeline running;
+	// "block" stops this pipeline on the error. Empty means "block".
+	OnError string `json:"on_error,omitempty"`
 }
 
 // Buffer configures the windowing accumulator that flushes on the first of its
@@ -140,6 +144,11 @@ func (c *Config) Validate() error {
 		}
 		if err := p.Buffer.validate(path + ".buffer"); err != nil {
 			return err
+		}
+		switch p.OnError {
+		case "", "drop", "block":
+		default:
+			return fmt.Errorf("config: %s.on_error: must be \"drop\" or \"block\", got %q", path, p.OnError)
 		}
 		if len(p.Branches) == 0 {
 			return fmt.Errorf("config: %s.branches: at least one required", path)
