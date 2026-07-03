@@ -1,6 +1,6 @@
 # Spec: processor/template — log-template mining
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/processor-template`
 - **Owner phase:** orchestrator → developer

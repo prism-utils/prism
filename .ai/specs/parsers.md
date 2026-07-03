@@ -1,6 +1,6 @@
 # Spec: parsers — json / logfmt / regex / prometheus + auto-discovery
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/parsers`
 - **Owner phase:** orchestrator → developer

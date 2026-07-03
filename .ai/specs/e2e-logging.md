@@ -1,6 +1,6 @@
 # Spec: e2e — logging path
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/e2e-logging`
 - **Owner phase:** orchestrator → developer

@@ -32,14 +32,14 @@ template → buffer → {parquet→file, summary→json→file}`). No ML, no scr
        goleak + backpressure tests.
 4. [x] **buffer-window** — accumulation buffer flushing on first of
        `max_age` (30s) / `max_rows` / `max_bytes` (12MiB); flush-on-drain.
-5. [ ] **input-file-tail** — `mode: tail` via `nxadm/tail` + rotation test +
+5. [x] **input-file-tail** — `mode: tail` via `nxadm/tail` + rotation test +
        constant-memory streaming benchmark.
 6. [x] **input-prometheus** — scrape `/metrics` exposition on an interval
        (`prometheus/common/expfmt`) → structured samples; target/interval config.
-7. [ ] **parsers** — `parser/json`, `parser/logfmt`, `parser/regex`,
+7. [x] **parsers** — `parser/json`, `parser/logfmt`, `parser/regex`,
        `parser/prometheus`; schema auto-discovery (infer+evolve, deterministic
        type precedence); fuzz (never panic; malformed → routed error).
-8. [ ] **processor-template** — log-template mining (lessence; Drain-style
+8. [x] **processor-template** — log-template mining (lessence; Drain-style
        in-tree fallback); adds a `template` column; `enabled:false` = identity.
 9. [x] **processor-summary** — windowed group-by aggregates
        (`count/sum/avg/min/max/pXX`) over Arrow columns → aggregate `RecordBatch`.
@@ -50,7 +50,7 @@ template → buffer → {parquet→file, summary→json→file}`). No ML, no scr
 12. [x] **assembly** — `components.Default()` registers the new built-ins;
        `cmd/prism run/validate/version` drives multi-pipeline configs; `validate`
        rejects bad configs with a path-accurate message.
-13. [ ] **e2e-logging** — `file(tail) → logfmt → template → buffer →
+13. [x] **e2e-logging** — `file(tail) → logfmt → template → buffer →
        {parquet→file, summary→json→file}`; assert parquet reads back + summary
        JSON rows.
 14. [x] **e2e-metrics** — `prometheus → buffer → {parquet→file,
