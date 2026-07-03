@@ -55,13 +55,22 @@ template → buffer → {parquet→file, summary→json→file}`). No ML, no scr
        JSON rows.
 14. [x] **e2e-metrics** — `prometheus → buffer → {parquet→file,
        summary→json→file}` against a fake `/metrics` server; assert both sinks.
-15. [ ] **integration-packaging** — `make full-tests` green (compose/httptest);
+15. [x] **integration-packaging** — `make full-tests` green (compose/httptest);
        container runs non-root end-to-end.
 
 ---
 
 ### Current status
-Foundation is runnable (`prism run` executes a linear
-`stdin|file → raw → raw → stdout|file` pipeline). Next: config reshape +
-Arrow-backed batches, then the multi-worker fan-out runtime and the two e2e
-paths. ML and scripting are deferred.
+Both end-to-end paths are green and merged:
+
+- **metrics** — `prometheus(scrape) → prometheus(parse) → buffer →
+  {parquet→dir, summary(count/sum/avg/min/max/pNN by __name__)→json→dir}`
+- **logging** — `file(tail) → logfmt/json/regex → template → buffer →
+  {parquet→dir, summary(count by level)→json→dir}`
+
+`prism run|validate|version` drives multi-pipeline YAML/JSON configs
+(`configs/metrics.yaml`, `configs/logging.yaml`); one concurrent, isolated
+worker per input; the accumulation buffer flushes on age/rows/bytes (defaults
+30s / 12MiB) and aligns heterogeneous windows to a union schema. `make
+full-tests` is green; the image is CGO-free on distroless nonroot. ML and
+scripting remain deferred by design.
