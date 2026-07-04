@@ -74,6 +74,14 @@ type Report struct {
 	SummaryCount int64 `json:"summary_count_total"`
 	OutputBytes  int64 `json:"output_bytes"`
 
+	// Log-template metrics, read from summary Parquet whose schema carries
+	// `template` + `count`. These are the "template X → count Y" aggregates the
+	// summary phase exists to produce, surfaced so a run proves them present and
+	// correct — not just that bytes were written.
+	TemplateGroups     int             `json:"template_groups"`
+	TemplateCountTotal int64           `json:"template_count_total"`
+	TopTemplates       []TemplateCount `json:"top_templates,omitempty"`
+
 	RowsPerSecond float64 `json:"rows_per_second"`
 	// RowDelta is parquet_rows - input_records; 0 means every input record was
 	// preserved through parse → buffer → encode → sink.
@@ -81,6 +89,12 @@ type Report struct {
 
 	ParquetColumns []string `json:"parquet_columns"`
 	ExitOK         bool     `json:"exit_ok"`
+}
+
+// TemplateCount is one log template and how many lines collapsed into it.
+type TemplateCount struct {
+	Template string `json:"template"`
+	Count    int64  `json:"count"`
 }
 
 func main() {
@@ -203,6 +217,7 @@ func run(bin, cfg, out, label string, dur time.Duration, inputs []string) (*Repo
 // and schema, and parsing JSON summaries for group/count totals.
 func inspectOutputs(root string, rep *Report) error {
 	cols := map[string]struct{}{}
+	templates := map[string]int64{} // template → summed count across summary files
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -222,6 +237,17 @@ func inspectOutputs(root string, rep *Report) error {
 			for _, c := range columns {
 				cols[c] = struct{}{}
 			}
+			// A Parquet summary (template + count columns) also feeds the
+			// log-template metrics; raw/template phases are just row counts.
+			counts, ok, terr := templateSummary(path)
+			if terr != nil {
+				return fmt.Errorf("template summary %s: %w", path, terr)
+			}
+			if ok {
+				for tmpl, n := range counts {
+					templates[tmpl] += n
+				}
+			}
 		case ".json":
 			groups, total, jerr := summaryStat(path)
 			if jerr != nil {
@@ -240,7 +266,96 @@ func inspectOutputs(root string, rep *Report) error {
 		rep.ParquetColumns = append(rep.ParquetColumns, c)
 	}
 	sort.Strings(rep.ParquetColumns)
+	rep.setTemplateMetrics(templates)
 	return nil
+}
+
+// setTemplateMetrics records the per-template aggregate on the report, sorted by
+// descending count (ties broken by template text for stable output).
+func (r *Report) setTemplateMetrics(templates map[string]int64) {
+	for tmpl, n := range templates {
+		r.TemplateGroups++
+		r.TemplateCountTotal += n
+		r.TopTemplates = append(r.TopTemplates, TemplateCount{Template: tmpl, Count: n})
+	}
+	sort.Slice(r.TopTemplates, func(i, j int) bool {
+		if r.TopTemplates[i].Count != r.TopTemplates[j].Count {
+			return r.TopTemplates[i].Count > r.TopTemplates[j].Count
+		}
+		return r.TopTemplates[i].Template < r.TopTemplates[j].Template
+	})
+}
+
+// templateSummary reads a Parquet file that aggregates counts per log template:
+// if its schema has both a `template` and a `count` column, it returns the
+// per-template counts; otherwise ok is false (it is some other artifact). Only
+// the two relevant columns are materialized.
+func templateSummary(path string) (map[string]int64, bool, error) {
+	rdr, err := file.OpenParquetFile(path, false)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = rdr.Close() }()
+	sc := rdr.MetaData().Schema
+	hasTemplate, hasCount := false, false
+	for i := 0; i < sc.NumColumns(); i++ {
+		switch sc.Column(i).Name() {
+		case "template":
+			hasTemplate = true
+		case "count":
+			hasCount = true
+		}
+	}
+	if !hasTemplate || !hasCount {
+		return nil, false, nil
+	}
+
+	pr, err := pqarrow.NewFileReader(rdr, pqarrow.ArrowReadProperties{}, memory.DefaultAllocator)
+	if err != nil {
+		return nil, false, err
+	}
+	tbl, err := pr.ReadTable(context.Background())
+	if err != nil {
+		return nil, false, err
+	}
+	defer tbl.Release()
+
+	tmplCol := columnByName(tbl, "template")
+	cntCol := columnByName(tbl, "count")
+	if tmplCol == nil || cntCol == nil {
+		return nil, false, nil
+	}
+	counts := make(map[string]int64, tbl.NumRows())
+	for r := 0; r < int(tbl.NumRows()); r++ {
+		tmpl, _ := chunkedValue(tmplCol, r).(string)
+		n := toInt64(chunkedValue(cntCol, r))
+		counts[tmpl] += n
+	}
+	return counts, true, nil
+}
+
+// columnByName returns the chunked column with the given name, or nil.
+func columnByName(tbl arrow.Table, name string) *arrow.Chunked {
+	for i, f := range tbl.Schema().Fields() {
+		if f.Name == name {
+			return tbl.Column(i).Data()
+		}
+	}
+	return nil
+}
+
+// toInt64 coerces the integer count cell regardless of its Arrow width.
+func toInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int32:
+		return int64(n)
+	case float64:
+		return int64(n)
+	default:
+		return 0
+	}
 }
 
 // parquetStat reads row count and column names from the file footer without
@@ -447,6 +562,13 @@ func printTable(r *Report) {
 		{"output bytes", fmt.Sprintf("%d", r.OutputBytes)},
 		{"parquet columns", strings.Join(r.ParquetColumns, ", ")},
 	}...)
+	if r.TemplateGroups > 0 {
+		rows = append(rows,
+			[2]string{"", ""},
+			[2]string{"log templates", fmt.Sprintf("%d", r.TemplateGroups)},
+			[2]string{"templated lines", fmt.Sprintf("%d", r.TemplateCountTotal)},
+		)
+	}
 	for _, kv := range rows {
 		if kv[0] == "" {
 			fmt.Println()
@@ -454,5 +576,26 @@ func printTable(r *Report) {
 		}
 		fmt.Printf("  %-18s %s\n", kv[0], kv[1])
 	}
+	if r.TemplateGroups > 0 {
+		printTopTemplates(r.TopTemplates)
+	}
 	fmt.Println(line)
+}
+
+// printTopTemplates renders the highest-count log templates ("template X →
+// count Y"), the chartable aggregate the summary phase produces.
+func printTopTemplates(top []TemplateCount) {
+	const max = 10
+	n := len(top)
+	if n > max {
+		n = max
+	}
+	fmt.Printf("\n  top %d log templates (count → template):\n", n)
+	for _, tc := range top[:n] {
+		tmpl := tc.Template
+		if len(tmpl) > 60 {
+			tmpl = tmpl[:57] + "..."
+		}
+		fmt.Printf("    %8d  %s\n", tc.Count, tmpl)
+	}
 }

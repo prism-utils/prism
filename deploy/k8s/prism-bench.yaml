@@ -2,9 +2,11 @@
 #
 # Runs prism as a non-root Deployment that exercises both verticals against real
 # workloads:
-#   * metrics — live-scrapes real /metrics exporters over cluster DNS
-#   * logs    — reads a real captured log sample mounted from a ConfigMap
-# and fans each out to a Parquet sink + a JSON summary under a shared emptyDir.
+#   * metrics — live-scrapes real /metrics exporters over cluster DNS, persisting
+#     raw series as Parquet (no summary: server-side analytics aggregate directly)
+#   * logs    — reads a real captured log sample mounted from a ConfigMap and
+#     fans it into three Parquet phases (raw / template / per-template summary)
+# under a shared emptyDir.
 #
 # A tiny busybox "inspector" sidecar shares that emptyDir so the outputs can be
 # pulled with `kubectl cp` (the distroless prism image has no tar/shell).
@@ -38,38 +40,37 @@ data:
         parser: { type: prometheus }
         buffer: { max_age: "3s", max_bytes: "12MiB" }
         branches:
-          - name: data
+          - name: raw
             encoder: { type: parquet, options: { compression: snappy } }
-            output: { type: dir, options: { dir: "/out/metrics/data", prefix: "m-" } }
-          - name: summary
-            processors:
-              - type: summary
-                options:
-                  group_by: ["__name__"]
-                  aggregates: ["count", "sum:value", "avg:value", "max:value"]
-            encoder: { type: json }
-            output: { type: dir, options: { dir: "/out/metrics/summary", prefix: "s-" } }
+            output: { type: dir, options: { dir: "/out/metrics/raw" } }
 
-      # ---- logs: real captured logfmt sample --------------------------------
+      # ---- logs: real captured log sample, known-format aware ---------------
       - name: cluster-logs
         input:
           type: file
-          options: { path: "/logs/sample.logfmt", mode: batch, batch_size: 1000 }
-        parser: { type: logfmt }
-        processors:
-          - type: template
-            options: { source: msg, target: template }
+          options: { path: "/logs/sample.log", mode: batch, batch_size: 1000 }
+        parser:
+          type: logs
+          options: { format: auto }
         buffer: { max_age: "2s", max_bytes: "12MiB" }
         branches:
-          - name: data
+          - name: raw
             encoder: { type: parquet, options: { compression: snappy } }
-            output: { type: dir, options: { dir: "/out/logs/data", prefix: "l-" } }
+            output: { type: dir, options: { dir: "/out/logs/raw" } }
+          - name: template
+            processors:
+              - type: template
+                options: { source: message, target: template }
+            encoder: { type: parquet, options: { compression: snappy } }
+            output: { type: dir, options: { dir: "/out/logs/template" } }
           - name: summary
             processors:
+              - type: template
+                options: { source: message, target: template }
               - type: summary
-                options: { group_by: ["level"], aggregates: ["count"] }
-            encoder: { type: json }
-            output: { type: dir, options: { dir: "/out/logs/summary", prefix: "s-" } }
+                options: { group_by: ["template"], aggregates: ["count"] }
+            encoder: { type: parquet, options: { compression: snappy } }
+            output: { type: dir, options: { dir: "/out/logs/summary" } }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -126,6 +127,6 @@ spec:
           configMap:
             name: prism-logs
             items:
-              - { key: sample.logfmt, path: sample.logfmt }
+              - { key: sample.log, path: sample.log }
         - name: out
           emptyDir: {}
