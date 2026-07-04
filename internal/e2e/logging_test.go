@@ -26,7 +26,9 @@ pipelines:
     input:
       type: file
       options: { path: "${PRISM_LOG}", mode: tail, batch_size: 100 }
-    parser: { type: logfmt }
+    parser:
+      type: logs
+      options: { format: auto }
     buffer:
       max_age: "200ms"
       max_rows: 100
@@ -37,28 +39,30 @@ pipelines:
       - name: template
         processors:
           - type: template
-            options: { source: msg, target: template }
+            options: { source: message, target: template }
         encoder: { type: parquet }
         output: { type: dir, options: { dir: "${PRISM_OUT}/logs/template" } }
       - name: summary
         processors:
           - type: template
-            options: { source: msg, target: template }
+            options: { source: message, target: template }
           - type: summary
             options: { group_by: ["template"], aggregates: ["count"] }
         encoder: { type: parquet }
         output: { type: dir, options: { dir: "${PRISM_OUT}/logs/summary" } }
 `
 
-// Logging path in three parquet phases: file(tail) → logfmt → window buffer →
-// { raw → parquet, template → parquet, summary(count by template) → parquet }.
+// Logging path in three parquet phases: file(tail) → logs(auto) → window buffer
+// → { raw → parquet, template → parquet, summary(count by template) → parquet }.
+// The sample lines are not a known format, so `logs` keeps them raw (no field
+// guessing) and the template is mined from the whole message.
 func TestE2E_LoggingThreePhaseParquet(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "app.log")
 	lines := []string{
-		`level=info msg="user 1 logged in from 10.0.0.1" status=200`,
-		`level=info msg="user 2 logged in from 10.0.0.2" status=200`,
-		`level=error msg="user 3 request failed code 500" status=500`,
+		`user 1 logged in from 10.0.0.1`,
+		`user 2 logged in from 10.0.0.2`,
+		`user 3 request failed code 500`,
 	}
 	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatalf("write log: %v", err)

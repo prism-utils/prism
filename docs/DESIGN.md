@@ -216,6 +216,15 @@ in a thin `RecordBatch` type (schema + columnar arrays + provenance metadata).
 - Row-oriented inputs (log lines) are converted to columnar by the **parser**,
   which is also where **field auto-discovery** happens (infer columns/types
   from the first N records, then evolve).
+- The **`logs`** parser is deliberately conservative: it does **not** guess
+  fields. By default it keeps the raw line in a normalized `message` column and
+  extracts nothing else. It extracts fields **only** for a known format — `k8s`
+  (CRI container-log), `json`, `syslog` (RFC3164/5424), `clf`, `cef` — selected
+  explicitly via `format`, or discovered per line with `format: auto` (falling
+  back to raw). Every row carries a stable `message` (the templatable text) and
+  a `format` column; timestamp fields are never ingested. Downstream is then
+  format-agnostic: template on `message`, summarize per template for any input,
+  and add extracted fields to `group_by` for a known-format source.
 
 `RawBatch` (pre-parse) is intentionally dumb: a slice of records (offsets into a
 reused byte buffer) + source metadata (path, offset, timestamp). No per-line
@@ -332,7 +341,8 @@ pipelines:
       type: file
       options: { path: /var/log/app.log, mode: tail }
     parser:
-      type: logfmt                # json | logfmt | regex
+      type: logs                  # no field-guessing; format: none|auto|k8s|json|syslog|clf|cef
+      options: { format: auto }   # sniff known formats per line, else keep raw
     buffer:
       max_age: 30s
       max_bytes: 12MiB
@@ -345,14 +355,14 @@ pipelines:
       - name: template
         processors:
           - type: template        # normalizes the message into a template key
-            options: { source: msg, target: template }
+            options: { source: message, target: template }
         encoder: { type: parquet, options: { compression: zstd } }
         output:  { type: dir, options: { dir: /var/lib/prism/logs/template } }
       # phase summary: count per template, as parquet (chart "template → count").
       - name: summary
         processors:
           - type: template
-            options: { source: msg, target: template }
+            options: { source: message, target: template }
           - type: summary
             options: { group_by: [template], aggregates: [count] }
         encoder: { type: parquet, options: { compression: zstd } }

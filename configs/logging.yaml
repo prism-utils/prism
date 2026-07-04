@@ -3,6 +3,14 @@
 #   template  — records plus a mined, stable log template column
 #   summary   — count per log template (for charts: "template X → count Y")
 #
+# The `logs` parser does NOT guess fields: by default it keeps the raw line in a
+# normalized `message` column. With `format: auto` it sniffs each line and, only
+# when it recognizes a known format (k8s | json | syslog | clf | cef), extracts
+# that format's fields (never the timestamp). Unrecognized lines stay raw, so the
+# universal summary below (count per template) works for any input. For a
+# single-format source, set an explicit `format` and add its fields to the
+# summary's group_by — see configs/logging-clf.yaml.
+#
 #   prism run -config configs/logging.yaml
 #
 # Environment:
@@ -16,7 +24,9 @@ pipelines:
         path: "${PRISM_LOG}"
         mode: tail
         batch_size: 500
-    parser: { type: logfmt }
+    parser:
+      type: logs
+      options: { format: auto }
     buffer:
       max_age: "2s"
       max_bytes: "12MiB"
@@ -29,14 +39,14 @@ pipelines:
       - name: template
         processors:
           - type: template
-            options: { source: msg, target: template }
+            options: { source: message, target: template }
         encoder: { type: parquet, options: { compression: snappy } }
         output: { type: dir, options: { dir: "${PRISM_OUT}/logs/template" } }
-      # phase: summary — count per template, as Parquet.
+      # phase: summary — count per template, as Parquet (works for any format).
       - name: summary
         processors:
           - type: template
-            options: { source: msg, target: template }
+            options: { source: message, target: template }
           - type: summary
             options: { group_by: ["template"], aggregates: ["count"] }
         encoder: { type: parquet, options: { compression: snappy } }
