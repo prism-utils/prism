@@ -6,19 +6,19 @@
 #
 # Prereqs: a reachable cluster (kubectl); the prism:bench image available to the
 # cluster (for k3d: `k3d image import prism:bench -c <cluster>`); and a real
-# logfmt sample file (< 1 MiB — the ConfigMap limit).
+# log sample file (< 1 MiB — the ConfigMap limit).
 #
 # The target namespace must be able to reach the exporters named in
 # deploy/k8s/prism-bench.yaml. On a default-deny cluster, run it in the
 # exporters' own namespace, e.g. NS=live-demo.
 #
 # Usage:
-#   NS=live-demo deploy/k8s/run-cluster-bench.sh <logfmt-sample> [settle-seconds]
+#   NS=live-demo deploy/k8s/run-cluster-bench.sh <log-sample> [settle-seconds]
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NS="${NS:-prism-bench}"
-sample="${1:?usage: [NS=ns] run-cluster-bench.sh <logfmt-sample> [settle-seconds]}"
+sample="${1:?usage: [NS=ns] run-cluster-bench.sh <log-sample> [settle-seconds]}"
 settle="${2:-30}"
 OUT="${OUT_ROOT:-$REPO_ROOT/bench-out}/cluster"
 
@@ -30,7 +30,7 @@ kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/d
 echo ">> applying manifest + log sample ConfigMap"
 kubectl apply -n "$NS" -f "$REPO_ROOT/deploy/k8s/prism-bench.yaml"
 kubectl -n "$NS" delete configmap prism-logs --ignore-not-found
-kubectl -n "$NS" create configmap prism-logs --from-file=sample.logfmt="$sample"
+kubectl -n "$NS" create configmap prism-logs --from-file=sample.log="$sample"
 kubectl -n "$NS" label configmap prism-logs app=prism-bench --overwrite >/dev/null
 kubectl -n "$NS" rollout restart deploy/prism-bench
 kubectl -n "$NS" rollout status deploy/prism-bench --timeout=90s
@@ -53,13 +53,14 @@ echo; echo ">> in-cluster outputs:"
 find "$OUT" -type f | sort
 
 go build -o "$REPO_ROOT/bin/prism-bench" "$REPO_ROOT/cmd/prism-bench"
-echo; echo ">> reconciling logs branch (input sample vs in-pod Parquet/JSON):"
-"$REPO_ROOT/bin/prism-bench" -inspect -label "cluster-logs (real, in-pod)" \
-  -out "$OUT/logs" -input "$sample" || true
-echo; echo ">> reconciling metrics branch (in-pod scrape output):"
+echo; echo ">> reconciling logs raw phase (input sample vs in-pod Parquet):"
+"$REPO_ROOT/bin/prism-bench" -inspect -label "cluster-logs raw (real, in-pod)" \
+  -out "$OUT/logs/raw" -input "$sample" || true
+echo; echo ">> log-template metrics (all logs phases, in-pod):"
+"$REPO_ROOT/bin/prism-bench" -inspect -label "cluster-logs templates" \
+  -out "$OUT/logs" || true
+echo; echo ">> reconciling metrics raw phase (in-pod scrape output):"
 "$REPO_ROOT/bin/prism-bench" -inspect -label "cluster-metrics (real, in-pod scrape)" \
   -out "$OUT/metrics" || true
 
-echo; echo ">> sample metrics summary rows:"
-cat "$OUT"/metrics/summary/s-*.json 2>/dev/null | head -c 600; echo
 echo ">> clean up with: kubectl -n $NS delete all,cm -l app=prism-bench"
