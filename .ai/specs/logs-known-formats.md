@@ -1,6 +1,6 @@
 # Spec: logs parser with known formats + no field-guessing default
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/logs-known-formats`
 - **Owner phase:** orchestrator
@@ -71,12 +71,21 @@ summarize on the extracted fields and template the message.
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines**
-- [ ] **Gate 2 — Tests cover edge cases** (malformed lines, empty batch, auto fallback, timestamp drop, custom message column)
-- [ ] **Gate 3 — Docs & comments match**
-- [ ] **Gate 4 — Comments are atomic**
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines**
+- [x] **Gate 2 — Tests cover edge cases** (malformed→fallback, empty batch,
+      auto fallback, timestamp drop, custom message column, RFC5424, non-string/
+      null JSON message, auto JSON w/ leading whitespace)
+- [x] **Gate 3 — Docs & comments match** (DESIGN §7 example + parser note;
+      shipped + CLF example configs; e2e uses logs(auto))
+- [x] **Gate 4 — Comments are atomic**
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+First Bugbot pass (CHANGES_REQUESTED): JSON `message` normalization could leave a
+non-string `message` column (breaks templating) — fixed to only adopt a string
+message key and always fall back to the raw line; `format: auto` missed JSON/CEF/
+syslog with leading whitespace — fixed by trimming in detection + parsers. Added
+the missing tests. Re-review: ALL_OK.
+
+Status: ALL_OK

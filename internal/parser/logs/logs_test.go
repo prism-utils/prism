@@ -125,6 +125,53 @@ func TestParse_JSON_DropsTimestampAndFindsMessage(t *testing.T) {
 	assertNoTimestamp(t, row)
 }
 
+func TestParse_Syslog5424(t *testing.T) {
+	row := parseOne(t, "syslog", `<34>1 2026-07-04T00:00:00.003Z host.example.com su 1234 ID47 - the message body`)
+	if row["host"] != "host.example.com" || row["app"] != "su" {
+		t.Fatalf("host/app wrong: %v", row)
+	}
+	if row["procid"] != int64(1234) || row["msgid"] != "ID47" {
+		t.Fatalf("procid/msgid wrong: %v", row)
+	}
+	if row["message"] != "the message body" {
+		t.Fatalf("message = %v (structured-data '-' not stripped?)", row["message"])
+	}
+	assertNoTimestamp(t, row)
+}
+
+// A message-like key whose value is not a string must not become the message
+// column (that would type it as int and break templating); fall back to the raw
+// line, which is always a string.
+func TestParse_JSON_NonStringMessageFallsBackToLine(t *testing.T) {
+	line := `{"message":123,"level":"warn"}`
+	row := parseOne(t, "json", line)
+	if _, ok := row["message"].(string); !ok {
+		t.Fatalf("message must be a string, got %T (%v)", row["message"], row["message"])
+	}
+	if row["message"] != line {
+		t.Fatalf("message = %v, want raw line fallback", row["message"])
+	}
+	if row["level"] != "warn" {
+		t.Fatalf("level lost: %v", row)
+	}
+}
+
+// A null primary message key should be skipped in favor of the next string key.
+func TestParse_JSON_NullMessageUsesNextKey(t *testing.T) {
+	row := parseOne(t, "json", `{"message":null,"msg":"hello"}`)
+	if row["message"] != "hello" {
+		t.Fatalf("message = %v, want the string from msg", row["message"])
+	}
+}
+
+// auto mode must detect JSON even with leading whitespace (parity with explicit).
+func TestParse_AutoJSONLeadingWhitespace(t *testing.T) {
+	row := parseOne(t, "auto", "   "+`{"msg":"ok","n":1}`)
+	if row["format"] != "json" || row["message"] != "ok" || row["n"] != int64(1) {
+		t.Fatalf("leading-whitespace json not detected: %v", row)
+	}
+}
+
 func TestParse_Syslog3164(t *testing.T) {
 	row := parseOne(t, "syslog", `<34>Oct 11 22:14:15 mymachine su: 'su root' failed for user`)
 	if row["host"] != "mymachine" || row["app"] != "su" {

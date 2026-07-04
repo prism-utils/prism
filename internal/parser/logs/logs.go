@@ -169,16 +169,16 @@ func (p *parser) finish(row map[string]any, format string) map[string]any {
 // discover sniffs a line against the known formats in a cheap, unambiguous
 // order and returns the first match.
 func discover(line string) (map[string]any, string, bool) {
-	switch {
-	case strings.HasPrefix(line, "{"):
+	switch trimmed := strings.TrimSpace(line); {
+	case strings.HasPrefix(trimmed, "{"):
 		if row, ok := parseJSON(line); ok {
 			return row, formatJSON, true
 		}
-	case strings.HasPrefix(line, "CEF:"):
+	case strings.HasPrefix(trimmed, "CEF:"):
 		if row, ok := parseCEF(line); ok {
 			return row, formatCEF, true
 		}
-	case strings.HasPrefix(line, "<"):
+	case strings.HasPrefix(trimmed, "<"):
 		if row, ok := parseSyslog(line); ok {
 			return row, formatSyslog, true
 		}
@@ -209,7 +209,7 @@ func isTimestampKey(k string) bool {
 // <RFC3339Nano> <stdout|stderr> <F|P> <message>
 
 func parseK8s(line string) (map[string]any, bool) {
-	f := strings.SplitN(line, " ", 4)
+	f := strings.SplitN(strings.TrimSpace(line), " ", 4)
 	if len(f) < 4 {
 		return nil, false
 	}
@@ -258,17 +258,21 @@ func parseJSON(line string) (map[string]any, bool) {
 		}
 		row[k] = jsonScalar(raw)
 	}
-	// Normalize a message column from the first message-like key.
+	// Normalize a message column from the first message-like key that holds a
+	// string. The message column must always be a string so the downstream
+	// template processor can mine it; a non-string message-like value is
+	// ignored and we fall back to the raw line. Either branch assigns
+	// defaultMessage, overwriting any non-string field that shares its name.
+	found := false
 	for _, k := range jsonMessageKeys {
-		if v, ok := row[k]; ok {
-			if s, isStr := v.(string); isStr {
-				delete(row, k)
-				row[defaultMessage] = s
-			}
+		if s, isStr := row[k].(string); isStr {
+			delete(row, k)
+			row[defaultMessage] = s
+			found = true
 			break
 		}
 	}
-	if _, ok := row[defaultMessage]; !ok {
+	if !found {
 		row[defaultMessage] = line
 	}
 	return row, true
@@ -304,6 +308,7 @@ var (
 )
 
 func parseSyslog(line string) (map[string]any, bool) {
+	line = strings.TrimSpace(line)
 	if m := syslog5424Re.FindStringSubmatch(line); m != nil {
 		row := priFields(m[1])
 		row["host"] = m[3]
@@ -382,7 +387,7 @@ func stripStructuredData(s string) string {
 var clfRe = regexp.MustCompile(`^(\S+) (\S+) (\S+) \[[^\]]+\] "([^"]*)" (\d{3}) (\d+|-)`)
 
 func parseCLF(line string) (map[string]any, bool) {
-	m := clfRe.FindStringSubmatch(line)
+	m := clfRe.FindStringSubmatch(strings.TrimSpace(line))
 	if m == nil {
 		return nil, false
 	}
@@ -412,6 +417,7 @@ func parseCLF(line string) (map[string]any, bool) {
 var cefExtRe = regexp.MustCompile(`([A-Za-z][A-Za-z0-9_]*)=`)
 
 func parseCEF(line string) (map[string]any, bool) {
+	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "CEF:") {
 		return nil, false
 	}
