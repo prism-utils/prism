@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/elk-utilities/prism/internal/component"
+	encoderarrow "github.com/elk-utilities/prism/internal/encoder/arrow"
 	encoderjson "github.com/elk-utilities/prism/internal/encoder/json"
 	encoderparquet "github.com/elk-utilities/prism/internal/encoder/parquet"
 	encoderraw "github.com/elk-utilities/prism/internal/encoder/raw"
@@ -16,6 +17,7 @@ import (
 	"github.com/elk-utilities/prism/internal/input/stdin"
 	outputdir "github.com/elk-utilities/prism/internal/output/dir"
 	outputfile "github.com/elk-utilities/prism/internal/output/file"
+	outputflight "github.com/elk-utilities/prism/internal/output/flight"
 	"github.com/elk-utilities/prism/internal/output/stdout"
 	parserjson "github.com/elk-utilities/prism/internal/parser/json"
 	parserlogfmt "github.com/elk-utilities/prism/internal/parser/logfmt"
@@ -47,9 +49,11 @@ func Default() (*component.Registry, error) {
 		reg.RegisterEncoder(encoderraw.NewFactory()),
 		reg.RegisterEncoder(encoderjson.NewFactory()),
 		reg.RegisterEncoder(encoderparquet.NewFactory()),
+		reg.RegisterEncoder(encoderarrow.NewFactory()),
 		reg.RegisterOutput(stdout.NewFactory()),
 		reg.RegisterOutput(outputfile.NewFactory()),
 		reg.RegisterOutput(outputdir.NewFactory()),
+		reg.RegisterOutput(outputflight.NewFactory()),
 	} {
 		if err != nil {
 			return nil, fmt.Errorf("components: %w", err)

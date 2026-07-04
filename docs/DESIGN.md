@@ -407,8 +407,11 @@ prism runs them in exactly that order. No implicit reordering.
 - **Encoders**: `parquet` (Arrow→Parquet via `apache/arrow-go`, configurable
   compression + row-group sizing) encodes the full window; `json` serializes a
   batch as a JSON array `[{col: val, …}, …]` (one object per row) — this is the
-  encoder the `summary` branch uses to emit its aggregate rows. `raw` remains
-  for debug/passthrough. An encoder emits a self-contained `EncodedBlock` (a
+  encoder the `summary` branch uses to emit its aggregate rows. `arrow`
+  serializes the window as an Arrow IPC stream (schema + record batch) — the
+  columnar wire format for the `flight` output, so a receiver ingests the
+  columns directly instead of re-parsing a row format. `raw` remains for
+  debug/passthrough. An encoder emits a self-contained `EncodedBlock` (a
   complete Parquet file or a framed byte blob) plus metadata (row count, byte
   size).
 - **Outputs**:
@@ -423,10 +426,26 @@ prism runs them in exactly that order. No implicit reordering.
     onto each `EncodedBlock` (`BlockMeta`) and the buffer stamps the window range
     onto the flushed `RecordBatch`. Absent provenance falls back to a legacy
     `<nanos>-<seq>` name. One output writes one directory.
+  - `flight` — ship the window to an Apache Arrow Flight server via `DoPut`
+    (client side). It pairs with the `arrow` encoder: the block's IPC records are
+    reframed as `FlightData` so the network payload lands directly in the
+    receiver's columnar storage — no row-by-row re-parse on the server, the
+    memory/CPU win Arrow Flight is designed for. Producing pipeline/branch/window
+    provenance rides in the `FlightDescriptor` path
+    (`[pipeline, branch, startNano, endNano]`) so the receiver can name artifacts
+    with the same time-range scheme as `dir`. The receiver is
+    `prism collect -addr <a> -dir <d>` (§below): a minimal Flight server whose
+    `DoPut` handler persists each window as a range-named Parquet file, making the
+    transport end-to-end testable and a usable ingest endpoint.
   - `stdout` — write block bytes (debug/pipe).
   - `http` — POST the block as a binary body, configurable method/headers/auth,
     with bounded exponential backoff + retry and a clear give-up path (available;
     not on the critical path for this cut).
+
+The `flight` output + `prism collect` receiver form the columnar-network path:
+a per-branch `flight` sink can run *alongside* the durable `dir` Parquet sink, so
+the same window is both persisted locally and streamed columnar to an analytics
+ingest endpoint.
 
 Outputs own transport-level retry. Cross-cutting failure policy (drop vs block
 vs dead-letter) is a pipeline concern (§10), configured once.
