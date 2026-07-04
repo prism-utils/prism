@@ -1,0 +1,589 @@
+# prism configuration reference
+
+This is the complete reference for prism's config file: the top-level structure,
+every built-in component and its options (with defaults and validation), the unit
+formats, and the shipped example configs. For the architecture behind these
+knobs see [`DESIGN.md`](DESIGN.md).
+
+- [1. How config is loaded](#1-how-config-is-loaded)
+- [2. Top-level structure](#2-top-level-structure)
+- [3. Pipeline](#3-pipeline)
+- [4. Units: durations & byte sizes](#4-units-durations--byte-sizes)
+- [5. Buffer](#5-buffer)
+- [6. Inputs](#6-inputs)
+- [7. Parsers](#7-parsers)
+- [8. Processors](#8-processors)
+- [9. Encoders](#9-encoders)
+- [10. Outputs](#10-outputs)
+- [11. `prism collect` (Arrow Flight receiver)](#11-prism-collect-arrow-flight-receiver)
+- [12. Shipped example configs](#12-shipped-example-configs)
+- [13. Full annotated example](#13-full-annotated-example)
+
+---
+
+## 1. How config is loaded
+
+- **Format:** YAML or JSON — the same schema. JSON is a subset of YAML, so both
+  parse to one tree.
+- **Environment interpolation:** any `${VAR}` in the file is replaced with the
+  environment value before parsing (empty string if unset). Use it for paths,
+  URLs, and endpoints.
+- **Validation is total and up front:** the config is fully validated at load
+  time, so a malformed config never reaches the runtime. Errors name the
+  offending path, e.g. `pipelines[0].branches[1].encoder.type`.
+- **Unknown keys are rejected:** a typo like `buffer:` or an option a component
+  doesn't recognize fails the load rather than being silently ignored.
+
+Run it:
+
+```bash
+prism validate -config prism.yaml   # load + validate, then exit
+prism run      -config prism.yaml   # run until interrupted (SIGINT/SIGTERM)
+```
+
+Every component config block has the same shape — a `type` selecting the
+component, plus a `type`-specific `options` block:
+
+```yaml
+input:
+  type: file            # which component
+  options:              # that component's options (see its section below)
+    path: /var/log/app.log
+    mode: tail
+```
+
+Components whose sections say "no options" take just `{ type: <name> }`.
+
+---
+
+## 2. Top-level structure
+
+A config is a set of independent **pipelines**. Each pipeline runs in its own
+worker; one failing pipeline never takes down the others.
+
+```yaml
+pipelines:          # at least one required
+  - name: <string>  # required, unique across the file
+    input:    { ... }          # required — one source
+    parser:   { ... }          # required — bytes → columns
+    processors: [ ... ]        # optional — pre-buffer transforms (in order)
+    buffer:   { ... }          # windowing bounds (defaults applied if omitted)
+    on_error: drop | block     # optional — malformed-data policy (default block)
+    branches:                  # at least one required — fan-out tails
+      - name: <string>
+        processors: [ ... ]    # optional — per-branch transforms
+        encoder:  { ... }      # required — columns → bytes
+        output:   { ... }      # required — where the bytes go
+```
+
+The data flow of one pipeline:
+
+```
+input → parser → [processors] → buffer ─┬─ branch: [processors] → encoder → output
+                                        ├─ branch: [processors] → encoder → output
+                                        └─ …
+```
+
+Processors before the buffer transform every record on the way in; processors
+inside a branch transform only that branch's copy of each flushed window.
+
+---
+
+## 3. Pipeline
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | string | yes | — | Unique pipeline name; appears in logs and output file names. |
+| `input` | stage | yes | — | The single data source. See [Inputs](#6-inputs). |
+| `parser` | stage | yes | — | Turns raw records into typed columns. See [Parsers](#7-parsers). |
+| `processors` | list of stage | no | none | Pre-buffer transforms applied in order to every record. |
+| `buffer` | object | no | 30s age + 12 MiB | Windowing bounds. See [Buffer](#5-buffer). |
+| `on_error` | string | no | `block` | `drop` = log & skip the offending window, keep running; `block` = stop this pipeline on a parser/processor error. |
+| `branches` | list of branch | yes (≥1) | — | Fan-out tails; each independently processes/encodes/outputs the flushed window. |
+
+Each **branch**:
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | string | yes | — | Branch name; used as the output "phase" in file names (`raw`, `template`, `summary`, …). |
+| `processors` | list of stage | no | none | Transforms applied to this branch's copy of the window. |
+| `encoder` | stage | yes | — | Serializes the window. See [Encoders](#9-encoders). |
+| `output` | stage | yes | — | Ships the encoded block. See [Outputs](#10-outputs). |
+
+---
+
+## 4. Units: durations & byte sizes
+
+**Durations** are Go duration strings, always quoted: `"30s"`, `"1m30s"`,
+`"500ms"`, `"2h"`. The literal `0` (unquoted) is also accepted; a bare non-zero
+number is rejected because its unit would be ambiguous.
+
+**Byte sizes** accept a human string or a plain byte count:
+
+- Binary units (powers of 1024): `KiB`, `MiB`, `GiB` — e.g. `"12MiB"`.
+- SI units (powers of 1000): `KB`, `MB`, `GB` — e.g. `"10MB"`.
+- Plain integer = bytes: `1048576`.
+
+---
+
+## 5. Buffer
+
+The buffer is a windowing accumulator: it collects parsed records and flushes a
+columnar window to the branches on the **first** bound it hits. This is what
+turns a stream into bounded, columnar batches and keeps memory flat.
+
+```yaml
+buffer:
+  max_age:   "5s"      # flush when the oldest buffered record reaches this age
+  max_rows:  100000    # flush when this many rows accumulate
+  max_bytes: "12MiB"   # flush when the estimated buffered size reaches this
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_age` | duration | `30s` (see note) | Wall-clock age of the oldest record that triggers a flush. |
+| `max_rows` | int | unset | Row count that triggers a flush. |
+| `max_bytes` | byte size | `12MiB` (see note) | Estimated buffered bytes that trigger a flush. |
+
+Rules:
+
+- **At least one bound must be active.** All three being `0` is rejected.
+- All values must be `>= 0`.
+- **Defaults:** if you omit the `buffer` block entirely (all three unset), prism
+  applies `max_age: 30s` + `max_bytes: 12MiB`. If you set *any* bound yourself,
+  no defaults are added — set the ones you want.
+- The window's `[start, end]` time range is stamped onto every output artifact
+  (used in the `dir` file name), so files are selectable by time range.
+
+---
+
+## 6. Inputs
+
+Exactly one input per pipeline.
+
+### `stdin`
+
+Reads newline-delimited records from standard input. No source options beyond
+batch sizing.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `batch_size` | int | `1000` | Max records per emitted raw batch. |
+
+```yaml
+input: { type: stdin, options: { batch_size: 1000 } }
+```
+
+### `file`
+
+Reads a file, either once (`batch`) or by following appends (`tail`).
+
+| Option | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `path` | string | yes | — | File to read. |
+| `mode` | string | no | `batch` | `batch` reads the whole file once, in bounded chunks; `tail` follows new lines as they are appended. |
+| `batch_size` | int | no | `1000` | Max records per emitted raw batch (must be `> 0`). |
+
+```yaml
+input:
+  type: file
+  options: { path: "/var/log/app.log", mode: tail, batch_size: 500 }
+```
+
+### `prometheus`
+
+Scrapes one or more Prometheus `/metrics` (text exposition) endpoints on an
+interval. Pair with the `prometheus` parser.
+
+| Option | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `targets` | list of string | yes (≥1) | — | `/metrics` URLs to scrape; none may be empty. |
+| `interval` | duration string | no | `15s` | Scrape period (must be `> 0`). |
+| `timeout` | duration string | no | `10s` | Per-request timeout (must be `> 0`). |
+
+```yaml
+input:
+  type: prometheus
+  options:
+    targets: ["http://localhost:9100/metrics", "http://svc:9090/metrics"]
+    interval: "1s"
+    timeout: "10s"
+```
+
+> Note: prometheus input option durations are plain strings (`"1s"`), parsed by
+> the component — the same syntax as the config `Duration` unit.
+
+---
+
+## 7. Parsers
+
+Exactly one parser per pipeline; it turns raw records into a columnar batch.
+
+### `raw`
+
+No parsing: each record becomes a single `line` (binary) column. No options.
+
+```yaml
+parser: { type: raw }
+```
+
+### `logfmt`
+
+Parses `key=value` logfmt lines; each key becomes a column. No options.
+
+```yaml
+parser: { type: logfmt }
+```
+
+### `json`
+
+Parses one JSON object per line; keys become columns (nested keys are
+flattened). No options.
+
+```yaml
+parser: { type: json }
+```
+
+### `regex`
+
+Parses each line with an RE2 regex; every **named capture group** becomes a
+column.
+
+| Option | Type | Required | Description |
+|---|---|---|---|
+| `pattern` | string | yes | RE2 pattern with at least one named group `(?P<name>…)`. |
+
+```yaml
+parser:
+  type: regex
+  options:
+    pattern: '^(?P<ip>\S+) \S+ \S+ \[(?P<ts>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+)'
+```
+
+### `prometheus`
+
+Parses Prometheus text exposition into a fixed sample schema: `__name__`,
+`labels`, `timestamp_ms`, `value`. Pair with the `prometheus` input. No options.
+
+```yaml
+parser: { type: prometheus }
+```
+
+### `logs`
+
+A conservative log parser: it does **not** guess fields unless the line is in a
+**known format**. It always produces a normalized, templatable `message` column
+and a `format` column recording how each line was read. Timestamp-like fields
+are never emitted (they are variable noise for grouping/templating).
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `format` | string | `none` | `none` \| `auto` \| `k8s` \| `json` \| `syslog` \| `clf` \| `cef`. |
+| `message` | string | `message` | Name of the normalized templatable column. |
+
+`format` values:
+
+- **`none`** — no field extraction; the whole line is kept as `message`. Safe
+  default: everything is still templatable and summarizable per template.
+- **`auto`** — sniff each line; if it matches a known format, extract that
+  format's fields, otherwise keep the raw line as `message`.
+- **`k8s`** — CRI container-log lines: `<RFC3339Nano> <stdout|stderr> <F|P> <msg>`
+  (the timestamp is dropped; `stream`/partial flags and `message` are kept).
+- **`json`** — structured JSON logs; a string message-like key becomes
+  `message`, other keys become columns, timestamp-like keys dropped.
+- **`syslog`** — RFC 3164 and RFC 5424 syslog.
+- **`clf`** — Common Log Format (web access): `host`, `method`, `path`,
+  `protocol`, `status`, `size`; the request is normalized into `message`.
+- **`cef`** — ArcSight Common Event Format headers + extensions.
+
+```yaml
+parser:
+  type: logs
+  options: { format: auto }     # or an explicit format like clf
+```
+
+The design intent (see the logging example configs): for an **unknown/`none`**
+line, summarize purely on the mined template; for a **known format**, summarize
+on the extracted fields plus the templated message.
+
+---
+
+## 8. Processors
+
+Processors transform a columnar batch. They may appear **before the buffer**
+(pipeline-level `processors`, applied to every record) or **inside a branch**
+(applied to that branch's copy of the flushed window).
+
+### `template`
+
+Mines a stable "template" from a text column using a Drain-style algorithm:
+variable tokens (numbers, ids, ips, …) collapse to `<*>`, so `user 42 from 10.0.0.1`
+and `user 99 from 10.0.0.9` share one template. This is what makes
+"template X → count Y" charts possible.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `source` | string | `line` | The string column to mine. Use `message` with the `logs` parser. |
+| `target` | string | `template` | Name of the added template column. |
+| `enabled` | bool | `true` | `false` makes the processor an identity pass (useful to toggle via config). |
+
+```yaml
+processors:
+  - type: template
+    options: { source: message, target: template }
+```
+
+### `summary`
+
+Declarative windowed aggregation: group rows by string columns and compute
+aggregates. One row out per group.
+
+| Option | Type | Required | Description |
+|---|---|---|---|
+| `group_by` | list of string | no | String columns to group by. Empty = one global group. |
+| `aggregates` | list of string | yes (≥1) | Aggregate directives (see below). |
+
+Aggregate directive syntax:
+
+- `count` → output column `count` (rows per group).
+- `<fn>:<field>` where `fn` is `sum`, `avg`, `min`, `max` → output column
+  `<fn>_<field>` (e.g. `sum:value` → `sum_value`).
+- `p<NN>:<field>` percentile, `NN` in `[0,100]` → output column `p<NN>_<field>`
+  (e.g. `p95:latency_ms` → `p95_latency_ms`).
+
+```yaml
+# count per log template (works for any input)
+processors:
+  - type: summary
+    options: { group_by: ["template"], aggregates: ["count"] }
+
+# per-series stats for metrics
+processors:
+  - type: summary
+    options:
+      group_by: ["__name__"]
+      aggregates: ["count", "sum:value", "avg:value", "max:value", "p95:value"]
+```
+
+> `group_by` columns must be string-typed in the batch. With the `logs` parser,
+> extracted numeric fields (e.g. CLF `status`) may be typed — group by a string
+> field (e.g. `method`) plus `template`, as in `configs/logging-clf.yaml`.
+
+---
+
+## 9. Encoders
+
+An encoder serializes a flushed window into a self-contained block.
+
+### `parquet`
+
+Arrow → Parquet (a complete Parquet file per window). The durable columnar sink.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `compression` | string | `snappy` | `snappy` \| `zstd` \| `gzip` \| `none` (`uncompressed` is an alias for `none`). |
+
+```yaml
+encoder: { type: parquet, options: { compression: zstd } }
+```
+
+### `arrow`
+
+Serializes the window as an **Arrow IPC stream** (schema + record batch). This
+is the columnar wire format the [`flight`](#10-outputs) output ships, so a
+receiver ingests the columns directly with no row-by-row re-parse. No options.
+
+```yaml
+encoder: { type: arrow }
+```
+
+### `json`
+
+Serializes the batch as a JSON array `[{col: val, …}, …]` (one object per row).
+Handy for summaries and debugging. No options.
+
+```yaml
+encoder: { type: json }
+```
+
+### `raw`
+
+Passthrough of the raw payload bytes; debug/passthrough. No options.
+
+```yaml
+encoder: { type: raw }
+```
+
+---
+
+## 10. Outputs
+
+An output ships one encoded block, owning its transport-level retry/ack.
+
+### `dir`
+
+Writes each window to its own file in a directory (temp-file + atomic rename).
+The main sink for self-contained Parquet windows.
+
+| Option | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `dir` | string | yes | — | Destination directory (created if missing). |
+| `prefix` | string | no | none | Prepended to every file name. |
+| `extension` | string | no | block format | Overrides the file extension; defaults to the encoder's format (e.g. `parquet`). |
+
+**File naming:** `<prefix><pipeline>-<branch>-<start>-<end>-<seq>.<ext>` where
+`branch` is the phase (`raw`/`template`/`summary`/…) and `start`/`end` are the
+window's UTC bounds in a compact, fixed-width, lexically-sortable form
+(`20060102T150405.000000000Z`). Consumers select files for a time range by name
+alone. If provenance is absent, a legacy `<nanos>-<seq>` name is used.
+
+> Exactly one output should write to a given directory. Two outputs sharing a
+> directory is a misconfiguration (their sequence counters are independent).
+
+```yaml
+output: { type: dir, options: { dir: "/var/lib/prism/logs/raw" } }
+```
+
+### `file`
+
+Appends blocks to a single file.
+
+| Option | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | yes | Destination file. |
+
+```yaml
+output: { type: file, options: { path: "/tmp/out.jsonl" } }
+```
+
+### `stdout`
+
+Writes block bytes to standard output (debug/pipe). No options.
+
+```yaml
+output: { type: stdout }
+```
+
+### `flight`
+
+Ships the window to an Apache Arrow **Flight** server via `DoPut` (client side).
+Pair it with the `arrow` encoder: the block's IPC records are reframed as
+`FlightData` so the payload lands directly in the receiver's columnar storage —
+the memory/CPU win Flight is designed for. Pipeline/branch/window provenance
+rides in the Flight descriptor so the receiver can name artifacts with the same
+time-range scheme as `dir`.
+
+| Option | Type | Required | Description |
+|---|---|---|---|
+| `addr` | string | yes | Flight server endpoint, `host:port` (insecure transport in this cut). |
+
+```yaml
+# run alongside a durable dir sink: same window persisted locally AND streamed
+- name: wire
+  encoder: { type: arrow }
+  output:  { type: flight, options: { addr: "collector:8815" } }
+```
+
+---
+
+## 11. `prism collect` (Arrow Flight receiver)
+
+The receiver for the `flight` output: a minimal Flight server whose `DoPut`
+handler persists each received window to a **time-range-named Parquet** file
+(the same naming as `dir`), making the columnar transport testable and a usable
+ingest endpoint. It is a subcommand, not a pipeline config:
+
+```bash
+prism collect -addr :8815 -dir ./ingest
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-addr` | `:8815` | Address to bind the Flight receiver on. |
+| `-dir` | — (required) | Directory to persist received windows as Parquet. |
+
+End to end, locally:
+
+```bash
+prism collect -addr :8815 -dir ./ingest &
+PRISM_METRICS_URL=http://host/metrics PRISM_OUT=./out PRISM_FLIGHT_ADDR=localhost:8815 \
+  prism run -config configs/metrics-flight.yaml
+# both ./out/metrics/raw and ./ingest receive byte-identical range-named parquet
+```
+
+---
+
+## 12. Shipped example configs
+
+Ready-to-run configs live in [`configs/`](../configs); each is heavily
+commented. All use `${PRISM_*}` env vars for paths/URLs.
+
+| File | What it does |
+|---|---|
+| `configs/metrics.yaml` | Scrape a Prometheus endpoint → persist raw series as time-range Parquet. No summary branch (server-side analytics aggregate the columnar Parquet directly). |
+| `configs/metrics-flight.yaml` | Same as above, plus a second `flight` branch that streams the same window (Arrow IPC) to a `prism collect` receiver — durable local Parquet **and** columnar network ingest. |
+| `configs/logging.yaml` | Three-phase logging with the `logs` parser (`format: auto`): `raw` Parquet, `template` Parquet, and a per-template `summary` Parquet ("template X → count Y"). Works for any input. |
+| `configs/logging-clf.yaml` | Known-format (CLF web access) logging: extract fields, template the request line, and summarize per `(method, template)` — the "known format → fields + templated message" flow. |
+
+---
+
+## 13. Full annotated example
+
+A two-pipeline config exercising most options:
+
+```yaml
+pipelines:
+  # ---- metrics: scrape → raw Parquet (range-named) ----------------------
+  - name: metrics
+    input:
+      type: prometheus
+      options:
+        targets: ["${PRISM_METRICS_URL}"]
+        interval: "1s"
+        timeout: "10s"
+    parser: { type: prometheus }
+    buffer:
+      max_age: "5s"
+      max_bytes: "12MiB"
+    on_error: drop            # a bad scrape window is logged and skipped
+    branches:
+      - name: raw
+        encoder: { type: parquet, options: { compression: snappy } }
+        output:  { type: dir, options: { dir: "${PRISM_OUT}/metrics/raw" } }
+
+  # ---- logs: tail → raw + template + per-template summary ---------------
+  - name: logs
+    input:
+      type: file
+      options: { path: "${PRISM_LOG}", mode: tail, batch_size: 500 }
+    parser:
+      type: logs
+      options: { format: auto }
+    buffer:
+      max_age: "2s"
+      max_bytes: "12MiB"
+    branches:
+      - name: raw
+        encoder: { type: parquet, options: { compression: snappy } }
+        output:  { type: dir, options: { dir: "${PRISM_OUT}/logs/raw" } }
+      - name: template
+        processors:
+          - type: template
+            options: { source: message, target: template }
+        encoder: { type: parquet, options: { compression: snappy } }
+        output:  { type: dir, options: { dir: "${PRISM_OUT}/logs/template" } }
+      - name: summary
+        processors:
+          - type: template
+            options: { source: message, target: template }
+          - type: summary
+            options: { group_by: ["template"], aggregates: ["count"] }
+        encoder: { type: parquet, options: { compression: snappy } }
+        output:  { type: dir, options: { dir: "${PRISM_OUT}/logs/summary" } }
+```
+
+Validate it before running:
+
+```bash
+PRISM_METRICS_URL=… PRISM_OUT=… PRISM_LOG=… prism validate -config prism.yaml
+```
