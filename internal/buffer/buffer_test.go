@@ -27,6 +27,27 @@ func mustFlush(t *testing.T, acc *buffer.Accumulator) (data.RecordBatch, bool) {
 	return win, ok
 }
 
+func TestAccumulator_WindowStart(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	acc := buffer.New(buffer.Config{MaxRows: 100}, mem)
+
+	if !acc.WindowStart().IsZero() {
+		t.Fatal("empty accumulator should report a zero window start")
+	}
+	t0 := time.Unix(1000, 0)
+	acc.Add(lines(mem, 1), t0)
+	acc.Add(lines(mem, 1), t0.Add(time.Second)) // later add must not move start
+	if got := acc.WindowStart(); !got.Equal(t0) {
+		t.Fatalf("window start = %v, want %v (the oldest add)", got, t0)
+	}
+	win, _ := mustFlush(t, acc)
+	win.Release()
+	if !acc.WindowStart().IsZero() {
+		t.Fatal("window start should reset to zero after flush")
+	}
+	mem.AssertSize(t, 0)
+}
+
 func TestAccumulator_FlushOnRows(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	acc := buffer.New(buffer.Config{MaxRows: 5}, mem)
