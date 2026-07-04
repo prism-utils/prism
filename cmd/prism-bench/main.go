@@ -297,16 +297,23 @@ func templateSummary(path string) (map[string]int64, bool, error) {
 	}
 	defer func() { _ = rdr.Close() }()
 	sc := rdr.MetaData().Schema
-	hasTemplate, hasCount := false, false
+	hasTemplate, hasCount, hasMessage := false, false, false
 	for i := 0; i < sc.NumColumns(); i++ {
 		switch sc.Column(i).Name() {
 		case "template":
 			hasTemplate = true
 		case "count":
 			hasCount = true
+		case "message":
+			hasMessage = true
 		}
 	}
-	if !hasTemplate || !hasCount {
+	// A summary is group-by keys + aggregates (e.g. template[,fields]+count) and
+	// never carries `message`; the raw/template phases always do. Keying on the
+	// absence of `message` distinguishes a tiny summary from a full-width
+	// raw/template Parquet that merely happens to include a `count` field —
+	// avoiding both a false positive and materializing a large table.
+	if !hasTemplate || !hasCount || hasMessage {
 		return nil, false, nil
 	}
 
@@ -350,6 +357,8 @@ func toInt64(v any) int64 {
 	case int64:
 		return n
 	case int32:
+		return int64(n)
+	case int16:
 		return int64(n)
 	case float64:
 		return int64(n)

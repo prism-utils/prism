@@ -114,6 +114,44 @@ func TestTemplateSummary_NonSummaryFile(t *testing.T) {
 	}
 }
 
+// A template-phase Parquet (message + template, plus a stray count field) must
+// NOT be read as a summary: it still carries the message column, and reading it
+// as a summary would both skew metrics and materialize a full-width table.
+func TestTemplateSummary_TemplatePhaseWithCountIsNotSummary(t *testing.T) {
+	dir := t.TempDir()
+	mem := memory.DefaultAllocator
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "message", Type: arrow.BinaryTypes.String},
+		{Name: "template", Type: arrow.BinaryTypes.String},
+		{Name: "count", Type: arrow.PrimitiveTypes.Int64}, // e.g. a parsed field named count
+	}, nil)
+	mb := array.NewStringBuilder(mem)
+	defer mb.Release()
+	tb := array.NewStringBuilder(mem)
+	defer tb.Release()
+	cb := array.NewInt64Builder(mem)
+	defer cb.Release()
+	mb.AppendValues([]string{"got 5 items", "got 9 items"}, nil)
+	tb.AppendValues([]string{"got <*> items", "got <*> items"}, nil)
+	cb.AppendValues([]int64{5, 9}, nil)
+	ma := mb.NewArray()
+	defer ma.Release()
+	ta := tb.NewArray()
+	defer ta.Release()
+	ca := cb.NewArray()
+	defer ca.Release()
+	path := filepath.Join(dir, "l-logs-template-1.parquet")
+	writeParquet(t, path, schema, []arrow.Array{ma, ta, ca}, 2)
+
+	_, ok, err := templateSummary(path)
+	if err != nil {
+		t.Fatalf("templateSummary: %v", err)
+	}
+	if ok {
+		t.Fatal("template-phase Parquet (has message) must not be a summary")
+	}
+}
+
 // inspectOutputs aggregates template counts across summary Parquet files and
 // still counts raw/template phases as plain Parquet rows.
 func TestInspectOutputs_AggregatesTemplateMetrics(t *testing.T) {
