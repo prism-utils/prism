@@ -6,6 +6,7 @@
 //
 //	prism run      -config prism.yaml
 //	prism validate -config prism.yaml
+//	prism collect  -addr :8815 -dir ./ingest
 //	prism version
 package main
 
@@ -17,6 +18,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/elk-utilities/prism/internal/collect"
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/components"
 	"github.com/elk-utilities/prism/internal/config"
@@ -38,6 +40,8 @@ func main() {
 		err = runCmd(os.Args[2:])
 	case "validate":
 		err = validateCmd(os.Args[2:])
+	case "collect":
+		err = collectCmd(os.Args[2:])
 	case "version":
 		fmt.Println("prism", version)
 	case "-h", "--help", "help":
@@ -56,10 +60,33 @@ func usage() {
 	fmt.Fprint(os.Stderr, `prism — config-driven observability pipelines
 
 usage:
-  prism run      -config <file>   run pipelines until interrupted
-  prism validate -config <file>   load and validate a config, then exit
-  prism version                   print version
+  prism run      -config <file>       run pipelines until interrupted
+  prism validate -config <file>       load and validate a config, then exit
+  prism collect  -addr <a> -dir <d>   run an Arrow Flight receiver → Parquet
+  prism version                       print version
 `)
+}
+
+func collectCmd(args []string) error {
+	fs := flag.NewFlagSet("collect", flag.ContinueOnError)
+	addr := fs.String("addr", ":8815", "address to bind the Flight receiver on")
+	dir := fs.String("dir", "", "directory to persist received windows as Parquet")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" {
+		return fmt.Errorf("-dir is required")
+	}
+	logger := obs.NewLogger(os.Stderr, 0)
+	srv, err := collect.NewServer(*dir, logger)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return srv.Serve(ctx, *addr, func(bound string) {
+		logger.Info("prism collect listening", "addr", bound, "dir", *dir, "version", version)
+	})
 }
 
 func loadConfig(args []string) (*config.Config, error) {

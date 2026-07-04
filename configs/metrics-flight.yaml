@@ -1,0 +1,33 @@
+# Metrics pipeline with the columnar-network path: persist each window as
+# time-range-named Parquet (durable, local) AND stream the same window to an
+# Apache Arrow Flight receiver, which ingests the columns directly (no
+# row-by-row re-parse) — the server-side memory/CPU win Flight is designed for.
+#
+# Run the receiver, then the pipeline:
+#   prism collect -addr :8815 -dir "${PRISM_INGEST}"
+#   prism run     -config configs/metrics-flight.yaml
+#
+# Environment:
+#   PRISM_METRICS_URL   the /metrics endpoint to scrape
+#   PRISM_OUT           local Parquet output root
+#   PRISM_FLIGHT_ADDR   Flight receiver address (e.g. localhost:8815)
+pipelines:
+  - name: metrics
+    input:
+      type: prometheus
+      options:
+        targets: ["${PRISM_METRICS_URL}"]
+        interval: "1s"
+    parser: { type: prometheus }
+    buffer:
+      max_age: "5s"
+      max_bytes: "12MiB"
+    branches:
+      # phase: raw — durable local Parquet (metrics-raw-<start>-<end>-<seq>.parquet)
+      - name: raw
+        encoder: { type: parquet, options: { compression: snappy } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/metrics/raw" } }
+      # phase: wire — same window, columnar over Arrow Flight to the receiver
+      - name: wire
+        encoder: { type: arrow }
+        output: { type: flight, options: { addr: "${PRISM_FLIGHT_ADDR}" } }
