@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -89,10 +90,19 @@ func value(col arrow.Array, r int) (any, error) {
 	case *array.Int32:
 		return a.Value(r), nil
 	case *array.Float64:
-		return a.Value(r), nil
+		return finite(a.Value(r)), nil
 	case *array.Float32:
-		return a.Value(r), nil
+		return finite(float64(a.Value(r))), nil
 	default:
 		return nil, fmt.Errorf("unsupported type %s", col.DataType())
 	}
+}
+
+// finite maps non-finite floats (NaN, ±Inf) to nil so they encode as JSON
+// null; JSON has no literal for them and json.Marshal would otherwise error.
+func finite(f float64) any {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil
+	}
+	return f
 }
