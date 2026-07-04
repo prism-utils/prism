@@ -5,7 +5,6 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
@@ -40,21 +40,16 @@ pipelines:
     parser: { type: prometheus }
     buffer: { max_rows: 1 }
     branches:
-      - name: data
+      - name: raw
         encoder: { type: parquet }
-        output: { type: dir, options: { dir: "${PRISM_OUT}/data", prefix: "m-" } }
-      - name: summary
-        processors:
-          - type: summary
-            options: { group_by: ["__name__"], aggregates: ["count", "sum:value", "avg:value"] }
-        encoder: { type: json }
-        output: { type: dir, options: { dir: "${PRISM_OUT}/summary", prefix: "s-" } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/metrics/raw" } }
 `
 
-// Metrics path: prometheus scrape → prometheus parse → window buffer →
-// {parquet → dir, summary → json → dir}. Asserts both sinks materialize with
-// the expected data.
-func TestE2E_MetricsToParquetAndSummary(t *testing.T) {
+// Metrics path: prometheus scrape → prometheus parse → window buffer → parquet
+// → dir. No summary branch (server-side analytics aggregate the columnar parquet
+// directly). Asserts the raw sink materializes with the expected data and a
+// time-range-encoded file name.
+func TestE2E_MetricsToParquet(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(metricsExposition))
 	}))
@@ -82,10 +77,8 @@ func TestE2E_MetricsToParquetAndSummary(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- set.Run(ctx, obs.NewHost(logger)) }()
 
-	dataDir := filepath.Join(out, "data")
-	sumDir := filepath.Join(out, "summary")
+	dataDir := filepath.Join(out, "metrics", "raw")
 	waitForFiles(t, dataDir, ".parquet")
-	waitForFiles(t, sumDir, ".json")
 
 	cancel()
 	select {
@@ -94,8 +87,32 @@ func TestE2E_MetricsToParquetAndSummary(t *testing.T) {
 		t.Fatal("Run did not stop after cancel")
 	}
 
-	assertParquetRows(t, newestFile(t, dataDir, ".parquet"), 2)
-	assertSummary(t, newestFile(t, sumDir, ".json"))
+	newest := newestFile(t, dataDir, ".parquet")
+	assertParquetRows(t, newest, 2)
+	assertRangeName(t, newest, "metrics", "raw")
+}
+
+// assertRangeName checks the file follows <pipeline>-<phase>-<start>-<end>-<seq>
+// with sortable UTC window bounds embedded in the name.
+func assertRangeName(t *testing.T, path, pipeline, phase string) {
+	t.Helper()
+	name := filepath.Base(path)
+	prefix := pipeline + "-" + phase + "-"
+	if !strings.HasPrefix(name, prefix) {
+		t.Fatalf("name %q does not start with %q", name, prefix)
+	}
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	parts := strings.Split(base, "-")
+	if len(parts) < 5 {
+		t.Fatalf("name %q lacks the range components", name)
+	}
+	start, end := parts[len(parts)-3], parts[len(parts)-2]
+	if start > end {
+		t.Fatalf("window start %q is after end %q in %q", start, end, name)
+	}
+	if _, err := time.Parse("20060102T150405.000000000Z", start); err != nil {
+		t.Fatalf("start %q is not a compact UTC timestamp: %v", start, err)
+	}
 }
 
 func waitForFiles(t *testing.T, dir, ext string) {
@@ -171,24 +188,50 @@ func assertParquetRows(t *testing.T, path string, wantRows int) {
 	}
 }
 
-func assertSummary(t *testing.T, path string) {
+// readParquetRows reads a Parquet file into row maps (string/int64/float64
+// values), for asserting small summary/aggregate outputs.
+func readParquetRows(t *testing.T, path string) []map[string]any {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read summary: %v", err)
+		t.Fatalf("read parquet: %v", err)
 	}
-	var rows []map[string]any
-	if err := json.Unmarshal(b, &rows); err != nil {
-		t.Fatalf("summary not valid JSON: %v\n%s", err, b)
+	rdr, err := file.NewParquetReader(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("open parquet %s: %v", path, err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("summary groups = %d, want 1 (single __name__)", len(rows))
+	defer func() { _ = rdr.Close() }()
+	pr, err := pqarrow.NewFileReader(rdr, pqarrow.ArrowReadProperties{}, memory.DefaultAllocator)
+	if err != nil {
+		t.Fatalf("arrow reader: %v", err)
 	}
-	r := rows[0]
-	if r["__name__"] != "http_requests_total" {
-		t.Fatalf("group name = %v, want http_requests_total", r["__name__"])
+	tbl, err := pr.ReadTable(context.Background())
+	if err != nil {
+		t.Fatalf("read table: %v", err)
 	}
-	if r["count"].(float64) != 2 || r["sum_value"].(float64) != 12 || r["avg_value"].(float64) != 6 {
-		t.Fatalf("aggregates wrong: %+v", r)
+	defer tbl.Release()
+
+	rows := make([]map[string]any, tbl.NumRows())
+	for i := range rows {
+		rows[i] = map[string]any{}
 	}
+	for c := 0; c < int(tbl.NumCols()); c++ {
+		name := tbl.Schema().Field(c).Name
+		col := tbl.Column(c)
+		r := 0
+		for _, chunk := range col.Data().Chunks() {
+			for j := 0; j < chunk.Len(); j++ {
+				switch a := chunk.(type) {
+				case *array.String:
+					rows[r][name] = a.Value(j)
+				case *array.Int64:
+					rows[r][name] = a.Value(j)
+				case *array.Float64:
+					rows[r][name] = a.Value(j)
+				}
+				r++
+			}
+		}
+	}
+	return rows
 }

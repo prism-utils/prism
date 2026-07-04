@@ -3,7 +3,6 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,27 +27,32 @@ pipelines:
       type: file
       options: { path: "${PRISM_LOG}", mode: tail, batch_size: 100 }
     parser: { type: logfmt }
-    processors:
-      - type: template
-        options: { source: msg, target: template }
     buffer:
       max_age: "200ms"
       max_rows: 100
     branches:
-      - name: data
+      - name: raw
         encoder: { type: parquet }
-        output: { type: dir, options: { dir: "${PRISM_OUT}/logs/data", prefix: "l-" } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/logs/raw" } }
+      - name: template
+        processors:
+          - type: template
+            options: { source: msg, target: template }
+        encoder: { type: parquet }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/logs/template" } }
       - name: summary
         processors:
+          - type: template
+            options: { source: msg, target: template }
           - type: summary
-            options: { group_by: ["level"], aggregates: ["count"] }
-        encoder: { type: json }
-        output: { type: dir, options: { dir: "${PRISM_OUT}/logs/summary", prefix: "s-" } }
+            options: { group_by: ["template"], aggregates: ["count"] }
+        encoder: { type: parquet }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/logs/summary" } }
 `
 
-// Logging path: file(tail) → logfmt → template → window buffer →
-// {parquet → dir, summary(count by level) → json → dir}.
-func TestE2E_LoggingToParquetAndSummary(t *testing.T) {
+// Logging path in three parquet phases: file(tail) → logfmt → window buffer →
+// { raw → parquet, template → parquet, summary(count by template) → parquet }.
+func TestE2E_LoggingThreePhaseParquet(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "app.log")
 	lines := []string{
@@ -82,10 +86,12 @@ func TestE2E_LoggingToParquetAndSummary(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- set.Run(ctx, obs.NewHost(logger)) }()
 
-	dataDir := filepath.Join(out, "logs", "data")
+	rawDir := filepath.Join(out, "logs", "raw")
+	tmplDir := filepath.Join(out, "logs", "template")
 	sumDir := filepath.Join(out, "logs", "summary")
-	waitForFiles(t, dataDir, ".parquet")
-	waitForFiles(t, sumDir, ".json")
+	waitForFiles(t, rawDir, ".parquet")
+	waitForFiles(t, tmplDir, ".parquet")
+	waitForFiles(t, sumDir, ".parquet")
 
 	cancel()
 	select {
@@ -94,8 +100,71 @@ func TestE2E_LoggingToParquetAndSummary(t *testing.T) {
 		t.Fatal("Run did not stop after cancel")
 	}
 
-	assertHasTemplateColumn(t, newestFile(t, dataDir, ".parquet"))
-	assertLevelCounts(t, sumDir)
+	// raw phase: parsed records, no template column; time-range name.
+	rawFile := newestFile(t, rawDir, ".parquet")
+	assertRangeName(t, rawFile, "logs", "raw")
+	if hasColumn(t, rawFile, "template") {
+		t.Fatal("raw phase must not carry a template column")
+	}
+	// template phase: template column present.
+	assertRangeName(t, newestFile(t, tmplDir, ".parquet"), "logs", "template")
+	assertHasTemplateColumn(t, newestFile(t, tmplDir, ".parquet"))
+	// summary phase: count per template, as parquet.
+	assertRangeName(t, newestFile(t, sumDir, ".parquet"), "logs", "summary")
+	assertTemplateCounts(t, sumDir)
+}
+
+// assertTemplateCounts sums per-template counts across every summary window file
+// (tail may cut windows anywhere) and checks the two mined shapes.
+func assertTemplateCounts(t *testing.T, sumDir string) {
+	t.Helper()
+	entries, err := os.ReadDir(sumDir)
+	if err != nil {
+		t.Fatalf("read summary dir: %v", err)
+	}
+	totals := map[string]int64{}
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) != ".parquet" {
+			continue
+		}
+		for _, r := range readParquetRows(t, filepath.Join(sumDir, e.Name())) {
+			totals[r["template"].(string)] += r["count"].(int64)
+		}
+	}
+	login := "user <*> logged in from <*>"
+	failed := "user <*> request failed code <*>"
+	if totals[login] != 2 || totals[failed] != 1 {
+		t.Fatalf("template counts = %v, want %q:2 %q:1", totals, login, failed)
+	}
+}
+
+// hasColumn reports whether a parquet file has a column of the given name.
+func hasColumn(t *testing.T, path, name string) bool {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read parquet: %v", err)
+	}
+	rdr, err := file.NewParquetReader(bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("open parquet: %v", err)
+	}
+	defer func() { _ = rdr.Close() }()
+	pr, err := pqarrow.NewFileReader(rdr, pqarrow.ArrowReadProperties{}, memory.DefaultAllocator)
+	if err != nil {
+		t.Fatalf("arrow reader: %v", err)
+	}
+	tbl, err := pr.ReadTable(context.Background())
+	if err != nil {
+		t.Fatalf("read table: %v", err)
+	}
+	defer tbl.Release()
+	for i := 0; i < int(tbl.NumCols()); i++ {
+		if tbl.Schema().Field(i).Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func assertHasTemplateColumn(t *testing.T, path string) {
@@ -126,35 +195,5 @@ func assertHasTemplateColumn(t *testing.T, path string) {
 	}
 	if !found {
 		t.Fatalf("parquet has no template column; schema=%v", tbl.Schema())
-	}
-}
-
-// assertLevelCounts sums per-level counts across every summary window file and
-// checks the totals (2 info + 1 error), since tail may cut windows anywhere.
-func assertLevelCounts(t *testing.T, sumDir string) {
-	t.Helper()
-	entries, err := os.ReadDir(sumDir)
-	if err != nil {
-		t.Fatalf("read summary dir: %v", err)
-	}
-	totals := map[string]int64{}
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(sumDir, e.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
-		}
-		var rows []map[string]any
-		if err := json.Unmarshal(b, &rows); err != nil {
-			t.Fatalf("summary %s not valid JSON: %v", e.Name(), err)
-		}
-		for _, r := range rows {
-			totals[r["level"].(string)] += int64(r["count"].(float64))
-		}
-	}
-	if totals["info"] != 2 || totals["error"] != 1 {
-		t.Fatalf("level counts = %v, want info:2 error:1", totals)
 	}
 }
