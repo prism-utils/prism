@@ -3,6 +3,7 @@ package json
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -50,6 +51,46 @@ func TestEncode_RowObjects(t *testing.T) {
 	}
 	if len(got) != 2 || got[0]["name"] != "a" || got[0]["count"].(float64) != 3 || got[0]["avg"].(float64) != 2.5 {
 		t.Fatalf("row0 mismatch: %+v", got[0])
+	}
+}
+
+// Prometheus exposition legitimately carries NaN and ±Inf (e.g. empty
+// quantiles), which flow through the summary aggregates. JSON has no literal
+// for them, so encoding must not fail the pipeline — non-finite floats encode
+// as null.
+func TestEncode_NonFiniteFloatsAsNull(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "__name__", Type: arrow.BinaryTypes.String},
+		{Name: "value", Type: arrow.PrimitiveTypes.Float64},
+	}, nil)
+	nb := array.NewStringBuilder(mem)
+	vb := array.NewFloat64Builder(mem)
+	nb.AppendValues([]string{"nan", "posinf", "neginf", "ok"}, nil)
+	vb.AppendValues([]float64{math.NaN(), math.Inf(1), math.Inf(-1), 1.5}, nil)
+	cols := []arrow.Array{nb.NewArray(), vb.NewArray()}
+	nb.Release()
+	vb.Release()
+	rec := array.NewRecordBatch(schema, cols, 4)
+	for _, c := range cols {
+		c.Release()
+	}
+
+	block, err := encoder{}.Encode(context.Background(), data.NewRecordBatch("t", rec))
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(block.Bytes, &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, block.Bytes)
+	}
+	if got[0]["value"] != nil || got[1]["value"] != nil || got[2]["value"] != nil {
+		t.Fatalf("non-finite floats should be null, got %+v", got)
+	}
+	if got[3]["value"].(float64) != 1.5 {
+		t.Fatalf("finite float should be preserved, got %+v", got[3])
 	}
 }
 

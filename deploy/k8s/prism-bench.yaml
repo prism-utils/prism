@@ -1,0 +1,131 @@
+# In-cluster benchmark deployment for prism.
+#
+# Runs prism as a non-root Deployment that exercises both verticals against real
+# workloads:
+#   * metrics — live-scrapes real /metrics exporters over cluster DNS
+#   * logs    — reads a real captured log sample mounted from a ConfigMap
+# and fans each out to a Parquet sink + a JSON summary under a shared emptyDir.
+#
+# A tiny busybox "inspector" sidecar shares that emptyDir so the outputs can be
+# pulled with `kubectl cp` (the distroless prism image has no tar/shell).
+#
+# Namespace is intentionally NOT set here: apply it into whichever namespace can
+# reach the target exporters. On clusters with a default-deny NetworkPolicy,
+# that means the exporters' own namespace. The `prism-logs` ConfigMap (the log
+# sample) is created at apply time by run-cluster-bench.sh.
+#
+#   kubectl apply -n <ns> -f deploy/k8s/prism-bench.yaml
+#   kubectl -n <ns> top pod <pod> --containers
+#   kubectl -n <ns> cp <pod>:/out ./cluster-out -c inspector
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prism-config
+  labels: { app: prism-bench }
+data:
+  prism.yaml: |
+    pipelines:
+      # ---- metrics: live scrape of real in-cluster exporters ----------------
+      - name: cluster-metrics
+        input:
+          type: prometheus
+          options:
+            interval: "2s"
+            targets:
+              - "http://demo-prometheus:9090/metrics"
+              - "http://demo-clickhouse:9363/metrics"
+              - "http://demo-elasticsearch-exporter:9114/metrics"
+        parser: { type: prometheus }
+        buffer: { max_age: "3s", max_bytes: "12MiB" }
+        branches:
+          - name: data
+            encoder: { type: parquet, options: { compression: snappy } }
+            output: { type: dir, options: { dir: "/out/metrics/data", prefix: "m-" } }
+          - name: summary
+            processors:
+              - type: summary
+                options:
+                  group_by: ["__name__"]
+                  aggregates: ["count", "sum:value", "avg:value", "max:value"]
+            encoder: { type: json }
+            output: { type: dir, options: { dir: "/out/metrics/summary", prefix: "s-" } }
+
+      # ---- logs: real captured logfmt sample --------------------------------
+      - name: cluster-logs
+        input:
+          type: file
+          options: { path: "/logs/sample.logfmt", mode: batch, batch_size: 1000 }
+        parser: { type: logfmt }
+        processors:
+          - type: template
+            options: { source: msg, target: template }
+        buffer: { max_age: "2s", max_bytes: "12MiB" }
+        branches:
+          - name: data
+            encoder: { type: parquet, options: { compression: snappy } }
+            output: { type: dir, options: { dir: "/out/logs/data", prefix: "l-" } }
+          - name: summary
+            processors:
+              - type: summary
+                options: { group_by: ["level"], aggregates: ["count"] }
+            encoder: { type: json }
+            output: { type: dir, options: { dir: "/out/logs/summary", prefix: "s-" } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prism-bench
+  labels: { app: prism-bench }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: prism-bench }
+  template:
+    metadata:
+      labels: { app: prism-bench }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: prism
+          image: prism:bench
+          imagePullPolicy: IfNotPresent
+          args: ["run", "-config", "/etc/prism/prism.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prism, readOnly: true }
+            - { name: logs, mountPath: /logs, readOnly: true }
+            - { name: out, mountPath: /out }
+        # Sidecar exists only so `kubectl cp` can pull /out (needs tar) from a
+        # cluster running the shell-less distroless prism image.
+        - name: inspector
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "sleep 3600"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+            limits: { cpu: "100m", memory: "64Mi" }
+          volumeMounts:
+            - { name: out, mountPath: /out, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: prism-config }
+        - name: logs
+          configMap:
+            name: prism-logs
+            items:
+              - { key: sample.logfmt, path: sample.logfmt }
+        - name: out
+          emptyDir: {}
