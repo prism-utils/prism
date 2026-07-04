@@ -188,6 +188,31 @@ func TestParse_AutoFallbackNone(t *testing.T) {
 	}
 }
 
+// An empty batch parses to an empty batch without error.
+func TestParse_EmptyBatch(t *testing.T) {
+	p, _ := factory{}.Create(&Config{Format: "auto"}, component.Settings{})
+	_ = p.Start(context.Background(), nil)
+	rb, err := p.Parse(context.Background(), data.RawBatch{Source: "t"})
+	if err != nil {
+		t.Fatalf("Parse empty: %v", err)
+	}
+	defer rb.Release()
+	if rb.Len() != 0 {
+		t.Fatalf("empty batch produced %d rows", rb.Len())
+	}
+}
+
+// A line that does not match its explicitly declared format falls back to raw
+// (message = line, format = none) rather than erroring or half-parsing.
+func TestParse_DeclaredFormatMismatchFallsBack(t *testing.T) {
+	for _, f := range []string{"k8s", "syslog", "clf", "cef", "json"} {
+		row := parseOne(t, f, "totally unstructured text 7")
+		if row["format"] != "none" || row["message"] != "totally unstructured text 7" {
+			t.Fatalf("format %q mismatch should fall back to raw, got %v", f, row)
+		}
+	}
+}
+
 func TestConfig_Validate(t *testing.T) {
 	if err := (&Config{Format: "bogus"}).Validate(); err == nil {
 		t.Fatal("bogus format should be rejected")

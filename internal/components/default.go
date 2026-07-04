@@ -19,6 +19,7 @@ import (
 	"github.com/elk-utilities/prism/internal/output/stdout"
 	parserjson "github.com/elk-utilities/prism/internal/parser/json"
 	parserlogfmt "github.com/elk-utilities/prism/internal/parser/logfmt"
+	parserlogs "github.com/elk-utilities/prism/internal/parser/logs"
 	parserprom "github.com/elk-utilities/prism/internal/parser/prometheus"
 	parserraw "github.com/elk-utilities/prism/internal/parser/raw"
 	parserregex "github.com/elk-utilities/prism/internal/parser/regex"
@@ -39,6 +40,7 @@ func Default() (*component.Registry, error) {
 		reg.RegisterParser(parserprom.NewFactory()),
 		reg.RegisterParser(parserlogfmt.NewFactory()),
 		reg.RegisterParser(parserjson.NewFactory()),
+		reg.RegisterParser(parserlogs.NewFactory()),
 		reg.RegisterParser(parserregex.NewFactory()),
 		reg.RegisterProcessor(procsummary.NewFactory()),
 		reg.RegisterProcessor(proctemplate.NewFactory()),

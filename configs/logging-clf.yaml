@@ -1,0 +1,47 @@
+# Known-format logging: a Common Log Format (web access) source. Because the
+# format is known, the `logs` parser extracts fields (host, method, path,
+# protocol, status, size — never the timestamp) and normalizes the request line
+# into `message`. The summary then aggregates on an extracted field (method) plus
+# the mined template, i.e. "how many requests of shape T used method M" — the
+# "known format → summarize on fields + template the message" flow.
+#
+#   prism run -config configs/logging-clf.yaml
+#
+# Environment:
+#   PRISM_LOG   the access-log file to tail
+#   PRISM_OUT   output root directory
+pipelines:
+  - name: access
+    input:
+      type: file
+      options:
+        path: "${PRISM_LOG}"
+        mode: tail
+        batch_size: 500
+    parser:
+      type: logs
+      options: { format: clf }
+    buffer:
+      max_age: "2s"
+      max_bytes: "12MiB"
+    branches:
+      # phase: raw — extracted fields, no template column.
+      - name: raw
+        encoder: { type: parquet, options: { compression: snappy } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/access/raw" } }
+      # phase: template — mine a template from the request line.
+      - name: template
+        processors:
+          - type: template
+            options: { source: message, target: template }
+        encoder: { type: parquet, options: { compression: snappy } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/access/template" } }
+      # phase: summary — count per (method, template): field + templated message.
+      - name: summary
+        processors:
+          - type: template
+            options: { source: message, target: template }
+          - type: summary
+            options: { group_by: ["method", "template"], aggregates: ["count"] }
+        encoder: { type: parquet, options: { compression: snappy } }
+        output: { type: dir, options: { dir: "${PRISM_OUT}/access/summary" } }
