@@ -9,6 +9,8 @@
 package data
 
 import (
+	"time"
+
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
@@ -30,11 +32,21 @@ func (b RawBatch) Len() int { return len(b.Records) }
 // opaque line bytes, before a typed parser imposes structure.
 const LineColumn = "line"
 
+// TimeWindow bounds the interval a flushed buffer window covers.
+type TimeWindow struct {
+	Start time.Time
+	End   time.Time
+}
+
 // RecordBatch is the structured, columnar unit that moves through parse →
 // processors → encode. It wraps an Arrow record and carries source provenance.
 type RecordBatch struct {
 	// Source is carried through from the originating RawBatch.
 	Source string
+	// Window is the time range this batch covers, set by the buffer on flush;
+	// nil for pre-buffer batches. It is held by pointer so the batch stays small
+	// (it is passed by value on every hop) and immutable across fan-out copies.
+	Window *TimeWindow
 	rec    arrow.RecordBatch
 }
 
@@ -98,6 +110,15 @@ func NewLinesBatch(mem memory.Allocator, source string, rows [][]byte) RecordBat
 	return RecordBatch{Source: source, rec: rec}
 }
 
+// BlockMeta is the producing pipeline/branch and window provenance an output
+// uses to name an artifact. The branch name is the artifact's "phase"
+// (raw | template | summary).
+type BlockMeta struct {
+	Pipeline string
+	Branch   string
+	Window   TimeWindow
+}
+
 // EncodedBlock is a self-contained serialized artifact ready for an output —
 // e.g. a complete Parquet file or a framed byte blob (docs/DESIGN.md §9).
 type EncodedBlock struct {
@@ -107,6 +128,9 @@ type EncodedBlock struct {
 	Bytes []byte
 	// Rows is how many logical rows the block represents.
 	Rows int
+	// Meta is the runtime-stamped provenance for naming; nil when unknown. It is
+	// held by pointer so the block stays small when passed by value to outputs.
+	Meta *BlockMeta
 }
 
 // Size reports the encoded payload size in bytes.

@@ -230,7 +230,8 @@ its own worker, fully isolated from the others (a crash-safe error in one does
 not stop the rest; see §10). A single pipeline is:
 
 ```
-input ─chan RawBatch─► parser ─► [pre-processor…]* ─► buffer(window) ─┬─► [proc…]* ─► encoder ─► output   (branch: data)
+input ─chan RawBatch─► parser ─► [pre-processor…]* ─► buffer(window) ─┬─► [proc…]* ─► encoder ─► output   (branch: raw)
+                                                                       ├─► [proc…]* ─► encoder ─► output   (branch: template)
                                                                        └─► [proc…]* ─► encoder ─► output   (branch: summary)
 ```
 
@@ -249,8 +250,9 @@ input ─chan RawBatch─► parser ─► [pre-processor…]* ─► buffer(win
 - **Fan-out branches.** After the buffer, the flushed window is dispatched to
   each configured branch. Every branch gets its **own** `RecordBatch` (a
   retained/sliced view — never a shared mutable batch), owns releasing it, and
-  runs its own `[processors] → encoder → output` tail. A branch is where
-  "data → parquet" and "summary → json" diverge from the same window.
+  runs its own `[processors] → encoder → output` tail. A branch is where the
+  raw / template / summary phases diverge from the same window (each a
+  self-contained, time-range-named parquet artifact).
 - **One goroutine per stage** within a pipeline (buffer, each branch), each
   owning a `for range ch { … }` loop with `ctx` selected.
 - **Graceful shutdown**: `ctx` cancel → inputs stop emitting and close their
@@ -304,7 +306,7 @@ free of any component import (dependencies point inward, §14):
 
 ```yaml
 pipelines:
-  # ── metrics: prometheus → buffer → { parquet, summary } ──
+  # ── metrics: prometheus → buffer → raw parquet (no summary) ──
   - name: metrics
     input:
       type: prometheus
@@ -318,40 +320,43 @@ pipelines:
       max_bytes: 12MiB
       max_rows: 0                 # 0 = no row cap
     branches:
-      - name: data
+      # No summary branch: server-side analytics aggregate the columnar parquet
+      # directly, which is cheaper than pre-aggregating a fixed set here.
+      - name: raw
         encoder: { type: parquet, options: { compression: zstd, row_group_rows: 50000 } }
-        output:  { type: file, options: { dir: /var/lib/prism/metrics, rotate: { max_bytes: 128MiB } } }
-      - name: summary
-        processors:
-          - type: summary         # windowed group-by aggregates over columns
-            options: { group_by: [__name__, instance], aggregates: [count, "avg(value)", "p95(value)"] }
-        encoder: { type: json }   # emits [{...}, ...]
-        output:  { type: file, options: { dir: /var/lib/prism/metrics-summary } }
+        output:  { type: dir, options: { dir: /var/lib/prism/metrics/raw } }
 
-  # ── logging: file(tail) → parse → template → buffer → { parquet, summary } ──
+  # ── logging: file(tail) → parse → buffer → three parquet phases ──
   - name: logging
     input:
       type: file
       options: { path: /var/log/app.log, mode: tail }
     parser:
       type: logfmt                # json | logfmt | regex
-      options: { autodiscover_fields: true }
-    processors:
-      - type: template            # built-in; normalizes lines into a template key
-        options: { field: message, target: template }
     buffer:
       max_age: 30s
       max_bytes: 12MiB
     branches:
-      - name: data
+      # phase raw: records exactly as parsed, no template column.
+      - name: raw
         encoder: { type: parquet, options: { compression: zstd } }
-        output:  { type: file, options: { dir: /var/lib/prism/logs } }
+        output:  { type: dir, options: { dir: /var/lib/prism/logs/raw } }
+      # phase template: records plus a mined, stable template column.
+      - name: template
+        processors:
+          - type: template        # normalizes the message into a template key
+            options: { source: msg, target: template }
+        encoder: { type: parquet, options: { compression: zstd } }
+        output:  { type: dir, options: { dir: /var/lib/prism/logs/template } }
+      # phase summary: count per template, as parquet (chart "template → count").
       - name: summary
         processors:
+          - type: template
+            options: { source: msg, target: template }
           - type: summary
-            options: { group_by: [level, service, template], aggregates: [count] }
-        encoder: { type: json }
-        output:  { type: file, options: { dir: /var/lib/prism/logs-summary } }
+            options: { group_by: [template], aggregates: [count] }
+        encoder: { type: parquet, options: { compression: zstd } }
+        output:  { type: dir, options: { dir: /var/lib/prism/logs/summary } }
 ```
 
 Secrets in any `options` block use `${VAR}` env interpolation (§12).
@@ -398,8 +403,16 @@ prism runs them in exactly that order. No implicit reordering.
   size).
 - **Outputs**:
   - `file` — write blocks to files with time/size rotation and atomic rename.
-    This is the sink for both end-to-end paths in this cut (parquet blocks to
-    one dir, JSON summaries to another).
+  - `dir` — write each block to its own file (temp-file + atomic rename), the
+    sink for self-contained Parquet windows. Files are named
+    `<pipeline>-<phase>-<start>-<end>-<seq>.<ext>`, where `phase` is the branch
+    name (`raw` | `template` | `summary`) and `start`/`end` are the flushed
+    window's UTC bounds in a compact, fixed-width, lexically-sortable form
+    (`20060102T150405.000000000Z`). Consumers select files for a timestamp range
+    by name alone, without opening footers; the runtime stamps this provenance
+    onto each `EncodedBlock` (`BlockMeta`) and the buffer stamps the window range
+    onto the flushed `RecordBatch`. Absent provenance falls back to a legacy
+    `<nanos>-<seq>` name. One output writes one directory.
   - `stdout` — write block bytes (debug/pipe).
   - `http` — POST the block as a binary body, configurable method/headers/auth,
     with bounded exponential backoff + retry and a clear give-up path (available;

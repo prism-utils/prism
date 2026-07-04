@@ -138,6 +138,7 @@ func (p *builtPipeline) bufferStage(ctx context.Context, mem memory.Allocator, p
 	}
 
 	flush := func() error {
+		start := acc.WindowStart() // capture before Flush resets it
 		win, ok, err := acc.Flush()
 		armed = false
 		if err != nil {
@@ -146,6 +147,7 @@ func (p *builtPipeline) bufferStage(ctx context.Context, mem memory.Allocator, p
 		if !ok {
 			return nil
 		}
+		win.Window = &data.TimeWindow{Start: start, End: time.Now()}
 		if !send(ctx, windows, win) {
 			win.Release()
 		}
@@ -231,6 +233,12 @@ func (p *builtPipeline) branchStage(ctx context.Context, log *slog.Logger, idx i
 }
 
 func (p *builtPipeline) runBranch(ctx context.Context, br branch, win data.RecordBatch) error {
+	// Capture the window's provenance before branch processors replace the batch
+	// (summary/template build new batches without the window fields).
+	var window data.TimeWindow
+	if win.Window != nil {
+		window = *win.Window
+	}
 	cur, err := applyProcessors(ctx, br.procs, win)
 	if err != nil {
 		cur.Release()
@@ -241,6 +249,7 @@ func (p *builtPipeline) runBranch(ctx context.Context, br branch, win data.Recor
 	if err != nil {
 		return fmt.Errorf("encode: %w", err)
 	}
+	block.Meta = &data.BlockMeta{Pipeline: p.name, Branch: br.name, Window: window}
 	if err := br.output.Consume(ctx, block); err != nil {
 		return fmt.Errorf("output: %w", err)
 	}

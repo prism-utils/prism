@@ -7,9 +7,11 @@ package dir
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,12 +20,18 @@ import (
 	"github.com/elk-utilities/prism/internal/data"
 )
 
+// tsLayout is a compact, filesystem-safe, lexically-sortable UTC timestamp
+// (basic ISO-8601, fixed 9-digit nanos) used for the window bounds in a name.
+const tsLayout = "20060102T150405.000000000Z"
+
 // Type is the config identifier for this output.
 const Type = "dir"
 
 // Config configures the directory output.
 type Config struct {
-	// Dir is the destination directory (created if missing). Required.
+	// Dir is the destination directory (created if missing). Required. Exactly
+	// one output should write to a given directory; two outputs sharing a
+	// directory is a misconfiguration (their sequence counters are independent).
 	Dir string `json:"dir"`
 	// Prefix is prepended to every file name (optional).
 	Prefix string `json:"prefix"`
@@ -73,6 +81,47 @@ func (o *Output) Start(context.Context, component.Host) error {
 // Shutdown is a no-op; each block is fully flushed in Consume.
 func (o *Output) Shutdown(context.Context) error { return nil }
 
+// freeName returns a destination path that does not yet exist, bumping the
+// sequence counter until it finds a free name. The caller must hold o.mu.
+func (o *Output) freeName(block data.EncodedBlock, ext string) string {
+	for {
+		final := filepath.Join(o.cfg.Dir, o.fileName(block, o.seq.Add(1), ext))
+		if _, err := os.Stat(final); errors.Is(err, os.ErrNotExist) {
+			return final
+		}
+	}
+}
+
+// fileName builds the artifact name. With window provenance it encodes the time
+// range — <prefix><pipeline>-<phase>-<start>-<end>-<seq>.<ext> — so a consumer
+// selects files for a timestamp range by name alone. Without provenance it falls
+// back to the legacy <prefix><nanos>-<seq>.<ext>.
+func (o *Output) fileName(block data.EncodedBlock, seq uint64, ext string) string {
+	if m := block.Meta; m != nil && m.Pipeline != "" && m.Branch != "" &&
+		!m.Window.Start.IsZero() && !m.Window.End.IsZero() {
+		return fmt.Sprintf("%s%s-%s-%s-%s-%d.%s",
+			o.cfg.Prefix,
+			safe(m.Pipeline), safe(m.Branch),
+			m.Window.Start.UTC().Format(tsLayout),
+			m.Window.End.UTC().Format(tsLayout),
+			seq, ext)
+	}
+	return fmt.Sprintf("%s%d-%d.%s", o.cfg.Prefix, time.Now().UnixNano(), seq, ext)
+}
+
+// safe maps any character outside [A-Za-z0-9_.] to '-' so names stay portable
+// and the '-' field separator is unambiguous for pipeline/branch tokens.
+func safe(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.':
+			return r
+		default:
+			return '-'
+		}
+	}, s)
+}
+
 // Consume writes one block to a uniquely-named file (temp + atomic rename).
 func (o *Output) Consume(_ context.Context, block data.EncodedBlock) error {
 	if len(block.Bytes) == 0 {
@@ -82,13 +131,14 @@ func (o *Output) Consume(_ context.Context, block data.EncodedBlock) error {
 	if ext == "" {
 		ext = block.Format
 	}
-	name := fmt.Sprintf("%s%d-%d.%s", o.cfg.Prefix, time.Now().UnixNano(), o.seq.Add(1), ext)
-	final := filepath.Join(o.cfg.Dir, name)
-	tmp := final + ".tmp"
 
-	// Serialize renames so concurrent branches never collide on a name.
+	// Serialize name selection + rename so concurrent branches never collide,
+	// and so a restart (seq resets to 0) with a deterministic time-range name
+	// never overwrites an existing window file.
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	final := o.freeName(block, ext)
+	tmp := final + ".tmp"
 	if err := os.WriteFile(tmp, block.Bytes, 0o600); err != nil {
 		return fmt.Errorf("output/dir: write %q: %w", tmp, err)
 	}
