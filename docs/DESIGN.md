@@ -295,6 +295,10 @@ that guarantees the memory discipline of §11 for windowed pipelines.
 
 ## 7. Configuration
 
+> For the exhaustive option-by-option reference (every component, its options,
+> defaults, and validation), see [`CONFIG.md`](CONFIG.md). This section covers
+> the design rationale.
+
 - **One schema, two encodings.** Config is a Go struct tree with `json` tags.
   YAML is parsed via a yaml→json shim so a single struct + `encoding/json`
   serves both. No divergent YAML/JSON code paths.

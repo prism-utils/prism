@@ -49,10 +49,11 @@ Add a capability = implement an interface + register a factory. No core edits.
 Read these, in order:
 
 1. [`docs/DESIGN.md`](docs/DESIGN.md) — architecture, patterns, data model.
-2. [`docs/PLAN.md`](docs/PLAN.md) — phased, test-first build plan.
-3. [`CONTRIBUTING.md`](CONTRIBUTING.md) — TDD workflow, data patterns, dos/don'ts.
-4. [`docs/TESTING.md`](docs/TESTING.md) — test layers and how to run them.
-5. [`docs/REVIEW.md`](docs/REVIEW.md) — the reviewer checklist.
+2. [`docs/CONFIG.md`](docs/CONFIG.md) — complete config reference (every component, its options, defaults).
+3. [`docs/PLAN.md`](docs/PLAN.md) — phased, test-first build plan.
+4. [`CONTRIBUTING.md`](CONTRIBUTING.md) — TDD workflow, data patterns, dos/don'ts.
+5. [`docs/TESTING.md`](docs/TESTING.md) — test layers and how to run them.
+6. [`docs/REVIEW.md`](docs/REVIEW.md) — the reviewer checklist.
 
 ### Working with agents
 
