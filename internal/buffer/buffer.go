@@ -92,6 +92,16 @@ func (a *Accumulator) Deadline() (time.Time, bool) {
 // Empty reports whether the accumulator holds no buffered data.
 func (a *Accumulator) Empty() bool { return !a.hasData }
 
+// WindowStart returns the time of the oldest buffered batch — the start of the
+// window that the next Flush will produce. It is the zero time when empty, and
+// resets to zero after Flush.
+func (a *Accumulator) WindowStart() time.Time {
+	if !a.hasData {
+		return time.Time{}
+	}
+	return a.oldest
+}
+
 // Flush concatenates the accumulated batches into one window RecordBatch and
 // resets. ok is false when the window is empty. The caller owns Releasing the
 // returned batch. Input batches are always released here.

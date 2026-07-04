@@ -13,7 +13,8 @@ import (
 
 // When a block carries pipeline/branch/window provenance, the file name encodes
 // the time range so a consumer can select files by range without opening them:
-//   <pipeline>-<phase>-<startUTC>-<endUTC>-<seq>.parquet
+//
+//	<pipeline>-<phase>-<startUTC>-<endUTC>-<seq>.parquet
 func TestConsume_TimeRangeName(t *testing.T) {
 	root := t.TempDir()
 	out := &Output{cfg: Config{Dir: root}}
@@ -24,7 +25,10 @@ func TestConsume_TimeRangeName(t *testing.T) {
 	end := start.Add(3 * time.Second)
 	block := data.EncodedBlock{
 		Format: "parquet", Bytes: []byte("PAR1"), Rows: 3,
-		Pipeline: "metrics", Branch: "raw", WindowStart: start, WindowEnd: end,
+		Meta: &data.BlockMeta{
+			Pipeline: "metrics", Branch: "raw",
+			Window: data.TimeWindow{Start: start, End: end},
+		},
 	}
 	if err := out.Consume(context.Background(), block); err != nil {
 		t.Fatalf("Consume: %v", err)
