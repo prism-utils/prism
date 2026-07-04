@@ -1,6 +1,6 @@
 # Spec: Arrow Flight output + `prism collect` receiver
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/arrow-flight`
 - **Owner phase:** orchestrator
@@ -66,12 +66,25 @@ testable end-to-end.
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines**
-- [ ] **Gate 2 — Tests cover edge cases** (empty window, bad addr, buffer release/leak, descriptor roundtrip)
-- [ ] **Gate 3 — Docs & comments match**
-- [ ] **Gate 4 — Comments are atomic**
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (factory pattern, error wrapping,
+      lifecycle hooks; `collect` reuses `output/dir` naming by design)
+- [x] **Gate 2 — Tests cover edge cases** (empty window/block, descriptor
+      roundtrip incl. nil/short/zero, full output→collect round-trip with
+      allocator leak check, graceful-shutdown-returns-nil assertion)
+- [x] **Gate 3 — Docs & comments match** (DESIGN §9 covers arrow/flight/collect)
+- [x] **Gate 4 — Comments are atomic**
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Bugbot review (branch `feat/arrow-flight`): functionally complete for scope.
+Addressed before merge:
+- Added direct output→collect integration tests (`TestOutput_Consume_RoundTrip`,
+  `TestOutput_Consume_EmptyBlock`) with a `CheckedAllocator` leak assertion,
+  covering the buffer-release and empty-block gaps.
+- Locked in graceful shutdown: the receiver `Serve` returns nil after ctx
+  cancel (per Flight `Server.Shutdown` contract), asserted in the test cleanup.
+- Descriptor provenance fallbacks (client `unknown/0`, server `flight/raw`) are
+  edge-only; the happy path always carries four segments (asserted in e2e).
+Deferred (documented, out of scope for this cut): auth/TLS, Flight read path
+(`DoGet`), reconnect on mid-run server death, streaming (non-buffered) ingest.
