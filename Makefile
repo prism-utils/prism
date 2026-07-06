@@ -92,6 +92,18 @@ golden-update: ## Regenerate golden fixtures (REVIEW the diff before committing)
 docker: ## Build the container image (tag: prism:$(VERSION))
 	docker build -t prism:$(VERSION) --build-arg VERSION=$(VERSION) .
 
+.PHONY: release-check
+release-check: ## Validate .goreleaser.yaml
+	goreleaser check
+
+.PHONY: snapshot
+snapshot: ## Local dry-run release (builds binaries+images, pushes nothing)
+	goreleaser release --snapshot --clean --skip=sign,sbom
+
+.PHONY: release
+release: ## Tag-driven release (CI runs this via goreleaser-action; needs a v* tag)
+	goreleaser release --clean
+
 .PHONY: clean
 clean: ## Remove build + coverage artifacts
 	rm -rf $(BIN_DIR) coverage.txt coverage.html
