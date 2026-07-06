@@ -77,6 +77,7 @@ func NewServer(dir string, log *slog.Logger, opts ...Option) (*Server, error) {
 func (s *Server) Serve(ctx context.Context, addr string, ready func(bound string)) error {
 	var mw []flight.ServerMiddleware
 	if s.token != "" {
+		//nolint:contextcheck // a gRPC stream interceptor propagates context via the ServerStream, not a ctx arg
 		mw = append(mw, flight.ServerMiddleware{Stream: bearerStreamInterceptor(s.token)})
 	}
 	srv := flight.NewServerWithMiddleware(mw)

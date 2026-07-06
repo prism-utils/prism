@@ -104,7 +104,7 @@ func TestConsume_GivesUpAfterMaxRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out := newOutput(t, fastRetry(srv.URL)) // MaxRetries = 3
+	out := newOutput(t, fastRetry(srv.URL)) // retry budget is three
 	err := out.Consume(context.Background(), data.EncodedBlock{Bytes: []byte("x")})
 	if err == nil {
 		t.Fatal("Consume should fail after exhausting retries")
