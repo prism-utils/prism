@@ -1,0 +1,34 @@
+# Reference pipeline: Elasticsearch exporter -> prism -> tenant proxy (Flight).
+#
+# Drop this file into the agent's config.d directory (see configs/prism-agent.yaml).
+# Every secret comes from ${ENV} so this file is safe to commit / render.
+#
+# Env expected on the agent host:
+#   ELASTICSEARCH_EXPORTER_URL  e.g. http://127.0.0.1:9114/metrics
+#   ELASTICSEARCH_EXPORTER_USER / ELASTICSEARCH_EXPORTER_PASS  (if the exporter needs auth)
+#   TENANT_FLIGHT_ADDR          e.g. ingress.tenant.example.com:443
+#   AGENT_API_KEY               bearer token accepted by the tenant ingress
+pipelines:
+  - name: elasticsearch
+    input:
+      type: prometheus
+      options:
+        targets: ["${ELASTICSEARCH_EXPORTER_URL}"]
+        interval: 15s
+        basic_auth:
+          username: "${ELASTICSEARCH_EXPORTER_USER}"
+          password: "${ELASTICSEARCH_EXPORTER_PASS}"
+    parser:
+      type: prometheus
+    buffer:
+      max_age: 30s
+      max_bytes: 12MiB
+    branches:
+      - name: raw
+        encoder: { type: arrow }
+        output:
+          type: flight
+          options:
+            addr: "${TENANT_FLIGHT_ADDR}"
+            token: "${AGENT_API_KEY}"
+            tls: { server_name: "${TENANT_SERVER_NAME}" }

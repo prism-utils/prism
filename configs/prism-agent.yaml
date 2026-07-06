@@ -1,0 +1,49 @@
+# Example agent config for the monitor-agent v2 role (customer host).
+#
+# It loads every per-exporter pipeline from configs/exporters/*.yaml and any
+# site-rendered drop-ins from config.d/*.yaml (the Beats-style config.d pattern),
+# then adds a logging pipeline shipped over authenticated HTTP. Run with:
+#
+#   prism run -config configs/prism-agent.yaml
+#
+# Globs are resolved relative to this file. All secrets come from ${ENV}.
+include:
+  - "exporters/*.yaml"
+  - "config.d/*.yaml"
+
+pipelines:
+  # Logging: tail app logs, template + summarize, POST windows to the tenant
+  # ingress over TLS + bearer (Traefik ForwardAuth compatible).
+  - name: app-logs
+    input:
+      type: file
+      options: { path: "${APP_LOG_PATH}", mode: tail }
+    parser:
+      type: logs
+      options: { format: auto }
+    buffer:
+      max_age: 30s
+      max_bytes: 12MiB
+    branches:
+      - name: raw
+        encoder: { type: parquet, options: { compression: zstd } }
+        output:
+          type: http
+          options:
+            url: "${TENANT_HTTP_INGEST}/logs-raw"
+            token: "${AGENT_API_KEY}"
+            content_type: "application/vnd.apache.parquet"
+            max_retries: 5
+      - name: summary
+        processors:
+          - type: template
+            options: { source: message, target: template }
+          - type: summary
+            options: { group_by: [template], aggregates: [count] }
+        encoder: { type: parquet, options: { compression: zstd } }
+        output:
+          type: http
+          options:
+            url: "${TENANT_HTTP_INGEST}/logs-summary"
+            token: "${AGENT_API_KEY}"
+            content_type: "application/vnd.apache.parquet"

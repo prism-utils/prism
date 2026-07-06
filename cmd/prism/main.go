@@ -98,12 +98,7 @@ func loadConfig(args []string) (*config.Config, error) {
 	if *path == "" {
 		return nil, fmt.Errorf("-config is required")
 	}
-	f, err := os.Open(*path)
-	if err != nil {
-		return nil, fmt.Errorf("open config: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-	return config.LoadConfig(f)
+	return config.LoadFile(*path)
 }
 
 func validateCmd(args []string) error {

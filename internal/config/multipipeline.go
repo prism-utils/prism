@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"time"
 
 	kyaml "github.com/knadh/koanf/parsers/yaml"
@@ -22,6 +24,14 @@ const (
 // Config is the top-level configuration: a set of independent pipelines, each
 // run in its own worker (docs/DESIGN.md §6).
 type Config struct {
+	// Include is a list of file globs (relative to the config file, or absolute)
+	// whose pipelines are merged into this set at load — the Beats-style
+	// "config.d/*.yaml" pattern for splitting per-source pipelines into their own
+	// files. Only the top-level config may declare Include (no nested includes),
+	// and it is honored only by LoadFile (a base directory is required to resolve
+	// the globs).
+	Include []string `json:"include,omitempty"`
+
 	Pipelines []PipelineConfig `json:"pipelines"`
 }
 
@@ -61,11 +71,11 @@ type Branch struct {
 // envVarRe matches ${VAR} references for env interpolation in the raw config.
 var envVarRe = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
 
-// LoadConfig reads a YAML or JSON pipeline set, interpolates ${VAR} from the
-// environment, applies buffer defaults, and validates it. It never returns an
-// unvalidated config. YAML and JSON share one path: JSON is a subset of YAML,
-// so both parse to the same map, which is re-marshalled to JSON and decoded
-// into the typed tree with unknown keys rejected.
+// LoadConfig reads a YAML or JSON pipeline set from a reader, interpolates
+// ${VAR} from the environment, applies buffer defaults, and validates it. It
+// never returns an unvalidated config. Because a reader has no base directory,
+// this path cannot resolve `include` globs — a config that declares include is
+// rejected here; use LoadFile for split configs.
 func LoadConfig(r io.Reader) (*Config, error) {
 	if r == nil {
 		return nil, ErrNotFound
@@ -74,6 +84,66 @@ func LoadConfig(r io.Reader) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: read: %w", err)
 	}
+	cfg, err := decodeConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfg.Include) > 0 {
+		return nil, fmt.Errorf("config: include is only supported by file-based loading")
+	}
+	return finalize(cfg)
+}
+
+// LoadFile reads a config from a path and merges any `include` globs (resolved
+// relative to the file's directory) into the pipeline set before validating —
+// the Beats-style config.d pattern. Included files must not themselves declare
+// include (one level only).
+func LoadFile(path string) (*Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
+		}
+		return nil, fmt.Errorf("config: read %q: %w", path, err)
+	}
+	cfg, err := decodeConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	baseDir := filepath.Dir(path)
+	for _, glob := range cfg.Include {
+		pattern := glob
+		if !filepath.IsAbs(pattern) {
+			pattern = filepath.Join(baseDir, pattern)
+		}
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("config: include %q: %w", glob, err)
+		}
+		sort.Strings(matches) // deterministic merge order
+		for _, m := range matches {
+			sub, err := os.ReadFile(m)
+			if err != nil {
+				return nil, fmt.Errorf("config: include %q: read: %w", m, err)
+			}
+			subCfg, err := decodeConfig(sub)
+			if err != nil {
+				return nil, fmt.Errorf("config: include %q: %w", m, err)
+			}
+			if len(subCfg.Include) > 0 {
+				return nil, fmt.Errorf("config: include %q: nested include is not allowed", m)
+			}
+			cfg.Pipelines = append(cfg.Pipelines, subCfg.Pipelines...)
+		}
+	}
+	return finalize(cfg)
+}
+
+// decodeConfig interpolates ${VAR}, parses YAML/JSON into the typed tree with
+// unknown keys rejected, and returns the config without defaults or validation.
+// YAML and JSON share one path: JSON is a subset of YAML, so both parse to the
+// same map, which is re-marshalled to JSON and decoded into the typed tree.
+func decodeConfig(raw []byte) (*Config, error) {
 	m, err := kyaml.Parser().Unmarshal(interpolateEnv(raw))
 	if err != nil {
 		return nil, fmt.Errorf("config: parse: %w", err)
@@ -88,11 +158,16 @@ func LoadConfig(r io.Reader) (*Config, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("config: decode: %w", err)
 	}
+	return &cfg, nil
+}
+
+// finalize applies defaults and runs total validation on an assembled config.
+func finalize(cfg *Config) (*Config, error) {
 	cfg.applyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
 // interpolateEnv replaces ${VAR} with the environment value (empty if unset).
