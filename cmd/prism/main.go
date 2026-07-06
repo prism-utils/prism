@@ -63,6 +63,7 @@ usage:
   prism run      -config <file>       run pipelines until interrupted
   prism validate -config <file>       load and validate a config, then exit
   prism collect  -addr <a> -dir <d>   run an Arrow Flight receiver → Parquet
+                 [-token <t>]         require a bearer token on every RPC
   prism version                       print version
 `)
 }
@@ -71,14 +72,23 @@ func collectCmd(args []string) error {
 	fs := flag.NewFlagSet("collect", flag.ContinueOnError)
 	addr := fs.String("addr", ":8815", "address to bind the Flight receiver on")
 	dir := fs.String("dir", "", "directory to persist received windows as Parquet")
+	token := fs.String("token", "", "require this bearer token on every RPC (or ${PRISM_COLLECT_TOKEN})")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *dir == "" {
 		return fmt.Errorf("-dir is required")
 	}
+	tok := *token
+	if tok == "" {
+		tok = os.Getenv("PRISM_COLLECT_TOKEN")
+	}
 	logger := obs.NewLogger(os.Stderr, 0)
-	srv, err := collect.NewServer(*dir, logger)
+	var opts []collect.Option
+	if tok != "" {
+		opts = append(opts, collect.WithToken(tok))
+	}
+	srv, err := collect.NewServer(*dir, logger, opts...)
 	if err != nil {
 		return err
 	}
@@ -98,12 +108,7 @@ func loadConfig(args []string) (*config.Config, error) {
 	if *path == "" {
 		return nil, fmt.Errorf("-config is required")
 	}
-	f, err := os.Open(*path)
-	if err != nil {
-		return nil, fmt.Errorf("open config: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-	return config.LoadConfig(f)
+	return config.LoadFile(*path)
 }
 
 func validateCmd(args []string) error {

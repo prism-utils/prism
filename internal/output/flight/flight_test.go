@@ -17,6 +17,7 @@ import (
 	"github.com/elk-utilities/prism/internal/collect"
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
 func TestConfig_Validate(t *testing.T) {
@@ -65,8 +66,13 @@ func TestDescriptorPath_NilAndZero(t *testing.T) {
 // bound address and ingest dir, cleaned up when the test ends.
 func startReceiver(t *testing.T) (addr, dir string) {
 	t.Helper()
+	return startReceiverOpts(t)
+}
+
+func startReceiverOpts(t *testing.T, opts ...collect.Option) (addr, dir string) {
+	t.Helper()
 	dir = t.TempDir()
-	srv, err := collect.NewServer(dir, nil)
+	srv, err := collect.NewServer(dir, nil, opts...)
 	if err != nil {
 		t.Fatalf("collect.NewServer: %v", err)
 	}
@@ -154,6 +160,60 @@ func TestOutput_Consume_RoundTrip(t *testing.T) {
 	name := waitForParquet(t, dir)
 	if !strings.HasPrefix(name, "metrics-wire-") {
 		t.Fatalf("received file %q lacks descriptor provenance", name)
+	}
+}
+
+// With a matching bearer token, the authenticated flight path round-trips to a
+// token-guarded receiver.
+func TestOutput_Consume_BearerAuth(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	addr, dir := startReceiverOpts(t, collect.WithToken("s3cr3t"))
+	out, err := factory{}.Create(&Config{Addr: addr, Token: "s3cr3t"}, component.Settings{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := out.Start(context.Background(), nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = out.Shutdown(context.Background()) }()
+
+	start := time.Now().UTC()
+	meta := &data.BlockMeta{Pipeline: "metrics", Branch: "raw", Window: data.TimeWindow{Start: start, End: start.Add(time.Second)}}
+	if err := out.Consume(context.Background(), ipcBlock(t, mem, meta)); err != nil {
+		t.Fatalf("Consume with matching token: %v", err)
+	}
+	if name := waitForParquet(t, dir); !strings.HasPrefix(name, "metrics-raw-") {
+		t.Fatalf("received file %q", name)
+	}
+}
+
+// A missing/wrong token is rejected by the guarded receiver.
+func TestOutput_Consume_BearerAuth_Rejected(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	addr, dir := startReceiverOpts(t, collect.WithToken("right"))
+	out, _ := factory{}.Create(&Config{Addr: addr, Token: "wrong"}, component.Settings{})
+	if err := out.Start(context.Background(), nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = out.Shutdown(context.Background()) }()
+
+	start := time.Now().UTC()
+	meta := &data.BlockMeta{Pipeline: "metrics", Branch: "raw", Window: data.TimeWindow{Start: start, End: start.Add(time.Second)}}
+	if err := out.Consume(context.Background(), ipcBlock(t, mem, meta)); err == nil {
+		t.Fatal("Consume with wrong token should be rejected")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("rejected stream still persisted %d files", len(entries))
+	}
+}
+
+func TestConfig_ValidateTLS(t *testing.T) {
+	if err := (&Config{Addr: "x:1", TLS: &tlsconf.Config{Cert: "c.pem"}}).Validate(); err == nil {
+		t.Fatal("tls cert without key should be invalid")
 	}
 }
 

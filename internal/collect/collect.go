@@ -20,6 +20,10 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
@@ -29,13 +33,24 @@ import (
 // Server receives Flight DoPut streams and writes them to Parquet under Dir.
 type Server struct {
 	flight.BaseFlightServer
-	dir *outputdir.Output
-	log *slog.Logger
-	mem memory.Allocator
+	dir   *outputdir.Output
+	log   *slog.Logger
+	mem   memory.Allocator
+	token string
+}
+
+// Option customizes a receiver.
+type Option func(*Server)
+
+// WithToken makes the receiver reject any RPC whose metadata does not carry
+// "authorization: Bearer <token>", mirroring a Bearer-checking ingress so the
+// authenticated flight path is testable end to end.
+func WithToken(token string) Option {
+	return func(s *Server) { s.token = token }
 }
 
 // NewServer builds a receiver that persists windows under dir.
-func NewServer(dir string, log *slog.Logger) (*Server, error) {
+func NewServer(dir string, log *slog.Logger, opts ...Option) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -50,13 +65,22 @@ func NewServer(dir string, log *slog.Logger) (*Server, error) {
 	if err := o.Start(context.Background(), nil); err != nil {
 		return nil, fmt.Errorf("collect: start dir output: %w", err)
 	}
-	return &Server{dir: o, log: log, mem: memory.DefaultAllocator}, nil
+	s := &Server{dir: o, log: log, mem: memory.DefaultAllocator}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // Serve binds a Flight server to addr and blocks until ctx is cancelled. It
 // reports the bound address via the ready callback (useful when addr uses :0).
 func (s *Server) Serve(ctx context.Context, addr string, ready func(bound string)) error {
-	srv := flight.NewServerWithMiddleware(nil)
+	var mw []flight.ServerMiddleware
+	if s.token != "" {
+		//nolint:contextcheck // a gRPC stream interceptor propagates context via the ServerStream, not a ctx arg
+		mw = append(mw, flight.ServerMiddleware{Stream: bearerStreamInterceptor(s.token)})
+	}
+	srv := flight.NewServerWithMiddleware(mw)
 	if err := srv.Init(addr); err != nil {
 		return fmt.Errorf("collect: init %q: %w", addr, err)
 	}
@@ -72,6 +96,21 @@ func (s *Server) Serve(ctx context.Context, addr string, ready func(bound string
 		return fmt.Errorf("collect: serve: %w", err)
 	}
 	return nil
+}
+
+// bearerStreamInterceptor rejects any stream whose metadata lacks the expected
+// "authorization: Bearer <token>" value.
+func bearerStreamInterceptor(token string) grpc.StreamServerInterceptor {
+	want := "Bearer " + token
+	return func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		md, _ := metadata.FromIncomingContext(ss.Context())
+		for _, v := range md.Get("authorization") {
+			if v == want {
+				return handler(srv, ss)
+			}
+		}
+		return status.Error(codes.Unauthenticated, "collect: invalid or missing bearer token")
+	}
 }
 
 // DoPut reads an incoming record stream and writes it to one Parquet file named

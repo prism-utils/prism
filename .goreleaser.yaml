@@ -1,0 +1,135 @@
+# GoReleaser config for prism. Runs only on a `v*` git tag (see
+# .github/workflows/release.yml) — never on merge-to-main. It produces signed
+# static binaries + checksums + SBOMs and a signed multi-arch GHCR image.
+#
+# Local dry run:  make snapshot   (builds everything, pushes nothing)
+# Validate:       make release-check
+version: 2
+
+project_name: prism
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: prism
+    main: ./cmd/prism
+    binary: prism
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    # Wire `prism version` to the release tag (main.version).
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: prism
+    ids:
+      - prism
+    formats:
+      - tar.gz
+    # e.g. prism_1.0.0_linux_amd64.tar.gz — the binary inside is named `prism`.
+    name_template: "prism_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+
+# Software bill of materials per archive (Syft must be on PATH).
+sboms:
+  - id: archive-sbom
+    artifacts: archive
+
+# Keyless (OIDC) cosign signature over the checksums file, so every binary is
+# verifiable via the signed checksums.
+signs:
+  - id: checksum-keyless
+    cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - "sign-blob"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+# Per-arch images; combined into a manifest below. buildx + QEMU in CI build the
+# arm64 image on an amd64 runner.
+dockers:
+  - id: amd64
+    ids:
+      - prism
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile.release
+    image_templates:
+      - "ghcr.io/elk-utilities/prism:{{ .Version }}-amd64"
+      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title=prism"
+      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+  - id: arm64
+    ids:
+      - prism
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile.release
+    image_templates:
+      - "ghcr.io/elk-utilities/prism:{{ .Version }}-arm64"
+      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title=prism"
+      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+
+docker_manifests:
+  - name_template: "ghcr.io/elk-utilities/prism:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/elk-utilities/prism:{{ .Version }}-amd64"
+      - "ghcr.io/elk-utilities/prism:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}"
+    image_templates:
+      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-arm64"
+  - name_template: "ghcr.io/elk-utilities/prism:latest"
+    image_templates:
+      - "ghcr.io/elk-utilities/prism:{{ .Version }}-amd64"
+      - "ghcr.io/elk-utilities/prism:{{ .Version }}-arm64"
+
+# Keyless cosign signature over each published manifest (by digest).
+docker_signs:
+  - id: manifest-keyless
+    cmd: cosign
+    artifacts: manifests
+    args:
+      - "sign"
+      - "${artifact}@${digest}"
+      - "--yes"
+    output: true
+
+release:
+  github:
+    owner: elk-utilities
+    name: prism
+  prerelease: auto

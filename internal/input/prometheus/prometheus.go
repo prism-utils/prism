@@ -15,6 +15,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
 const (
@@ -33,7 +34,26 @@ type Config struct {
 	Interval string `json:"interval"`
 	// Timeout bounds each scrape request as a Go duration (default 10s).
 	Timeout string `json:"timeout"`
+	// BasicAuth attaches HTTP Basic credentials to every scrape. Mutually
+	// exclusive with BearerToken. Secrets should come from ${ENV}.
+	BasicAuth *BasicAuth `json:"basic_auth,omitempty"`
+	// BearerToken is sent as "Authorization: Bearer <token>". Mutually
+	// exclusive with BasicAuth. Should come from ${ENV}.
+	BearerToken string `json:"bearer_token,omitempty"`
+	// TLS configures transport security for https targets (custom CA, client
+	// mTLS, SNI override, or verification skip for self-signed endpoints).
+	TLS *TLSConfig `json:"tls,omitempty"`
 }
+
+// BasicAuth holds HTTP Basic credentials for scraping.
+type BasicAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// TLSConfig is the shared client-TLS block (ca/cert/key/server_name/
+// insecure_skip_verify) used for scraping https endpoints.
+type TLSConfig = tlsconf.Config
 
 // Validate implements component.Config.
 func (c *Config) Validate() error {
@@ -50,6 +70,15 @@ func (c *Config) Validate() error {
 	}
 	if _, err := parseDur(c.Timeout, defaultTimeout); err != nil {
 		return fmt.Errorf("prometheus.timeout: %w", err)
+	}
+	if c.BasicAuth != nil && c.BearerToken != "" {
+		return fmt.Errorf("prometheus: basic_auth and bearer_token are mutually exclusive")
+	}
+	if c.BasicAuth != nil && c.BasicAuth.Username == "" {
+		return fmt.Errorf("prometheus.basic_auth.username: required when basic_auth is set")
+	}
+	if err := c.TLS.Validate("prometheus.tls"); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 	return nil
 }
@@ -86,29 +115,46 @@ func (factory) Create(cfg component.Config, set component.Settings) (component.I
 	interval, _ := parseDur(c.Interval, defaultInterval)
 	timeout, _ := parseDur(c.Timeout, defaultTimeout)
 	return &Input{
-		targets:  append([]string(nil), c.Targets...),
-		interval: interval,
-		client:   &http.Client{Timeout: timeout},
-		batches:  make(chan data.RawBatch, 1),
-		log:      set.Logger,
+		targets:     append([]string(nil), c.Targets...),
+		interval:    interval,
+		timeout:     timeout,
+		basicAuth:   c.BasicAuth,
+		bearerToken: c.BearerToken,
+		tls:         c.TLS,
+		batches:     make(chan data.RawBatch, 1),
+		log:         set.Logger,
 	}, nil
 }
 
 // Input scrapes targets on an interval and emits their bodies as RawBatches.
 type Input struct {
-	targets  []string
-	interval time.Duration
-	client   *http.Client
-	batches  chan data.RawBatch
-	log      *slog.Logger
+	targets     []string
+	interval    time.Duration
+	timeout     time.Duration
+	basicAuth   *BasicAuth
+	bearerToken string
+	tls         *TLSConfig
+	client      *http.Client
+	batches     chan data.RawBatch
+	log         *slog.Logger
 }
 
 // Batches returns the channel of scraped RawBatches; closed on ctx cancel.
 func (in *Input) Batches() <-chan data.RawBatch { return in.batches }
 
-// Start launches the scrape loop. It scrapes once immediately, then every
-// interval, so a short-lived run still produces data.
+// Start builds the HTTP client (reading any TLS material) and launches the
+// scrape loop. It scrapes once immediately, then every interval, so a
+// short-lived run still produces data.
 func (in *Input) Start(ctx context.Context, _ component.Host) error {
+	client := &http.Client{Timeout: in.timeout}
+	if in.tls != nil {
+		tlsCfg, err := in.tls.Build()
+		if err != nil {
+			return fmt.Errorf("input/prometheus: tls: %w", err)
+		}
+		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
+	in.client = client
 	go in.loop(ctx)
 	return nil
 }
@@ -157,6 +203,12 @@ func (in *Input) scrape(ctx context.Context, target string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
+	}
+	switch {
+	case in.bearerToken != "":
+		req.Header.Set("Authorization", "Bearer "+in.bearerToken)
+	case in.basicAuth != nil:
+		req.SetBasicAuth(in.basicAuth.Username, in.basicAuth.Password)
 	}
 	resp, err := in.client.Do(req)
 	if err != nil {

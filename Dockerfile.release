@@ -1,0 +1,13 @@
+# Release image: copies the GoReleaser-built static binary onto a distroless
+# nonroot base. The binary is CGO-free, so the image needs no shell, package
+# manager, or libc — it runs as uid 65532 with a read-only rootfs.
+#
+# The full-source build lives in ./Dockerfile (used by `make docker`); this
+# variant exists because GoReleaser builds the binary itself, per-arch, and only
+# needs it copied in.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY prism /usr/local/bin/prism
+# Config is mounted at /etc/prism/prism.yaml; secrets come from env (${VAR}).
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/prism"]
+CMD ["run", "-config", "/etc/prism/prism.yaml"]
