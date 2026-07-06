@@ -7,10 +7,13 @@ package prometheus
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/elk-utilities/prism/internal/component"
@@ -33,6 +36,37 @@ type Config struct {
 	Interval string `json:"interval"`
 	// Timeout bounds each scrape request as a Go duration (default 10s).
 	Timeout string `json:"timeout"`
+	// BasicAuth attaches HTTP Basic credentials to every scrape. Mutually
+	// exclusive with BearerToken. Secrets should come from ${ENV}.
+	BasicAuth *BasicAuth `json:"basic_auth,omitempty"`
+	// BearerToken is sent as "Authorization: Bearer <token>". Mutually
+	// exclusive with BasicAuth. Should come from ${ENV}.
+	BearerToken string `json:"bearer_token,omitempty"`
+	// TLS configures transport security for https targets (custom CA, client
+	// mTLS, SNI override, or verification skip for self-signed endpoints).
+	TLS *TLSConfig `json:"tls,omitempty"`
+}
+
+// BasicAuth holds HTTP Basic credentials for scraping.
+type BasicAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// TLSConfig configures transport security for scraping https endpoints. File
+// fields are paths read at Start; secrets in them stay off the config file.
+type TLSConfig struct {
+	// CA is a PEM bundle used to verify the server certificate (optional; the
+	// system roots are used when empty).
+	CA string `json:"ca"`
+	// Cert and Key are the client certificate/key for mTLS (both or neither).
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
+	// ServerName overrides the SNI/verification hostname (optional).
+	ServerName string `json:"server_name"`
+	// InsecureSkipVerify disables certificate verification (self-signed dev
+	// endpoints only — never in production).
+	InsecureSkipVerify bool `json:"insecure_skip_verify"`
 }
 
 // Validate implements component.Config.
@@ -50,6 +84,17 @@ func (c *Config) Validate() error {
 	}
 	if _, err := parseDur(c.Timeout, defaultTimeout); err != nil {
 		return fmt.Errorf("prometheus.timeout: %w", err)
+	}
+	if c.BasicAuth != nil && c.BearerToken != "" {
+		return fmt.Errorf("prometheus: basic_auth and bearer_token are mutually exclusive")
+	}
+	if c.BasicAuth != nil && c.BasicAuth.Username == "" {
+		return fmt.Errorf("prometheus.basic_auth.username: required when basic_auth is set")
+	}
+	if c.TLS != nil {
+		if (c.TLS.Cert == "") != (c.TLS.Key == "") {
+			return fmt.Errorf("prometheus.tls: cert and key must be set together")
+		}
 	}
 	return nil
 }
@@ -86,31 +131,76 @@ func (factory) Create(cfg component.Config, set component.Settings) (component.I
 	interval, _ := parseDur(c.Interval, defaultInterval)
 	timeout, _ := parseDur(c.Timeout, defaultTimeout)
 	return &Input{
-		targets:  append([]string(nil), c.Targets...),
-		interval: interval,
-		client:   &http.Client{Timeout: timeout},
-		batches:  make(chan data.RawBatch, 1),
-		log:      set.Logger,
+		targets:     append([]string(nil), c.Targets...),
+		interval:    interval,
+		timeout:     timeout,
+		basicAuth:   c.BasicAuth,
+		bearerToken: c.BearerToken,
+		tls:         c.TLS,
+		batches:     make(chan data.RawBatch, 1),
+		log:         set.Logger,
 	}, nil
 }
 
 // Input scrapes targets on an interval and emits their bodies as RawBatches.
 type Input struct {
-	targets  []string
-	interval time.Duration
-	client   *http.Client
-	batches  chan data.RawBatch
-	log      *slog.Logger
+	targets     []string
+	interval    time.Duration
+	timeout     time.Duration
+	basicAuth   *BasicAuth
+	bearerToken string
+	tls         *TLSConfig
+	client      *http.Client
+	batches     chan data.RawBatch
+	log         *slog.Logger
 }
 
 // Batches returns the channel of scraped RawBatches; closed on ctx cancel.
 func (in *Input) Batches() <-chan data.RawBatch { return in.batches }
 
-// Start launches the scrape loop. It scrapes once immediately, then every
-// interval, so a short-lived run still produces data.
+// Start builds the HTTP client (reading any TLS material) and launches the
+// scrape loop. It scrapes once immediately, then every interval, so a
+// short-lived run still produces data.
 func (in *Input) Start(ctx context.Context, _ component.Host) error {
+	client := &http.Client{Timeout: in.timeout}
+	if in.tls != nil {
+		tlsCfg, err := buildTLSConfig(in.tls)
+		if err != nil {
+			return fmt.Errorf("input/prometheus: tls: %w", err)
+		}
+		client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
+	in.client = client
 	go in.loop(ctx)
 	return nil
+}
+
+// buildTLSConfig reads the configured CA/client-cert material into a tls.Config.
+func buildTLSConfig(c *TLSConfig) (*tls.Config, error) {
+	cfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         c.ServerName,
+		InsecureSkipVerify: c.InsecureSkipVerify, //nolint:gosec // opt-in for self-signed dev endpoints; documented as unsafe
+	}
+	if c.CA != "" {
+		pem, err := os.ReadFile(c.CA)
+		if err != nil {
+			return nil, fmt.Errorf("read ca %q: %w", c.CA, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("ca %q: no certificates found", c.CA)
+		}
+		cfg.RootCAs = pool
+	}
+	if c.Cert != "" {
+		pair, err := tls.LoadX509KeyPair(c.Cert, c.Key)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{pair}
+	}
+	return cfg, nil
 }
 
 // Shutdown is a no-op; the loop stops on ctx cancellation.
@@ -157,6 +247,12 @@ func (in *Input) scrape(ctx context.Context, target string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
+	}
+	switch {
+	case in.bearerToken != "":
+		req.Header.Set("Authorization", "Bearer "+in.bearerToken)
+	case in.basicAuth != nil:
+		req.SetBasicAuth(in.basicAuth.Username, in.basicAuth.Password)
 	}
 	resp, err := in.client.Do(req)
 	if err != nil {
