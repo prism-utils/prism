@@ -62,7 +62,9 @@ A config is a set of independent **pipelines**. Each pipeline runs in its own
 worker; one failing pipeline never takes down the others.
 
 ```yaml
-pipelines:          # at least one required
+include:            # optional — merge pipelines from other files (see below)
+  - "config.d/*.yaml"
+pipelines:          # at least one required (across the main file + includes)
   - name: <string>  # required, unique across the file
     input:    { ... }          # required — one source
     parser:   { ... }          # required — bytes → columns
@@ -75,6 +77,24 @@ pipelines:          # at least one required
         encoder:  { ... }      # required — columns → bytes
         output:   { ... }      # required — where the bytes go
 ```
+
+### Splitting config with `include` (config.d)
+
+The top-level `include` is a list of file globs whose `pipelines` are merged
+into the set — the Beats-style `config.d/*.yaml` pattern, so a site renderer can
+drop one file per source into a directory:
+
+- Globs resolve relative to the config file's directory (absolute globs are used
+  as-is); matches are merged in sorted order.
+- Only the **top-level** config may declare `include`; an included file that
+  itself declares `include` is rejected (one level only).
+- Pipeline names must still be unique across the merged set.
+- `${ENV}` interpolation applies to included files too.
+- `include` is honored by `prism run`/`validate` (file-based loading). It is not
+  supported when a config is supplied on a stream without a base directory.
+
+See `configs/prism-agent.yaml` and `configs/exporters/*.yaml` for a worked
+example (per-exporter pipelines split into their own files).
 
 The data flow of one pipeline:
 
@@ -200,18 +220,45 @@ interval. Pair with the `prometheus` parser.
 | `targets` | list of string | yes (≥1) | — | `/metrics` URLs to scrape; none may be empty. |
 | `interval` | duration string | no | `15s` | Scrape period (must be `> 0`). |
 | `timeout` | duration string | no | `10s` | Per-request timeout (must be `> 0`). |
+| `basic_auth` | object | no | — | HTTP Basic credentials `{username, password}` sent on every scrape. Mutually exclusive with `bearer_token`. |
+| `bearer_token` | string | no | — | Sent as `Authorization: Bearer <token>`. Mutually exclusive with `basic_auth`. |
+| `tls` | object | no | — | Client TLS block (see [TLS block](#tls-block)) for https targets. |
+
+Auth/TLS apply to **all** targets of this input (the Prometheus `scrape_config`
+model). Put one exporter behind one input when credentials differ. All secret
+fields should come from `${ENV}`.
 
 ```yaml
 input:
   type: prometheus
   options:
-    targets: ["http://localhost:9100/metrics", "http://svc:9090/metrics"]
-    interval: "1s"
+    targets: ["https://es:9114/metrics"]
+    interval: "15s"
     timeout: "10s"
+    basic_auth:
+      username: "${ES_EXPORTER_USER}"
+      password: "${ES_EXPORTER_PASS}"
+    tls:
+      ca: /etc/prism/tls/ca.pem
+      server_name: es.internal
 ```
 
 > Note: prometheus input option durations are plain strings (`"1s"`), parsed by
 > the component — the same syntax as the config `Duration` unit.
+
+<a id="tls-block"></a>
+#### TLS block (shared)
+
+Used by the `prometheus` input and the `http` / `flight` outputs. File fields
+are paths read at start; no key material lives in the config.
+
+| Option | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `ca` | string (path) | no | system roots | PEM bundle to verify the server cert. |
+| `cert` | string (path) | no | — | Client cert for mTLS (must be set with `key`). |
+| `key` | string (path) | no | — | Client key for mTLS (must be set with `cert`). |
+| `server_name` | string | no | — | SNI / verification hostname override. |
+| `insecure_skip_verify` | bool | no | `false` | Disable cert verification (self-signed dev only — unsafe in prod). |
 
 ---
 
@@ -475,13 +522,51 @@ time-range scheme as `dir`.
 
 | Option | Type | Required | Description |
 |---|---|---|---|
-| `addr` | string | yes | Flight server endpoint, `host:port` (insecure transport in this cut). |
+| `addr` | string | yes | Flight server endpoint, `host:port`. |
+| `token` | string | no | Bearer token sent per-RPC as `authorization: Bearer <token>` (use `${ENV}`). |
+| `tls` | object | no | Client TLS block (see [TLS block](#tls-block)). When set, the connection uses TLS; otherwise it is plaintext. |
 
 ```yaml
 # run alongside a durable dir sink: same window persisted locally AND streamed
 - name: wire
   encoder: { type: arrow }
-  output:  { type: flight, options: { addr: "collector:8815" } }
+  output:
+    type: flight
+    options:
+      addr: "ingress.tenant.example.com:443"
+      token: "${AGENT_API_KEY}"
+      tls: { server_name: "ingress.tenant.example.com" }
+```
+
+### `http`
+
+POSTs each encoded block (a self-contained Parquet window) to an HTTP(S)
+endpoint, retrying transient failures (`429`/`5xx`/transport errors) with capped
+exponential backoff and giving up with a typed error. This is the authenticated
+egress that reaches a Bearer-checking ingress (e.g. Traefik ForwardAuth). A
+`4xx` other than `429` is permanent and fails immediately.
+
+| Option | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `url` | string | yes | — | Endpoint each block is POSTed to. |
+| `method` | string | no | `POST` | `POST`, `PUT`, or `PATCH`. |
+| `headers` | map[string]string | no | — | Extra request headers (values may use `${ENV}`). |
+| `token` | string | no | — | Sent as `Authorization: Bearer <token>` (use `${ENV}`). |
+| `content_type` | string | no | `application/octet-stream` | Request `Content-Type`. |
+| `tls` | object | no | — | Client TLS block (see [TLS block](#tls-block)). |
+| `max_retries` | int | no | `5` | Retries after the first attempt (`>= 0`). |
+| `timeout` | duration string | no | `30s` | Per-attempt timeout. |
+| `initial_backoff` | duration string | no | `500ms` | First retry delay. |
+| `max_backoff` | duration string | no | `30s` | Retry delay cap. |
+
+```yaml
+output:
+  type: http
+  options:
+    url: "https://ingress.tenant.example.com/logs-raw"
+    token: "${AGENT_API_KEY}"
+    content_type: "application/vnd.apache.parquet"
+    max_retries: 5
 ```
 
 ---

@@ -431,7 +431,9 @@ prism runs them in exactly that order. No implicit reordering.
     onto the flushed `RecordBatch`. Absent provenance falls back to a legacy
     `<nanos>-<seq>` name. One output writes one directory.
   - `flight` — ship the window to an Apache Arrow Flight server via `DoPut`
-    (client side). It pairs with the `arrow` encoder: the block's IPC records are
+    (client side), optionally over **TLS** with a **per-RPC bearer `token`
+    (`${ENV}`)** so it reaches an authenticated tenant ingress. It pairs with the
+    `arrow` encoder: the block's IPC records are
     reframed as `FlightData` so the network payload lands directly in the
     receiver's columnar storage — no row-by-row re-parse on the server, the
     memory/CPU win Arrow Flight is designed for. Producing pipeline/branch/window
@@ -442,9 +444,11 @@ prism runs them in exactly that order. No implicit reordering.
     `DoPut` handler persists each window as a range-named Parquet file, making the
     transport end-to-end testable and a usable ingest endpoint.
   - `stdout` — write block bytes (debug/pipe).
-  - `http` — POST the block as a binary body, configurable method/headers/auth,
-    with bounded exponential backoff + retry and a clear give-up path (available;
-    not on the critical path for this cut).
+  - `http` — POST the block (a self-contained Parquet window) as a binary body,
+    with configurable method/headers, **bearer auth (`token`, `${ENV}`)**, and
+    **client TLS**, retrying transient failures (429/5xx/transport) with bounded
+    exponential backoff and a clear typed give-up. This is the authenticated
+    egress that reaches a Bearer-checking ingress (e.g. Traefik ForwardAuth).
 
 The `flight` output + `prism collect` receiver form the columnar-network path:
 a per-branch `flight` sink can run *alongside* the durable `dir` Parquet sink, so
@@ -453,6 +457,10 @@ ingest endpoint.
 
 Outputs own transport-level retry. Cross-cutting failure policy (drop vs block
 vs dead-letter) is a pipeline concern (§10), configured once.
+
+The artifact taxonomy, file/descriptor naming, and per-phase Parquet schemas
+these outputs produce are frozen and versioned as a consumer-facing contract in
+[`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md).
 
 ---
 
