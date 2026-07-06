@@ -18,6 +18,7 @@ import (
 	outputdir "github.com/elk-utilities/prism/internal/output/dir"
 	outputfile "github.com/elk-utilities/prism/internal/output/file"
 	outputflight "github.com/elk-utilities/prism/internal/output/flight"
+	outputhttp "github.com/elk-utilities/prism/internal/output/http"
 	"github.com/elk-utilities/prism/internal/output/stdout"
 	parserjson "github.com/elk-utilities/prism/internal/parser/json"
 	parserlogfmt "github.com/elk-utilities/prism/internal/parser/logfmt"
@@ -54,6 +55,7 @@ func Default() (*component.Registry, error) {
 		reg.RegisterOutput(outputfile.NewFactory()),
 		reg.RegisterOutput(outputdir.NewFactory()),
 		reg.RegisterOutput(outputflight.NewFactory()),
+		reg.RegisterOutput(outputhttp.NewFactory()),
 	} {
 		if err != nil {
 			return nil, fmt.Errorf("components: %w", err)

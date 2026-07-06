@@ -7,17 +7,15 @@ package prometheus
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
 const (
@@ -53,21 +51,9 @@ type BasicAuth struct {
 	Password string `json:"password"`
 }
 
-// TLSConfig configures transport security for scraping https endpoints. File
-// fields are paths read at Start; secrets in them stay off the config file.
-type TLSConfig struct {
-	// CA is a PEM bundle used to verify the server certificate (optional; the
-	// system roots are used when empty).
-	CA string `json:"ca"`
-	// Cert and Key are the client certificate/key for mTLS (both or neither).
-	Cert string `json:"cert"`
-	Key  string `json:"key"`
-	// ServerName overrides the SNI/verification hostname (optional).
-	ServerName string `json:"server_name"`
-	// InsecureSkipVerify disables certificate verification (self-signed dev
-	// endpoints only — never in production).
-	InsecureSkipVerify bool `json:"insecure_skip_verify"`
-}
+// TLSConfig is the shared client-TLS block (ca/cert/key/server_name/
+// insecure_skip_verify) used for scraping https endpoints.
+type TLSConfig = tlsconf.Config
 
 // Validate implements component.Config.
 func (c *Config) Validate() error {
@@ -91,10 +77,8 @@ func (c *Config) Validate() error {
 	if c.BasicAuth != nil && c.BasicAuth.Username == "" {
 		return fmt.Errorf("prometheus.basic_auth.username: required when basic_auth is set")
 	}
-	if c.TLS != nil {
-		if (c.TLS.Cert == "") != (c.TLS.Key == "") {
-			return fmt.Errorf("prometheus.tls: cert and key must be set together")
-		}
+	if err := c.TLS.Validate("prometheus.tls"); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 	return nil
 }
@@ -164,7 +148,7 @@ func (in *Input) Batches() <-chan data.RawBatch { return in.batches }
 func (in *Input) Start(ctx context.Context, _ component.Host) error {
 	client := &http.Client{Timeout: in.timeout}
 	if in.tls != nil {
-		tlsCfg, err := buildTLSConfig(in.tls)
+		tlsCfg, err := in.tls.Build()
 		if err != nil {
 			return fmt.Errorf("input/prometheus: tls: %w", err)
 		}
@@ -173,34 +157,6 @@ func (in *Input) Start(ctx context.Context, _ component.Host) error {
 	in.client = client
 	go in.loop(ctx)
 	return nil
-}
-
-// buildTLSConfig reads the configured CA/client-cert material into a tls.Config.
-func buildTLSConfig(c *TLSConfig) (*tls.Config, error) {
-	cfg := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		ServerName:         c.ServerName,
-		InsecureSkipVerify: c.InsecureSkipVerify, //nolint:gosec // opt-in for self-signed dev endpoints; documented as unsafe
-	}
-	if c.CA != "" {
-		pem, err := os.ReadFile(c.CA)
-		if err != nil {
-			return nil, fmt.Errorf("read ca %q: %w", c.CA, err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("ca %q: no certificates found", c.CA)
-		}
-		cfg.RootCAs = pool
-	}
-	if c.Cert != "" {
-		pair, err := tls.LoadX509KeyPair(c.Cert, c.Key)
-		if err != nil {
-			return nil, fmt.Errorf("load client cert: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{pair}
-	}
-	return cfg, nil
 }
 
 // Shutdown is a no-op; the loop stops on ctx cancellation.

@@ -18,10 +18,12 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/flight"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
 // Type is the config identifier for this output.
@@ -31,6 +33,12 @@ const Type = "flight"
 type Config struct {
 	// Addr is the Flight server endpoint (host:port). Required.
 	Addr string `json:"addr"`
+	// Token, when set, is sent as "authorization: Bearer <token>" per-RPC so
+	// the window reaches a Bearer-checking ingress. Use ${ENV}.
+	Token string `json:"token,omitempty"`
+	// TLS enables transport security for the gRPC connection. When unset the
+	// connection is insecure (plaintext) — acceptable only on a trusted network.
+	TLS *tlsconf.Config `json:"tls,omitempty"`
 }
 
 // Validate implements component.Config.
@@ -38,8 +46,25 @@ func (c *Config) Validate() error {
 	if c.Addr == "" {
 		return fmt.Errorf("flight.addr: required, must not be empty")
 	}
+	if err := c.TLS.Validate("flight.tls"); err != nil {
+		return fmt.Errorf("%w", err)
+	}
 	return nil
 }
+
+// bearerToken attaches "authorization: Bearer <token>" to every RPC. It only
+// permits an insecure transport when TLS is not configured, so a token over
+// plaintext is a deliberate trusted-network choice, never an accident.
+type bearerToken struct {
+	token      string
+	requireTLS bool
+}
+
+func (b bearerToken) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + b.token}, nil
+}
+
+func (b bearerToken) RequireTransportSecurity() bool { return b.requireTLS }
 
 type factory struct{}
 
@@ -63,9 +88,23 @@ type Output struct {
 	client flight.Client
 }
 
-// Start dials the Flight server (insecure transport for this cut).
+// Start dials the Flight server, applying TLS transport credentials and a
+// per-RPC bearer token when configured (plaintext otherwise).
 func (o *Output) Start(_ context.Context, _ component.Host) error {
-	c, err := flight.NewClientWithMiddleware(o.cfg.Addr, nil, nil, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var dialOpts []grpc.DialOption
+	if o.cfg.TLS != nil {
+		tlsCfg, err := o.cfg.TLS.Build()
+		if err != nil {
+			return fmt.Errorf("output/flight: tls: %w", err)
+		}
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+	if o.cfg.Token != "" {
+		dialOpts = append(dialOpts, grpc.WithPerRPCCredentials(bearerToken{token: o.cfg.Token, requireTLS: o.cfg.TLS != nil}))
+	}
+	c, err := flight.NewClientWithMiddleware(o.cfg.Addr, nil, nil, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("output/flight: dial %q: %w", o.cfg.Addr, err)
 	}

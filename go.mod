@@ -9,10 +9,12 @@ go 1.25.0
 
 require (
 	github.com/apache/arrow-go/v18 v18.6.0
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/nxadm/tail v1.4.11
 	go.uber.org/goleak v1.3.0
 	golang.org/x/sync v0.21.0
+	google.golang.org/grpc v1.80.0
 )
 
 require (
@@ -33,7 +35,6 @@ require (
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260120221211-b8f7ae30c516 // indirect
-	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
