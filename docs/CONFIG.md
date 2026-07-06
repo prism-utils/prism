@@ -586,6 +586,7 @@ prism collect -addr :8815 -dir ./ingest
 |---|---|---|
 | `-addr` | `:8815` | Address to bind the Flight receiver on. |
 | `-dir` | — (required) | Directory to persist received windows as Parquet. |
+| `-token` | — | Require this bearer token on every RPC (or set `PRISM_COLLECT_TOKEN`). Pair with a `flight` output's `token`. |
 
 End to end, locally:
 
