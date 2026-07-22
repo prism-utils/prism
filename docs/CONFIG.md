@@ -429,9 +429,25 @@ Arrow → Parquet (a complete Parquet file per window). The durable columnar sin
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `compression` | string | `snappy` | `snappy` \| `zstd` \| `gzip` \| `none` (`uncompressed` is an alias for `none`). |
+| `row_group_rows` | int | `0` | Rows per Parquet row-group; `0` keeps one row-group for the whole window. |
+| `bloom.enabled` | bool | `true` | Write token + n-gram Bloom filters to footer KV for configured string columns. |
+| `bloom.columns` | string[] | `[message]` | String columns to index; absent/non-string columns are skipped silently. |
+| `bloom.tokens` | bool | `true` | Emit a word-token bloom per row-group (`[^a-zA-Z0-9]+` splitting). |
+| `bloom.ngram` | int | `3` | N-gram length for the substring bloom; `0` disables the n-gram bloom. |
+| `bloom.fp` | float | `0.01` | Target false-positive rate in `(0,1)` used to size each bloom. |
 
 ```yaml
-encoder: { type: parquet, options: { compression: zstd } }
+encoder:
+  type: parquet
+  options:
+    compression: zstd
+    row_group_rows: 50000
+    bloom:
+      enabled: true
+      columns: [message]
+      tokens: true
+      ngram: 3
+      fp: 0.01
 ```
 
 ### `arrow`

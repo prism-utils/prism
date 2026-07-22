@@ -35,6 +35,12 @@ encoder:
   options:
     compression: zstd
     row_group_rows: 50000
+    bloom:
+      enabled: true
+      columns: [message]
+      tokens: true
+      ngram: 3
+      fp: 0.01
 
 output:
   type: http

@@ -130,6 +130,78 @@ columns `template` (string), `count` (int64).
   are documented here with a migration note.
 - The DuckDB loader should read columns by name with explicit casts and treat
   missing optional columns as null, so a mixed fleet of agent versions is safe.
+- **Unknown footer KV keys are ignored** (same rule as unknown columns). Optional
+  producer metadata documented below does not affect readers that skip it.
+
+---
+
+## 4.1 Optional footer KV: substring bloom (`prism.bloom.v1.*`)
+
+The `parquet` encoder may attach **versioned token + n-gram Bloom filters** over
+configured string columns (default: `message`) to support consumer-side pruning of
+`LIKE '%…%'` queries. Keys live in the Parquet **footer key-value metadata**;
+values are UTF-8 strings. A reader loads footer KV once (no data-page scan).
+
+### Key namespacing
+
+For column `<col>` and row-group index `<N>` (0-based):
+
+| Key | Value |
+|-----|-------|
+| `prism.bloom.v1.<col>.params` | JSON params (one per indexed column per file) |
+| `prism.bloom.v1.<col>.tokens.rg<N>` | base64 token bloom for row-group `<N>` (when enabled) |
+| `prism.bloom.v1.<col>.ngram.rg<N>` | base64 n-gram bloom for row-group `<N>` (when `ngram ≥ 2`) |
+
+When bloom is enabled but `<col>` is absent or not a string column, **no keys** are
+written for that column (not an error).
+
+### Params JSON
+
+```json
+{
+  "version": 1,
+  "hash": "xxhash64",
+  "combine": "h1+i*h2",
+  "tokenizer": "word",
+  "ngram_n": 3,
+  "fp_target": 0.01
+}
+```
+
+- `tokenizer`: `word` for token keys; n-gram keys use the same hash/combine scheme
+  over lowercased length-`ngram_n` rune n-grams.
+- `fp_target`: false-positive probability used to size `m` and `k`.
+
+### Bloom blob layout (base64-decoded)
+
+Little-endian header followed by the bitset:
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | `uint32` | `m` — bit count |
+| 4 | `uint16` | `k` — hash functions |
+| 6 | `uint32` | `n_items` — distinct indexed items |
+| 10 | `ceil(m/8)` bytes | bitset |
+
+### Membership / pruning algorithm
+
+To test whether needle `q` **might** occur in row-group `<N>`:
+
+1. Load `params` and the row-group blob for the filter kind you need (`tokens`
+   and/or `ngram`).
+2. Base64-decode the blob; parse `m`, `k`, `n_items`, and the bitset.
+3. Decompose `q` the same way the producer indexed:
+   - **Token bloom:** split `q` on `[^a-zA-Z0-9]+`; each non-empty token must pass.
+   - **N-gram bloom:** lower-case `q`; every length-`ngram_n` rune n-gram in `q`
+     must pass (if `len(q runes) < ngram_n`, the n-gram bloom is not used to
+     prune on that needle alone).
+4. For each required piece `item`, compute membership:
+   - `h := xxhash.Sum64String(item)` (`github.com/cespare/xxhash/v2`)
+   - `h1 := uint32(h >> 32)`, `h2 := uint32(h & 0xffffffff)`
+   - for `i` in `[0, k)`: bit index `((uint64(h1) + uint64(i)*uint64(h2)) % m)` must be set
+5. If **any** required piece fails step 4, the row-group **cannot** contain `q`
+   (safe negative prune). If all pass, the row-group **may** contain `q` (no false
+   negatives; false positives bounded by `fp_target`).
 
 ---
 
@@ -138,3 +210,6 @@ columns `template` (string), `count` (int64).
 - **v1** (initial freeze): taxonomy (`metrics-raw`, `logs-raw`, `logs-template`,
   `logs-summary`), file + Flight descriptor naming, and the four per-phase
   schemas above.
+- **v1** (2026-07): optional footer KV substring bloom block (`prism.bloom.v1.*`)
+  for `parquet` encoders — additive; consumers that ignore unknown KV keys are
+  unchanged.
