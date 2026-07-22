@@ -1,6 +1,6 @@
 # Spec: write-time token + n-gram bloom over `message` (substring LIKE pruning)
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/message-bloom`
@@ -111,46 +111,46 @@ single default (`columns: [message]`) covers both cases the request names.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] **Tokenizers** (`internal/encoder/bloom`): word tokenizer splits on
+- [x] **Tokenizers** (`internal/encoder/bloom`): word tokenizer splits on
       `[^a-zA-Z0-9]+`; trigram tokenizer emits lowercased length-`n` char
       n-grams. Table-driven tests incl. empty, non-ASCII, single-char, `n`
       larger than the string.
-- [ ] **Bloom builder**: `m` from `n_items` + target `fp`; `k` optimal;
+- [x] **Bloom builder**: `m` from `n_items` + target `fp`; `k` optimal;
       xxhash double-hashing; deterministic given inputs. Test: measured FP ≈
       target (within tolerance) on a sampled corpus; empty set → valid empty
       filter; `Add`→`Contains` never a false negative.
-- [ ] **Serialization + reader**: per-block blob (header `{m,k,n_items}` +
+- [x] **Serialization + reader**: per-block blob (header `{m,k,n_items}` +
       bitset) base64-encodes and round-trips; a params JSON `{version, m?, k?,
       hash, tokenizer, ngram_n, fp_target}` documents reconstruction; a
       test-only reader reconstructs membership from KV bytes exactly.
-- [ ] **Parquet config**: add `row_group_rows int` (default `0` = single group)
+- [x] **Parquet config**: add `row_group_rows int` (default `0` = single group)
       and `bloom {enabled, columns, tokens, ngram, fp}`; `DefaultConfig()`
       yields `bloom.enabled=true, columns:[message], tokens:true, ngram:3,
       fp:0.01`; `Validate()` is total and path-named (`fp` ∈ (0,1);
       `ngram` == 0 or ≥ 2; `row_group_rows` ≥ 0; `columns` non-empty when
       enabled).
-- [ ] **Wire into encoder**: for each row-group, build enabled blooms over each
+- [x] **Wire into encoder**: for each row-group, build enabled blooms over each
       configured column that is a **present String column** (absent/non-string
       → skip, no error, no key); append `prism.bloom.v1.<col>.tokens.rg<N>` /
       `.ngram.rg<N>` + `.<col>.params`; single-row-group output byte-compatible
       in shape (data columns unchanged) — round-trip data test still passes.
-- [ ] **No-false-negatives test (the core guarantee)**: encode a batch, read the
+- [x] **No-false-negatives test (the core guarantee)**: encode a batch, read the
       footer KV back, and for every token/substring that occurs in the data the
       bloom `Contains` is true (brute-force cross-check); measured FP ≈ `fp`;
       KV size overhead ≤ ~2 % of the parquet bytes.
-- [ ] **Multi-row-group test**: `row_group_rows` splits rows; each `rg<N>` bloom
+- [x] **Multi-row-group test**: `row_group_rows` splits rows; each `rg<N>` bloom
       matches exactly that row-group's rows (a token only in group 1 is absent
       from group 0's bloom, modulo FP).
-- [ ] **Metrics/summary no-op test**: a batch without a `message` string column
+- [x] **Metrics/summary no-op test**: a batch without a `message` string column
       writes no bloom keys and one row-group (default), proving default-on is
       inert off-`message`.
-- [ ] **Benchmark** for the bloom build path over a message column; assert no
+- [x] **Benchmark** for the bloom build path over a message column; assert no
       `allocs/op` regression on the encoder hot path vs a no-bloom baseline.
-- [ ] **Docs**: `docs/OUTPUT_CONTRACT.md` (optional KV block + reader algo,
+- [x] **Docs**: `docs/OUTPUT_CONTRACT.md` (optional KV block + reader algo,
       additive note + change-log entry), `docs/CONFIG.md` (`parquet` options
       table), `docs/DESIGN.md` §9 (behavior); `examples/*` show the block.
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests`: encoding/wiring touched)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests`: encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
