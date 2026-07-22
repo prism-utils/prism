@@ -113,17 +113,20 @@ func (factory) Create(cfg component.Config, _ component.Settings) (component.Enc
 		return nil, err
 	}
 	return &encoder{
-		codec:   cc,
-		cfg:     *c,
-		hashSet: make(map[uint64]struct{}, 256),
+		codec:        cc,
+		cfg:          *c,
+		hashSet:      make(map[uint64]struct{}, 256),
+		lowerScratch: make([]byte, 0, 4096),
+		runeOffsets:  make([]int, 0, 256),
 	}, nil
 }
 
 type encoder struct {
-	codec      compress.Compression
-	cfg        Config
-	hashSet    map[uint64]struct{}
-	valScratch []string
+	codec        compress.Compression
+	cfg          Config
+	hashSet      map[uint64]struct{}
+	lowerScratch []byte
+	runeOffsets  []int
 }
 
 func (*encoder) Start(context.Context, component.Host) error { return nil }
@@ -160,7 +163,12 @@ func (e *encoder) Encode(_ context.Context, in data.RecordBatch) (data.EncodedBl
 			return data.EncodedBlock{}, fmt.Errorf("encoder/parquet: write row-group %d: %w", rg, err)
 		}
 		if e.cfg.Bloom.Enabled {
-			kv, cols := e.buildBloomKV(slice, rg)
+			kv, cols, err := e.buildBloomKV(slice, rg)
+			if err != nil {
+				slice.Release()
+				_ = fw.Close()
+				return data.EncodedBlock{}, err
+			}
 			footerKV = append(footerKV, kv...)
 			for c := range cols {
 				indexedCols[c] = struct{}{}
@@ -213,7 +221,7 @@ func rowGroupRanges(total int, chunk int) []rowRange {
 	return out
 }
 
-func (e *encoder) buildBloomKV(rec arrow.RecordBatch, rg int) ([]bloomKV, map[string]struct{}) {
+func (e *encoder) buildBloomKV(rec arrow.RecordBatch, rg int) ([]bloomKV, map[string]struct{}, error) {
 	var out []bloomKV
 	indexed := make(map[string]struct{})
 	for _, colName := range e.cfg.Bloom.Columns {
@@ -225,19 +233,21 @@ func (e *encoder) buildBloomKV(rec arrow.RecordBatch, rg int) ([]bloomKV, map[st
 		if !ok {
 			continue
 		}
-		values := stringColumnValues(strCol, e.valScratch)
-		e.valScratch = values
 		indexed[colName] = struct{}{}
+		data := strCol.ValueBytes()
 
 		if e.cfg.Bloom.Tokens {
 			clear(e.hashSet)
-			for _, v := range values {
-				bloom.AddWordHashes(e.hashSet, v)
+			for i := 0; i < strCol.Len(); i++ {
+				if strCol.IsNull(i) {
+					continue
+				}
+				bloom.AddWordHashesBytes(e.hashSet, stringRowBytes(strCol, data, i))
 			}
 			f := bloom.BuildFromHashes(e.hashSet, e.cfg.Bloom.FP)
 			blob, err := f.Marshal()
 			if err != nil {
-				continue
+				return nil, nil, fmt.Errorf("encoder/parquet: bloom marshal: %w", err)
 			}
 			out = append(out, bloomKV{
 				key:   fmt.Sprintf("prism.bloom.v1.%s.tokens.rg%d", colName, rg),
@@ -247,13 +257,18 @@ func (e *encoder) buildBloomKV(rec arrow.RecordBatch, rg int) ([]bloomKV, map[st
 		if e.cfg.Bloom.Ngram >= 2 {
 			n := e.cfg.Bloom.Ngram
 			clear(e.hashSet)
-			for _, v := range values {
-				bloom.AddTrigramHashes(e.hashSet, v, n)
+			for i := 0; i < strCol.Len(); i++ {
+				if strCol.IsNull(i) {
+					continue
+				}
+				row := stringRowBytes(strCol, data, i)
+				e.runeOffsets, e.lowerScratch = bloom.AddTrigramHashesBytes(
+					e.hashSet, e.lowerScratch, row, e.runeOffsets, n)
 			}
 			f := bloom.BuildFromHashes(e.hashSet, e.cfg.Bloom.FP)
 			blob, err := f.Marshal()
 			if err != nil {
-				continue
+				return nil, nil, fmt.Errorf("encoder/parquet: bloom marshal: %w", err)
 			}
 			out = append(out, bloomKV{
 				key:   fmt.Sprintf("prism.bloom.v1.%s.ngram.rg%d", colName, rg),
@@ -261,16 +276,14 @@ func (e *encoder) buildBloomKV(rec arrow.RecordBatch, rg int) ([]bloomKV, map[st
 			})
 		}
 	}
-	return out, indexed
+	return out, indexed, nil
 }
 
-func stringColumnValues(col *array.String, scratch []string) []string {
-	scratch = scratch[:0]
-	for i := 0; i < col.Len(); i++ {
-		if col.IsNull(i) {
-			continue
-		}
-		scratch = append(scratch, col.Value(i))
-	}
-	return scratch
+// stringRowBytes returns row i as UTF-8 bytes from the column's contiguous value buffer.
+func stringRowBytes(col *array.String, data []byte, i int) []byte {
+	offs := col.ValueOffsets()
+	base := int(offs[0])
+	start := int(offs[i]) - base
+	end := int(offs[i+1]) - base
+	return data[start:end]
 }

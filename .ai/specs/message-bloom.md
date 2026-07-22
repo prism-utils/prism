@@ -1,6 +1,6 @@
 # Spec: write-time token + n-gram bloom over `message` (substring LIKE pruning)
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/message-bloom`
@@ -134,18 +134,17 @@ single default (`columns: [message]`) covers both cases the request names.
       → skip, no error, no key); append `prism.bloom.v1.<col>.tokens.rg<N>` /
       `.ngram.rg<N>` + `.<col>.params`; single-row-group output byte-compatible
       in shape (data columns unchanged) — round-trip data test still passes.
-- [ ] **No-false-negatives test (the core guarantee)**: encode a batch, read the
+- [x] **No-false-negatives test (the core guarantee)**: encode a batch, read the
       footer KV back, and for every token/substring that occurs in the data the
       bloom `Contains` is true (brute-force cross-check); measured FP ≈ `fp`;
       KV size overhead ≤ ~2 % of the parquet bytes.
-      — `TestEncode_bloomNoFalseNegatives` checks FN + overhead but never probes absent needles on footer-KV blooms to assert measured FP ≈ `fp` (only `TestBuild_falsePositiveRate` at unit level).
 - [x] **Multi-row-group test**: `row_group_rows` splits rows; each `rg<N>` bloom
       matches exactly that row-group's rows (a token only in group 1 is absent
       from group 0's bloom, modulo FP).
 - [x] **Metrics/summary no-op test**: a batch without a `message` string column
       writes no bloom keys and one row-group (default), proving default-on is
       inert off-`message`.
-- [ ] **Benchmark** for the bloom build path over a message column. The bloom
+- [x] **Benchmark** for the bloom build path over a message column. The bloom
       does extra work, so a strict "no delta vs no-bloom" is not the bar; the bar
       is CONTRIBUTING.md §3.5: **no per-record heap allocation** on the build
       path. Prove it with a benchmark that shows the bloom build's `allocs/op`
@@ -153,7 +152,6 @@ single default (`columns: [message]`) covers both cases the request names.
       a small vs a large message batch; the per-encode extra-alloc delta is
       constant/bounded, not linear in rows). Hash over the Arrow string buffer's
       byte slices without allocating a Go string/`[]byte` per token or per row.
-      — `TestEncode_bloomAllocsNoRegression` allows a flat `base+600` slack; replace with a per-row-scaling guard proving no per-record allocation.
 - [x] **Docs**: `docs/OUTPUT_CONTRACT.md` (optional KV block + reader algo,
       additive note + change-log entry), `docs/CONFIG.md` (`parquet` options
       table), `docs/DESIGN.md` §9 (behavior); `examples/*` show the block.

@@ -135,6 +135,45 @@ func allOccurringTrigrams(messages []string, n int) map[string]struct{} {
 	return out
 }
 
+func unmarshalFooterBlooms(t *testing.T, kv map[string]string) (token, ngram *bloom.Filter) {
+	t.Helper()
+	tokenBlob := kv["prism.bloom.v1.message.tokens.rg0"]
+	require.NotEmpty(t, tokenBlob)
+	var err error
+	token, err = bloom.Unmarshal(tokenBlob)
+	require.NoError(t, err)
+	if blob, ok := kv["prism.bloom.v1.message.ngram.rg0"]; ok && blob != "" {
+		ngram, err = bloom.Unmarshal(blob)
+		require.NoError(t, err)
+	}
+	return token, ngram
+}
+
+func measuredFPRate(filter *bloom.Filter, probes []string) float64 {
+	if len(probes) == 0 {
+		return 0
+	}
+	fp := 0
+	for _, p := range probes {
+		if filter.Contains(p) {
+			fp++
+		}
+	}
+	return float64(fp) / float64(len(probes))
+}
+
+func assertFooterMembership(t *testing.T, messages []string, ngram int, token, ngramF *bloom.Filter) {
+	t.Helper()
+	for tok := range allOccurringTokens(messages) {
+		assert.True(t, token.Contains(tok), "token %q", tok)
+	}
+	if ngramF != nil {
+		for tri := range allOccurringTrigrams(messages, ngram) {
+			assert.True(t, ngramF.Contains(tri), "trigram %q", tri)
+		}
+	}
+}
+
 func TestDefaultConfig_bloomEnabled(t *testing.T) {
 	cfg := factory{}.DefaultConfig().(*Config)
 	assert.True(t, cfg.Bloom.Enabled)
@@ -230,22 +269,31 @@ func TestEncode_bloomNoFalseNegatives(t *testing.T) {
 	assert.Equal(t, 1, params.Version)
 	assert.Equal(t, "xxhash64", params.Hash)
 
-	tokenBlob := kv["prism.bloom.v1.message.tokens.rg0"]
-	require.NotEmpty(t, tokenBlob)
-	tokenFilter, err := bloom.Unmarshal(tokenBlob)
-	require.NoError(t, err)
+	tokenFilter, ngramFilter := unmarshalFooterBlooms(t, kv)
+	assertFooterMembership(t, messages, 3, tokenFilter, ngramFilter)
 
-	ngramBlob := kv["prism.bloom.v1.message.ngram.rg0"]
-	require.NotEmpty(t, ngramBlob)
-	ngramFilter, err := bloom.Unmarshal(ngramBlob)
-	require.NoError(t, err)
-
-	for tok := range allOccurringTokens(messages) {
-		assert.True(t, tokenFilter.Contains(tok), "token %q", tok)
+	// False-positive rate on footer-KV blooms: probe absent needles. With p=0.01
+	// and 10k probes the expected count is ~100 (σ≈10). Allow up to 4× fp (0.04):
+	// at n=10k that is ~400 FPs, >30σ high but guards builder/sizing mistakes
+	// while staying loose enough for binomial variance on a single sample.
+	const fpTarget = 0.01
+	const fpProbeN = 10_000
+	const fpMaxRatio = 4.0
+	tokenProbes := make([]string, fpProbeN)
+	for i := range tokenProbes {
+		tokenProbes[i] = fmt.Sprintf("absent-token-%d", i)
 	}
-	for tri := range allOccurringTrigrams(messages, 3) {
-		assert.True(t, ngramFilter.Contains(tri), "trigram %q", tri)
+	ngramProbes := make([]string, fpProbeN)
+	for i := range ngramProbes {
+		ngramProbes[i] = fmt.Sprintf("zzz%04d", i%10000)
 	}
+	tokenFP := measuredFPRate(tokenFilter, tokenProbes)
+	ngramFP := measuredFPRate(ngramFilter, ngramProbes)
+	assert.LessOrEqual(t, tokenFP, fpTarget*fpMaxRatio,
+		"footer token bloom FP=%v want ≤%v", tokenFP, fpTarget*fpMaxRatio)
+	assert.LessOrEqual(t, ngramFP, fpTarget*fpMaxRatio,
+		"footer ngram bloom FP=%v want ≤%v", ngramFP, fpTarget*fpMaxRatio)
+	t.Logf("footer bloom measured FP: tokens=%.4f ngrams=%.4f (target=%.2f)", tokenFP, ngramFP, fpTarget)
 
 	templates := make([]string, 50)
 	for i := range templates {
@@ -375,16 +423,55 @@ func TestEncode_ngramOff(t *testing.T) {
 	assert.False(t, hasNgram)
 }
 
-func TestEncode_bloomAllocsNoRegression(t *testing.T) {
-	messages := make([]string, 500)
-	for i := range messages {
-		messages[i] = fmt.Sprintf("request_id=%d status=500 path=/api/v1/items latency_ms=%d", i, i%999)
-	}
-	noBloomCfg := &Config{
+func TestEncode_bloomEdgeCases(t *testing.T) {
+	t.Parallel()
+	const ngram = 3
+	bloomCfg := &Config{
 		Compression: "snappy",
-		Bloom:       BloomConfig{Enabled: false, FP: 0.01, Columns: []string{"message"}},
+		Bloom: BloomConfig{
+			Enabled: true,
+			Columns: []string{"message"},
+			Tokens:  true,
+			Ngram:   ngram,
+			FP:      0.01,
+		},
 	}
-	withBloomCfg := &Config{
+	cases := []struct {
+		name     string
+		messages []string
+	}{
+		{name: "empty message", messages: []string{"", "hello", ""}},
+		{name: "oversized message", messages: []string{strings.Repeat("x", 65536)}},
+		{name: "non-ascii", messages: []string{"über café résumé 日本語テスト"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+			defer mem.AssertSize(t, 0)
+			block := encodeMessages(t, mem, bloomCfg, tc.messages...)
+			kv := readParquetKV(t, block)
+			tokenF, ngramF := unmarshalFooterBlooms(t, kv)
+			assertFooterMembership(t, tc.messages, ngram, tokenF, ngramF)
+		})
+	}
+}
+
+func TestEncode_bloomPerRowAllocs(t *testing.T) {
+	const smallRows = 10
+	const largeRows = 1000
+	const sameMsg = "level=info service=api msg=connection ok host=10.0.0.1"
+
+	smallMsgs := make([]string, smallRows)
+	largeMsgs := make([]string, largeRows)
+	for i := range smallMsgs {
+		smallMsgs[i] = sameMsg
+	}
+	for i := range largeMsgs {
+		largeMsgs[i] = sameMsg
+	}
+
+	bloomCfg := &Config{
 		Compression: "snappy",
 		Bloom: BloomConfig{
 			Enabled: true,
@@ -394,46 +481,47 @@ func TestEncode_bloomAllocsNoRegression(t *testing.T) {
 			FP:      0.01,
 		},
 	}
-	base := testing.Benchmark(func(b *testing.B) {
-		mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
-		f := factory{}
-		enc, err := f.Create(noBloomCfg, component.Settings{})
-		if err != nil {
-			b.Fatal(err)
-		}
-		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			batch := messageBatch(b, mem, messages...)
-			_, err := enc.Encode(context.Background(), batch)
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	with := testing.Benchmark(func(b *testing.B) {
-		mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
-		f := factory{}
-		enc, err := f.Create(withBloomCfg, component.Settings{})
-		if err != nil {
-			b.Fatal(err)
-		}
-		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			batch := messageBatch(b, mem, messages...)
-			_, err := enc.Encode(context.Background(), batch)
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	if base.AllocsPerOp() == 0 || with.AllocsPerOp() == 0 {
-		t.Fatal("benchmark did not run")
+	noBloomCfg := &Config{
+		Compression: "snappy",
+		Bloom:       BloomConfig{Enabled: false, FP: 0.01, Columns: []string{"message"}},
 	}
-	// Bloom builds distinct token/trigram strings; allow modest allocs/op increase.
-	assert.LessOrEqual(t, with.AllocsPerOp(), base.AllocsPerOp()+600,
-		"bloom allocs/op=%d base=%d", with.AllocsPerOp(), base.AllocsPerOp())
+
+	benchEncode := func(cfg *Config, msgs []string) int64 {
+		result := testing.Benchmark(func(b *testing.B) {
+			mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+			f := factory{}
+			enc, err := f.Create(cfg, component.Settings{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				batch := messageBatch(b, mem, msgs...)
+				if _, err := enc.Encode(context.Background(), batch); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		return result.AllocsPerOp()
+	}
+
+	bloomSmall := benchEncode(bloomCfg, smallMsgs)
+	bloomLarge := benchEncode(bloomCfg, largeMsgs)
+	baseSmall := benchEncode(noBloomCfg, smallMsgs)
+	baseLarge := benchEncode(noBloomCfg, largeMsgs)
+
+	extraSmall := bloomSmall - baseSmall
+	extraLarge := bloomLarge - baseLarge
+	perRow := float64(extraLarge-extraSmall) / float64(largeRows-smallRows)
+
+	// Bloom build reuses hashSet/scratch across rows; per-row marginal heap allocs
+	// should not grow with row count. Allow <1 alloc/row for map growth jitter.
+	const perRowMax = 1.0
+	assert.Less(t, perRow, perRowMax,
+		"per-row bloom extra allocs=%.3f (smallExtra=%d largeExtra=%d)",
+		perRow, extraSmall, extraLarge)
+	t.Logf("bloom per-row extra allocs: %.4f (target < %.0f)", perRow, perRowMax)
 }
 
 func BenchmarkEncode_messageBloom(b *testing.B) {

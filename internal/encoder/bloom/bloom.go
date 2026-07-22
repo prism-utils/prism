@@ -11,12 +11,8 @@ import (
 
 // Filter is a classic Bloom filter using Kirsch–Mitzenmacher double hashing.
 //
-// Hashing scheme (reconstructable from params):
-//   - h := xxhash.Sum64String(item) using github.com/cespare/xxhash/v2
-//   - h1 := uint32(h >> 32), h2 := uint32(h & 0xffffffff)
-//   - for i in [0, k): bit index = (uint64(h1) + uint64(i)*uint64(h2)) % m
-//
-// A query checks that all k bit positions are set.
+// Uses a 64-bit xxhash split into two 32-bit halves (h1|h2) to derive k bit
+// positions via g_i = h1 + i·h2 mod m. A query checks that all k positions are set.
 type Filter struct {
 	m      int
 	k      int
