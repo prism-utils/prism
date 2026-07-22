@@ -409,7 +409,8 @@ prism runs them in exactly that order. No implicit reordering.
 ## 9. Encoders & outputs
 
 - **Encoders**: `parquet` (Arrow→Parquet via `apache/arrow-go`, configurable
-  compression + row-group sizing) encodes the full window; `json` serializes a
+  compression, row-group sizing, and optional footer KV substring blooms over
+  configured string columns — default `message`) encodes the full window; `json` serializes a
   batch as a JSON array `[{col: val, …}, …]` (one object per row) — this is the
   encoder the `summary` branch uses to emit its aggregate rows. `arrow`
   serializes the window as an Arrow IPC stream (schema + record batch) — the
