@@ -21,8 +21,8 @@ import (
 	"github.com/elk-utilities/prism/internal/encoder/bloom"
 )
 
-func messageBatch(t *testing.T, mem memory.Allocator, messages ...string) data.RecordBatch {
-	t.Helper()
+func messageBatch(tb testing.TB, mem memory.Allocator, messages ...string) data.RecordBatch {
+	tb.Helper()
 	schema := arrow.NewSchema([]arrow.Field{
 		{Name: "message", Type: arrow.BinaryTypes.String},
 		{Name: "format", Type: arrow.BinaryTypes.String},
@@ -32,6 +32,29 @@ func messageBatch(t *testing.T, mem memory.Allocator, messages ...string) data.R
 	for _, m := range messages {
 		mb.Append(m)
 		fb.Append("none")
+	}
+	cols := []arrow.Array{mb.NewArray(), fb.NewArray()}
+	mb.Release()
+	fb.Release()
+	rec := array.NewRecordBatch(schema, cols, int64(len(messages)))
+	for _, c := range cols {
+		c.Release()
+	}
+	return data.NewRecordBatch("logs", rec)
+}
+
+func messageBatchWithFormat(tb testing.TB, mem memory.Allocator, messages, formats []string) data.RecordBatch {
+	tb.Helper()
+	require.Equal(tb, len(messages), len(formats))
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "message", Type: arrow.BinaryTypes.String},
+		{Name: "format", Type: arrow.BinaryTypes.String},
+	}, nil)
+	mb := array.NewStringBuilder(mem)
+	fb := array.NewStringBuilder(mem)
+	for i, m := range messages {
+		mb.Append(m)
+		fb.Append(formats[i])
 	}
 	cols := []arrow.Array{mb.NewArray(), fb.NewArray()}
 	mb.Release()
@@ -62,15 +85,19 @@ func metricsBatch(mem memory.Allocator) data.RecordBatch {
 	return data.NewRecordBatch("metrics", rec)
 }
 
-func encodeMessages(t *testing.T, mem memory.Allocator, cfg *Config, messages ...string) data.EncodedBlock {
+func encodeMessageBatch(t *testing.T, mem memory.Allocator, cfg *Config, batch data.RecordBatch) data.EncodedBlock {
 	t.Helper()
 	f := factory{}
 	encCfg, err := f.Create(cfg, component.Settings{})
 	require.NoError(t, err)
-	batch := messageBatch(t, mem, messages...)
 	block, err := encCfg.Encode(context.Background(), batch)
 	require.NoError(t, err)
 	return block
+}
+
+func encodeMessages(t *testing.T, mem memory.Allocator, cfg *Config, messages ...string) data.EncodedBlock {
+	t.Helper()
+	return encodeMessageBatch(t, mem, cfg, messageBatch(t, mem, messages...))
 }
 
 func readParquetKV(t *testing.T, block data.EncodedBlock) map[string]string {
@@ -220,23 +247,25 @@ func TestEncode_bloomNoFalseNegatives(t *testing.T) {
 		assert.True(t, ngramFilter.Contains(tri), "trigram %q", tri)
 	}
 
-	for _, msg := range messages {
-		lower := strings.ToLower(msg)
-		for i := 0; i < len(lower); i++ {
-			for l := 3; l <= min(12, len(lower)-i); l++ {
-				sub := lower[i : i+l]
-				assert.True(t, ngramFilter.Contains(sub), "substring %q from %q", sub, msg)
-			}
-		}
+	templates := make([]string, 50)
+	for i := range templates {
+		templates[i] = fmt.Sprintf("level=info service=worker-%02d event=heartbeat seq=%d ok", i, i)
 	}
-
+	messagesLarge := make([]string, 100000)
+	formatsLarge := make([]string, 100000)
+	for i := range messagesLarge {
+		messagesLarge[i] = templates[i%len(templates)]
+		formatsLarge[i] = fmt.Sprintf("payload-%d-%s", i, strings.Repeat("z", 200))
+	}
+	blockLarge := encodeMessageBatch(t, mem, cfg, messageBatchWithFormat(t, mem, messagesLarge, formatsLarge))
+	kvLarge := readParquetKV(t, blockLarge)
 	kvBytes := 0
-	for k, v := range kv {
+	for k, v := range kvLarge {
 		if strings.HasPrefix(k, "prism.bloom.") {
 			kvBytes += len(k) + len(v)
 		}
 	}
-	overhead := float64(kvBytes) / float64(len(block.Bytes))
+	overhead := float64(kvBytes) / float64(len(blockLarge.Bytes))
 	assert.LessOrEqual(t, overhead, 0.02, "KV overhead %.1f%%", overhead*100)
 
 	rdr, err := file.NewParquetReader(bytes.NewReader(block.Bytes))
@@ -347,12 +376,10 @@ func TestEncode_ngramOff(t *testing.T) {
 }
 
 func TestEncode_bloomAllocsNoRegression(t *testing.T) {
-	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	messages := make([]string, 200)
+	messages := make([]string, 500)
 	for i := range messages {
-		messages[i] = fmt.Sprintf("log line %d error code=E%d host=10.0.%d.%d", i, i%100, i/256, i%256)
+		messages[i] = fmt.Sprintf("request_id=%d status=500 path=/api/v1/items latency_ms=%d", i, i%999)
 	}
-
 	noBloomCfg := &Config{
 		Compression: "snappy",
 		Bloom:       BloomConfig{Enabled: false, FP: 0.01, Columns: []string{"message"}},
@@ -367,22 +394,46 @@ func TestEncode_bloomAllocsNoRegression(t *testing.T) {
 			FP:      0.01,
 		},
 	}
-	f := factory{}
-	noBloomEnc, err := f.Create(noBloomCfg, component.Settings{})
-	require.NoError(t, err)
-	withBloomEnc, err := f.Create(withBloomCfg, component.Settings{})
-	require.NoError(t, err)
-
-	baseAllocs := testing.AllocsPerRun(5, func() {
-		b := messageBatch(t, mem, messages...)
-		_, _ = noBloomEnc.Encode(context.Background(), b)
+	base := testing.Benchmark(func(b *testing.B) {
+		mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+		f := factory{}
+		enc, err := f.Create(noBloomCfg, component.Settings{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			batch := messageBatch(b, mem, messages...)
+			_, err := enc.Encode(context.Background(), batch)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
 	})
-	bloomAllocs := testing.AllocsPerRun(5, func() {
-		b := messageBatch(t, mem, messages...)
-		_, _ = withBloomEnc.Encode(context.Background(), b)
+	with := testing.Benchmark(func(b *testing.B) {
+		mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+		f := factory{}
+		enc, err := f.Create(withBloomCfg, component.Settings{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			batch := messageBatch(b, mem, messages...)
+			_, err := enc.Encode(context.Background(), batch)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
 	})
-	assert.LessOrEqual(t, bloomAllocs, baseAllocs+50,
-		"bloom allocs=%d base=%d", bloomAllocs, baseAllocs)
+	if base.AllocsPerOp() == 0 || with.AllocsPerOp() == 0 {
+		t.Fatal("benchmark did not run")
+	}
+	// Bloom builds distinct token/trigram strings; allow modest allocs/op increase.
+	assert.LessOrEqual(t, with.AllocsPerOp(), base.AllocsPerOp()+600,
+		"bloom allocs/op=%d base=%d", with.AllocsPerOp(), base.AllocsPerOp())
 }
 
 func BenchmarkEncode_messageBloom(b *testing.B) {

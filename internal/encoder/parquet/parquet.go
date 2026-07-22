@@ -10,27 +10,59 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/encoder/bloom"
 )
 
 // Type is the config identifier for this encoder.
 const Type = "parquet"
 
+// BloomConfig configures optional footer KV substring bloom indexes.
+type BloomConfig struct {
+	Enabled bool     `json:"enabled"`
+	Columns []string `json:"columns"`
+	Tokens  bool     `json:"tokens"`
+	Ngram   int      `json:"ngram"`
+	FP      float64  `json:"fp"`
+}
+
 // Config configures the parquet encoder.
 type Config struct {
 	// Compression is one of snappy (default), zstd, gzip, none.
 	Compression string `json:"compression"`
+	// RowGroupRows splits the window into row-groups of this many rows; 0 keeps
+	// one row-group for the entire window.
+	RowGroupRows int         `json:"row_group_rows"`
+	Bloom        BloomConfig `json:"bloom"`
 }
 
 // Validate implements component.Config.
 func (c *Config) Validate() error {
 	if _, err := codec(c.Compression); err != nil {
 		return err
+	}
+	if c.RowGroupRows < 0 {
+		return fmt.Errorf("parquet.row_group_rows: must be >= 0")
+	}
+	if c.Bloom.Enabled {
+		if c.Bloom.FP <= 0 || c.Bloom.FP >= 1 {
+			return fmt.Errorf("parquet.bloom.fp: must be in (0,1)")
+		}
+		if c.Bloom.Ngram != 0 && c.Bloom.Ngram < 2 {
+			return fmt.Errorf("parquet.bloom.ngram: must be 0 or >= 2")
+		}
+		if len(c.Bloom.Columns) == 0 {
+			return fmt.Errorf("parquet.bloom.columns: must be non-empty when bloom is enabled")
+		}
+	} else if c.Bloom.FP != 0 && (c.Bloom.FP <= 0 || c.Bloom.FP >= 1) {
+		return fmt.Errorf("parquet.bloom.fp: must be in (0,1)")
 	}
 	return nil
 }
@@ -55,8 +87,21 @@ type factory struct{}
 // NewFactory returns the parquet encoder factory.
 func NewFactory() component.Factory[component.Encoder] { return factory{} }
 
-func (factory) Type() string                    { return Type }
-func (factory) DefaultConfig() component.Config { return &Config{Compression: "snappy"} }
+func (factory) Type() string { return Type }
+
+func (factory) DefaultConfig() component.Config {
+	return &Config{
+		Compression:  "snappy",
+		RowGroupRows: 0,
+		Bloom: BloomConfig{
+			Enabled: true,
+			Columns: []string{"message"},
+			Tokens:  true,
+			Ngram:   3,
+			FP:      0.01,
+		},
+	}
+}
 
 func (factory) Create(cfg component.Config, _ component.Settings) (component.Encoder, error) {
 	c, ok := cfg.(*Config)
@@ -67,16 +112,30 @@ func (factory) Create(cfg component.Config, _ component.Settings) (component.Enc
 	if err != nil {
 		return nil, err
 	}
-	return &encoder{codec: cc}, nil
+	return &encoder{
+		codec:   cc,
+		cfg:     *c,
+		hashSet: make(map[uint64]struct{}, 256),
+	}, nil
 }
 
-type encoder struct{ codec compress.Compression }
+type encoder struct {
+	codec      compress.Compression
+	cfg        Config
+	hashSet    map[uint64]struct{}
+	valScratch []string
+}
 
 func (*encoder) Start(context.Context, component.Host) error { return nil }
 func (*encoder) Shutdown(context.Context) error              { return nil }
 
+type bloomKV struct {
+	key   string
+	value string
+}
+
 func (e *encoder) Encode(_ context.Context, in data.RecordBatch) (data.EncodedBlock, error) {
-	defer in.Release() // encoders own their input's buffers
+	defer in.Release()
 	rec := in.Record()
 	if rec == nil || rec.NumRows() == 0 {
 		return data.EncodedBlock{Format: Type, Rows: 0}, nil
@@ -88,12 +147,130 @@ func (e *encoder) Encode(_ context.Context, in data.RecordBatch) (data.EncodedBl
 	if err != nil {
 		return data.EncodedBlock{}, fmt.Errorf("encoder/parquet: new writer: %w", err)
 	}
-	if err := fw.Write(rec); err != nil {
-		_ = fw.Close()
-		return data.EncodedBlock{}, fmt.Errorf("encoder/parquet: write: %w", err)
+
+	ranges := rowGroupRanges(int(rec.NumRows()), e.cfg.RowGroupRows)
+	var footerKV []bloomKV
+	indexedCols := make(map[string]struct{})
+
+	for rg, rgRange := range ranges {
+		slice := rec.NewSlice(rgRange.start, rgRange.end)
+		if err := fw.Write(slice); err != nil {
+			slice.Release()
+			_ = fw.Close()
+			return data.EncodedBlock{}, fmt.Errorf("encoder/parquet: write row-group %d: %w", rg, err)
+		}
+		if e.cfg.Bloom.Enabled {
+			kv, cols := e.buildBloomKV(slice, rg)
+			footerKV = append(footerKV, kv...)
+			for c := range cols {
+				indexedCols[c] = struct{}{}
+			}
+		}
+		slice.Release()
 	}
+
+	for col := range indexedCols {
+		params, err := bloom.MarshalParams(bloom.ParamsWithNgram(e.cfg.Bloom.FP, e.cfg.Bloom.Ngram))
+		if err != nil {
+			_ = fw.Close()
+			return data.EncodedBlock{}, fmt.Errorf("encoder/parquet: bloom params: %w", err)
+		}
+		footerKV = append(footerKV, bloomKV{
+			key:   fmt.Sprintf("prism.bloom.v1.%s.params", col),
+			value: params,
+		})
+	}
+
+	for _, kv := range footerKV {
+		if err := fw.AppendKeyValueMetadata(kv.key, kv.value); err != nil {
+			_ = fw.Close()
+			return data.EncodedBlock{}, fmt.Errorf("encoder/parquet: footer kv: %w", err)
+		}
+	}
+
 	if err := fw.Close(); err != nil {
 		return data.EncodedBlock{}, fmt.Errorf("encoder/parquet: close: %w", err)
 	}
 	return data.EncodedBlock{Format: Type, Bytes: buf.Bytes(), Rows: int(rec.NumRows())}, nil
+}
+
+type rowRange struct {
+	start, end int64
+}
+
+func rowGroupRanges(total int, chunk int) []rowRange {
+	if chunk <= 0 {
+		return []rowRange{{start: 0, end: int64(total)}}
+	}
+	var out []rowRange
+	for start := 0; start < total; start += chunk {
+		end := start + chunk
+		if end > total {
+			end = total
+		}
+		out = append(out, rowRange{start: int64(start), end: int64(end)})
+	}
+	return out
+}
+
+func (e *encoder) buildBloomKV(rec arrow.RecordBatch, rg int) ([]bloomKV, map[string]struct{}) {
+	var out []bloomKV
+	indexed := make(map[string]struct{})
+	for _, colName := range e.cfg.Bloom.Columns {
+		idx := rec.Schema().FieldIndices(colName)
+		if len(idx) == 0 {
+			continue
+		}
+		strCol, ok := rec.Column(idx[0]).(*array.String)
+		if !ok {
+			continue
+		}
+		values := stringColumnValues(strCol, e.valScratch)
+		e.valScratch = values
+		indexed[colName] = struct{}{}
+
+		if e.cfg.Bloom.Tokens {
+			clear(e.hashSet)
+			for _, v := range values {
+				bloom.AddWordHashes(e.hashSet, v)
+			}
+			f := bloom.BuildFromHashes(e.hashSet, e.cfg.Bloom.FP)
+			blob, err := f.Marshal()
+			if err != nil {
+				continue
+			}
+			out = append(out, bloomKV{
+				key:   fmt.Sprintf("prism.bloom.v1.%s.tokens.rg%d", colName, rg),
+				value: blob,
+			})
+		}
+		if e.cfg.Bloom.Ngram >= 2 {
+			n := e.cfg.Bloom.Ngram
+			clear(e.hashSet)
+			for _, v := range values {
+				bloom.AddTrigramHashes(e.hashSet, v, n)
+			}
+			f := bloom.BuildFromHashes(e.hashSet, e.cfg.Bloom.FP)
+			blob, err := f.Marshal()
+			if err != nil {
+				continue
+			}
+			out = append(out, bloomKV{
+				key:   fmt.Sprintf("prism.bloom.v1.%s.ngram.rg%d", colName, rg),
+				value: blob,
+			})
+		}
+	}
+	return out, indexed
+}
+
+func stringColumnValues(col *array.String, scratch []string) []string {
+	scratch = scratch[:0]
+	for i := 0; i < col.Len(); i++ {
+		if col.IsNull(i) {
+			continue
+		}
+		scratch = append(scratch, col.Value(i))
+	}
+	return scratch
 }

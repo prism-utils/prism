@@ -70,10 +70,11 @@ func TestEncode_ParquetRoundTrip(t *testing.T) {
 }
 
 func TestConfig_Validate(t *testing.T) {
-	if err := (&Config{Compression: "snappy"}).Validate(); err != nil {
+	validBloom := BloomConfig{Enabled: true, Columns: []string{"message"}, FP: 0.01, Ngram: 3}
+	if err := (&Config{Compression: "snappy", Bloom: validBloom}).Validate(); err != nil {
 		t.Fatalf("snappy should be valid: %v", err)
 	}
-	if err := (&Config{Compression: "brotli-nope"}).Validate(); err == nil {
+	if err := (&Config{Compression: "brotli-nope", Bloom: validBloom}).Validate(); err == nil {
 		t.Fatal("unknown codec should be invalid")
 	}
 }
