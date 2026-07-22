@@ -1,6 +1,6 @@
 # Spec: write-time token + n-gram bloom over `message` (substring LIKE pruning)
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/message-bloom`
@@ -134,18 +134,20 @@ single default (`columns: [message]`) covers both cases the request names.
       → skip, no error, no key); append `prism.bloom.v1.<col>.tokens.rg<N>` /
       `.ngram.rg<N>` + `.<col>.params`; single-row-group output byte-compatible
       in shape (data columns unchanged) — round-trip data test still passes.
-- [x] **No-false-negatives test (the core guarantee)**: encode a batch, read the
+- [ ] **No-false-negatives test (the core guarantee)**: encode a batch, read the
       footer KV back, and for every token/substring that occurs in the data the
       bloom `Contains` is true (brute-force cross-check); measured FP ≈ `fp`;
       KV size overhead ≤ ~2 % of the parquet bytes.
+      — `TestEncode_bloomNoFalseNegatives` checks FN + overhead but never probes absent needles on footer-KV blooms to assert measured FP ≈ `fp` (only `TestBuild_falsePositiveRate` at unit level).
 - [x] **Multi-row-group test**: `row_group_rows` splits rows; each `rg<N>` bloom
       matches exactly that row-group's rows (a token only in group 1 is absent
       from group 0's bloom, modulo FP).
 - [x] **Metrics/summary no-op test**: a batch without a `message` string column
       writes no bloom keys and one row-group (default), proving default-on is
       inert off-`message`.
-- [x] **Benchmark** for the bloom build path over a message column; assert no
+- [ ] **Benchmark** for the bloom build path over a message column; assert no
       `allocs/op` regression on the encoder hot path vs a no-bloom baseline.
+      — `TestEncode_bloomAllocsNoRegression` allows `base+600` allocs/op (~540 extra measured: 3232 vs 2692); spec requires no regression, not a large slack band.
 - [x] **Docs**: `docs/OUTPUT_CONTRACT.md` (optional KV block + reader algo,
       additive note + change-log entry), `docs/CONFIG.md` (`parquet` options
       table), `docs/DESIGN.md` §9 (behavior); `examples/*` show the block.
@@ -155,13 +157,25 @@ single default (`columns: [message]`) covers both cases the request names.
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
 - [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+      — `buildBloomKV` swallows `Marshal` errors (`continue`); must return a wrapped error to the caller.
 - [ ] **Gate 2 — Tests cover edge cases** (empty/oversized message, non-ASCII,
       absent column, ngram off, multi-row-group, Validate rejection, FP bound,
       no false negatives, buffer release/allocator balance)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (OUTPUT_CONTRACT/CONFIG/DESIGN + examples)
+      — No encode-path test for empty/oversized `message` rows or non-ASCII footer-KV membership; FP not asserted on unmarshaled blooms; benchmark slack (+600 allocs/op) is not a regression guard.
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (OUTPUT_CONTRACT/CONFIG/DESIGN + examples)
 - [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+      — `bloom.go` `Filter` doc comment names external package `github.com/cespare/xxhash/v2`; describe `xxhash64 Sum64String` locally instead.
 - [ ] Full docs/REVIEW.md checklist passes
+      — Blocked by Gate 1/2/4 and §5 benchmark + FP-on-encode gaps above.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: CHANGES_REQUESTED** (2026-07-22). TDD history OK (`test:` e543a8d
+before feat commits). `make lint test` and `make full-tests` green;
+`CGO_ENABLED=0 go build ./...` OK; xxhash direct dep; `make tidy` clean. Scope
+matches #20 (no consumer pruning / equality bloom). Core no-FN cross-check
+(`TestEncode_bloomNoFalseNegatives`) and OUTPUT_CONTRACT reader algo align with
+implementation for ASCII; trigram build uses `Sum64(utf8 bytes)` which matches
+doc's `Sum64String(item)` for valid n-gram strings. Fix Marshal error handling,
+tighten alloc benchmark, add footer-KV FP probe + encode edge cases, and remove
+the non-atomic package reference in `Filter`'s comment.
