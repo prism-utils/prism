@@ -1,6 +1,7 @@
 package bloom
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -29,14 +30,14 @@ func TestBuild_falsePositiveRate(t *testing.T) {
 	const fpTarget = 0.01
 	items := make([]string, 500)
 	for i := range items {
-		items[i] = "item-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i%10))
+		items[i] = fmt.Sprintf("item-%d-unique", i)
 	}
 	f := Build(items, fpTarget)
 
 	const probes = 50_000
 	falsePos := 0
 	for i := range probes {
-		candidate := "probe-" + string(rune('A'+i%26)) + "-" + string(rune('0'+i%10))
+		candidate := fmt.Sprintf("probe-%d-absent", i)
 		if f.Contains(candidate) {
 			falsePos++
 		}
@@ -51,7 +52,11 @@ func TestBuild_deterministic(t *testing.T) {
 	items := []string{"one", "two", "three"}
 	a := Build(items, 0.05)
 	b := Build(items, 0.05)
-	assert.Equal(t, a.Marshal(), b.Marshal())
+	aBlob, err := a.Marshal()
+	require.NoError(t, err)
+	bBlob, err := b.Marshal()
+	require.NoError(t, err)
+	assert.Equal(t, aBlob, bBlob)
 }
 
 func TestBuild_sizing(t *testing.T) {
@@ -60,7 +65,7 @@ func TestBuild_sizing(t *testing.T) {
 	fp := 0.01
 	items := make([]string, n)
 	for i := range items {
-		items[i] = "tok" + string(rune('a'+i%26))
+		items[i] = fmt.Sprintf("tok-%d", i)
 	}
 	f := Build(items, fp)
 	ln2 := math.Ln2
