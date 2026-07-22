@@ -8,6 +8,7 @@ package collect
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -92,7 +93,9 @@ func (s *Server) Serve(ctx context.Context, addr string, ready func(bound string
 		<-ctx.Done()
 		srv.Shutdown()
 	}()
-	if err := srv.Serve(); err != nil {
+	// A requested shutdown stops the server, which surfaces as ErrServerStopped
+	// from Serve; that is the intended terminal state, not a failure.
+	if err := srv.Serve(); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("collect: serve: %w", err)
 	}
 	return nil
