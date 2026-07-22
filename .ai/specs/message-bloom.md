@@ -1,6 +1,6 @@
 # Spec: write-time token + n-gram bloom over `message` (substring LIKE pruning)
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/message-bloom`
@@ -160,26 +160,17 @@ single default (`columns: [message]`) covers both cases the request names.
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-      — `buildBloomKV` swallows `Marshal` errors (`continue`); must return a wrapped error to the caller.
-- [ ] **Gate 2 — Tests cover edge cases** (empty/oversized message, non-ASCII,
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (empty/oversized message, non-ASCII,
       absent column, ngram off, multi-row-group, Validate rejection, FP bound,
       no false negatives, buffer release/allocator balance)
-      — No encode-path test for empty/oversized `message` rows or non-ASCII footer-KV membership; FP not asserted on unmarshaled blooms; benchmark slack (+600 allocs/op) is not a regression guard.
 - [x] **Gate 3 — Docs & comments match the task and the delivered code** (OUTPUT_CONTRACT/CONFIG/DESIGN + examples)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-      — `bloom.go` `Filter` doc comment names external package `github.com/cespare/xxhash/v2`; describe `xxhash64 Sum64String` locally instead.
-- [ ] Full docs/REVIEW.md checklist passes
-      — Blocked by Gate 1/2/4 and §5 benchmark + FP-on-encode gaps above.
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-**Verdict: CHANGES_REQUESTED** (2026-07-22). TDD history OK (`test:` e543a8d
-before feat commits). `make lint test` and `make full-tests` green;
-`CGO_ENABLED=0 go build ./...` OK; xxhash direct dep; `make tidy` clean. Scope
-matches #20 (no consumer pruning / equality bloom). Core no-FN cross-check
-(`TestEncode_bloomNoFalseNegatives`) and OUTPUT_CONTRACT reader algo align with
-implementation for ASCII; trigram build uses `Sum64(utf8 bytes)` which matches
-doc's `Sum64String(item)` for valid n-gram strings. Fix Marshal error handling,
-tighten alloc benchmark, add footer-KV FP probe + encode edge cases, and remove
-the non-atomic package reference in `Filter`'s comment.
+**Verdict: APPROVE / ALL_OK** (2026-07-22 re-review). Fix `15cf0ea` resolves all
+prior findings: Marshal errors propagate, atomic comments, footer-KV FP probes,
+encode edge cases, and per-row alloc guard (0.002 allocs/row). TDD order intact;
+`make lint test`, `make full-tests`, `CGO_ENABLED=0` build, and `make tidy` green.
