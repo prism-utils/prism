@@ -145,9 +145,15 @@ single default (`columns: [message]`) covers both cases the request names.
 - [x] **Metrics/summary no-op test**: a batch without a `message` string column
       writes no bloom keys and one row-group (default), proving default-on is
       inert off-`message`.
-- [ ] **Benchmark** for the bloom build path over a message column; assert no
-      `allocs/op` regression on the encoder hot path vs a no-bloom baseline.
-      — `TestEncode_bloomAllocsNoRegression` allows `base+600` allocs/op (~540 extra measured: 3232 vs 2692); spec requires no regression, not a large slack band.
+- [ ] **Benchmark** for the bloom build path over a message column. The bloom
+      does extra work, so a strict "no delta vs no-bloom" is not the bar; the bar
+      is CONTRIBUTING.md §3.5: **no per-record heap allocation** on the build
+      path. Prove it with a benchmark that shows the bloom build's `allocs/op`
+      does **not scale with row count** — i.e. per-row extra allocs ≈ 0 (compare
+      a small vs a large message batch; the per-encode extra-alloc delta is
+      constant/bounded, not linear in rows). Hash over the Arrow string buffer's
+      byte slices without allocating a Go string/`[]byte` per token or per row.
+      — `TestEncode_bloomAllocsNoRegression` allows a flat `base+600` slack; replace with a per-row-scaling guard proving no per-record allocation.
 - [x] **Docs**: `docs/OUTPUT_CONTRACT.md` (optional KV block + reader algo,
       additive note + change-log entry), `docs/CONFIG.md` (`parquet` options
       table), `docs/DESIGN.md` §9 (behavior); `examples/*` show the block.
