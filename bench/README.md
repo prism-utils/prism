@@ -53,6 +53,28 @@ rm -rf bench/.work
 - **Timing**: each query is warmed once, then run K=5 times; results report p50 / p95 / min (ms). Ingest reports wall-clock + rows/s.
 - **Correctness gates**: benchmark **fails** if metrics full-table counts differ between systems or from the expected row count, or if logs LIKE counts differ.
 
+## Resource usage measurement
+
+While each workload runs, the harness samples **actual** CPU, memory, and disk I/O
+(not the host’s allocated hardware):
+
+| Workload | prism-store target | ClickHouse target |
+|----------|-------------------|-------------------|
+| ingest | `prism-store` binary process (HTTP ingest) | ClickHouse **container** (Docker cgroup) |
+| count / aggregation / logs LIKE | **benchmark process** (embedded DuckDB engine) | ClickHouse **container** |
+
+- **Interval**: ~75 ms polling (`ProcSampler` via gopsutil; `DockerSampler` via Docker Engine API `GET /containers/{id}/stats?stream=false` over the Docker socket — stdlib HTTP, no Docker SDK).
+- **CPU**: cores = CPU-time delta / wall-clock delta; report mean and peak over the window.
+- **Memory**: peak RSS (process tree or container `memory_stats.usage`).
+- **Disk**: read+write MiB and MiB/s always when counters exist; **IOPS** (read+write ops/s) when the platform exposes op counts.
+- **Why not node_exporter / host metrics?** Host-level sampling conflates both systems, the OS, and other processes. Per-process and per-container attribution is exact and needs no extra services.
+- **Caveats**:
+  - Store queries run in an **embedded DuckDB engine inside `prism-bench`** — there is no separate query server; resource usage for count/aggregation/logs LIKE reflects that embedding (the store’s real architecture).
+  - Per-process disk **IOPS** (and process-level I/O bytes) come from Linux `/proc/<pid>/io` only. On **macOS/Windows** the process sampler reports CPU/mem and marks process I/O/IOPS **`n/a`**. ClickHouse container I/O/IOPS use Docker cgroup blkio stats; **Docker Desktop (macOS/Windows) frequently reports blkio as 0**, so meaningful container I/O/IOPS needs a **native Linux Docker host**.
+  - If the Docker socket is unreachable, the container sampler falls back to `docker stats --no-stream` for CPU/mem and marks IOPS **`n/a`**.
+
+Results appear in `RESULTS.md` (full table), `results.json`, and the root `README.md` benchmark section.
+
 ## Layout
 
 ```
@@ -63,6 +85,7 @@ bench/
   internal/store/        prism-store HTTP ingest + engine queries (CGO)
   internal/results/      JSON + markdown renderer
   internal/timing/       warm-and-repeat latency helpers
+  internal/monitor/      per-process and per-container resource samplers
   docker-compose.bench.yml
 ```
 

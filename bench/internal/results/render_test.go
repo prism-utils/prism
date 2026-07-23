@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/elk-utilities/prism/bench/internal/monitor"
 	"github.com/elk-utilities/prism/bench/internal/results"
 	"github.com/stretchr/testify/require"
 )
@@ -38,4 +39,55 @@ func TestRenderMarkdown_containsWorkloadTable(t *testing.T) {
 	require.Contains(t, doc, "10,000")
 	require.Contains(t, doc, "1,000,000")
 	require.True(t, strings.Contains(doc, "ingest") && strings.Contains(doc, "count"))
+}
+
+func TestRenderMarkdown_resourceUsageWithAndWithoutIOPS(t *testing.T) {
+	ro, wo := uint64(500), uint64(300)
+	withIOPS := monitor.Usage{
+		CPUCoresMean: 1.2,
+		CPUCoresPeak: 2.5,
+		RSSPeakBytes: 256 * 1024 * 1024,
+		ReadBytes:    50 * 1024 * 1024,
+		WriteBytes:   10 * 1024 * 1024,
+		ReadOps:      &ro,
+		WriteOps:     &wo,
+		DurationSec:  2.0,
+	}
+	noIOPS := monitor.Usage{
+		CPUCoresMean: 0.8,
+		CPUCoresPeak: 1.1,
+		RSSPeakBytes: 128 * 1024 * 1024,
+		ReadBytes:    5 * 1024 * 1024,
+		WriteBytes:   2 * 1024 * 1024,
+		DurationSec:  1.0,
+	}
+	doc := results.RenderMarkdown(&results.Report{
+		Environment: results.Environment{OS: "darwin", Arch: "arm64", CPUModel: "test", RAMGiB: 16},
+		Workloads: []results.Workload{
+			{Name: "count", System: "clickhouse", P50Ms: 1, P95Ms: 2, MinMs: 1, Usage: &withIOPS},
+			{Name: "count", System: "prism-store", P50Ms: 1, P95Ms: 2, MinMs: 1, Usage: &noIOPS},
+		},
+	})
+	require.Contains(t, doc, "## Resource usage")
+	require.Contains(t, doc, "400")
+	require.Contains(t, doc, "n/a")
+	lines := strings.Split(doc, "\n")
+	var resourceRows []string
+	inSection := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "## Resource usage") {
+			inSection = true
+			continue
+		}
+		if inSection && strings.HasPrefix(line, "## ") {
+			break
+		}
+		if inSection && strings.HasPrefix(line, "| count |") {
+			resourceRows = append(resourceRows, line)
+		}
+	}
+	require.Len(t, resourceRows, 2)
+	require.True(t, strings.Contains(resourceRows[0], "|") && strings.Contains(resourceRows[1], "|"))
+	pipeCount := strings.Count(resourceRows[0], "|")
+	require.Equal(t, strings.Count(resourceRows[1], "|"), pipeCount, "rows must align")
 }

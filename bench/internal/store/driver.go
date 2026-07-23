@@ -28,6 +28,8 @@ type Driver interface {
 	AggregateMetrics(ctx context.Context) error
 	CountLogsLike(ctx context.Context, logsGlob string, start, end time.Time) (int64, error)
 	DuckDBVersion(ctx context.Context) (string, error)
+	// Pid returns the OS process id of the running prism-store binary, or 0 if none.
+	Pid() int
 }
 
 // New returns a platform driver (CGO build uses DuckDB-backed implementation).

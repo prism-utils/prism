@@ -136,20 +136,35 @@ make bench BENCH_SCALE=2
 | DuckDB | v1.1.3 |
 | Dataset | 1,000,000 metrics + 1,000,000 logs |
 
+**Latency** (p50 / p95 / min ms; ingest: wall + rows/s):
+
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.18s · 1,693,033 rows/s | 1.84s · 1,085,187 rows/s |
-| count (p50 / p95 / min ms) | 0.7 / 0.8 / 0.5 | 1.8 / 1.9 / 1.6 |
-| aggregation | 5.1 / 5.4 / 4.5 | 6.1 / 26.9 / 5.8 |
-| logs LIKE | 19.6 / 21.6 / 18.7 | 16.4 / 23.2 / 16.1 |
+| ingest | 1.18s · 1,692,060 rows/s | 1.67s · 1,195,310 rows/s |
+| count | 0.9 / 7.1 / 0.6 | 1.9 / 2.1 / 1.6 |
+| aggregation | 8.2 / 14.6 / 5.2 | 6.2 / 25.9 / 5.8 |
+| logs LIKE | 18.7 / 29.2 / 17.6 | 16.1 / 23.3 / 15.0 |
+
+**Resource usage** (sampled during each timed window; store queries sample the embedded DuckDB engine in `prism-bench`; process I/O/IOPS `n/a` on macOS; **Docker Desktop often reports container blkio as 0** — use native Linux Docker for meaningful ClickHouse I/O/IOPS):
+
+| Workload | System | CPU mean / peak | Peak RSS | I/O | IOPS |
+|----------|--------|-----------------|----------|-----|------|
+| ingest | prism-store | 0.50 / 2.12 cores | 90.7 MiB | n/a | n/a |
+| ingest | ClickHouse | 0.25 / 0.45 cores | 311.1 MiB | 0.0 MiB | 0 |
+| count | prism-store | 0.07 / 0.14 cores | 644.8 MiB | n/a | n/a |
+| count | ClickHouse | 0.05 / 0.05 cores | 372.0 MiB | 0.0 MiB | 0 |
+| aggregation | prism-store | 0.86 / 1.72 cores | 659.6 MiB | n/a | n/a |
+| aggregation | ClickHouse | 0.04 / 0.04 cores | 330.5 MiB | 0.0 MiB | 0 |
+| logs LIKE | prism-store | 1.95 / 3.91 cores | 682.4 MiB | n/a | n/a |
+| logs LIKE | ClickHouse | 0.05 / 0.05 cores | 362.0 MiB | 0.0 MiB | 0 |
 
 **Interpretation:** Metrics **count** and **aggregation** scan the full ingested
 table on both systems (no `ts` range pruning) — apples-to-apples over the same N
-rows. On this laptop prism-store leads ingest, count, and aggregation (p50).
-ClickHouse wins logs `LIKE` (p50 16.4 ms vs 19.6 ms) with fair tuning
-(`tokenbf_v1` skip index, typed schema, batched inserts). Logs LIKE uses the
-same dataset-`ts` window on both sides. Store logs `LIKE` is **engine-level**
-(DuckDB over a logs-shaped Parquet tier) — not a shipping logs API.
+rows. On this laptop prism-store leads **ingest** and **count** (p50). ClickHouse
+wins **aggregation** (p50 6.2 ms vs 8.2 ms) and **logs LIKE** (p50 16.1 ms vs
+18.7 ms) with fair tuning (`tokenbf_v1` skip index, typed schema, batched inserts).
+Logs LIKE uses the same dataset-`ts` window on both sides. Store logs `LIKE` is
+**engine-level** (DuckDB over a logs-shaped Parquet tier) — not a shipping logs API.
 
 Full tables, fairness notes, and cleanup: [`bench/README.md`](bench/README.md),
 [`bench/RESULTS.md`](bench/RESULTS.md).

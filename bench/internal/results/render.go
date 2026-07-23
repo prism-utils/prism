@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/elk-utilities/prism/bench/internal/monitor"
 )
 
 // Environment captures host and dependency versions for reproducibility notes.
@@ -26,14 +28,15 @@ type Environment struct {
 
 // Workload is one timed benchmark result for a system.
 type Workload struct {
-	Name        string  `json:"name"`
-	System      string  `json:"system"`
-	WallSeconds float64 `json:"wall_seconds,omitempty"`
-	RowsPerSec  float64 `json:"rows_per_sec,omitempty"`
-	Rows        int64   `json:"rows,omitempty"`
-	P50Ms       float64 `json:"p50_ms,omitempty"`
-	P95Ms       float64 `json:"p95_ms,omitempty"`
-	MinMs       float64 `json:"min_ms,omitempty"`
+	Name        string         `json:"name"`
+	System      string         `json:"system"`
+	WallSeconds float64        `json:"wall_seconds,omitempty"`
+	RowsPerSec  float64        `json:"rows_per_sec,omitempty"`
+	Rows        int64          `json:"rows,omitempty"`
+	P50Ms       float64        `json:"p50_ms,omitempty"`
+	P95Ms       float64        `json:"p95_ms,omitempty"`
+	MinMs       float64        `json:"min_ms,omitempty"`
+	Usage       *monitor.Usage `json:"usage,omitempty"`
 }
 
 // Report is the machine-readable benchmark output written to results.json.
@@ -98,6 +101,19 @@ func RenderMarkdown(rep *Report) string {
 		ch := findWorkload(rep.Workloads, name, "clickhouse")
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", workloadLabel(name), formatWorkload(store), formatWorkload(ch))
 	}
+
+	b.WriteString("\n## Resource usage (sampled during timed window)\n\n")
+	b.WriteString("| Workload | System | CPU mean / peak (cores) | Peak RSS (MiB) | Read+write (MiB) | MiB/s | IOPS |\n")
+	b.WriteString("|----------|--------|-------------------------|----------------|------------------|-------|------|\n")
+	for _, name := range []string{"ingest", "count", "aggregation", "logs_like"} {
+		for _, sys := range []string{"prism-store", "clickhouse"} {
+			w := findWorkload(rep.Workloads, name, sys)
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
+				workloadLabel(name), systemLabel(sys),
+				formatUsageCPU(w), formatUsageRSS(w), formatUsageIO(w), formatUsageMiBps(w), formatUsageIOPS(w))
+		}
+	}
+	b.WriteString("\nStore **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** samples the `prism-store` binary. ClickHouse samples the container cgroup.\n")
 
 	b.WriteString("\n## Interpretation\n\n")
 	b.WriteString(interpret(rep))
@@ -189,4 +205,61 @@ func formatInt(n int64) string {
 		parts = append([]string{s}, parts...)
 	}
 	return strings.Join(parts, ",")
+}
+
+func systemLabel(system string) string {
+	switch system {
+	case "prism-store":
+		return "prism-store"
+	case "clickhouse":
+		return "ClickHouse"
+	default:
+		return system
+	}
+}
+
+func formatUsageCPU(w *Workload) string {
+	if w == nil || w.Usage == nil {
+		return "—"
+	}
+	u := w.Usage
+	return fmt.Sprintf("%.2f / %.2f", u.CPUCoresMean, u.CPUCoresPeak)
+}
+
+func formatUsageRSS(w *Workload) string {
+	if w == nil || w.Usage == nil {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f", w.Usage.RSSPeakMiB())
+}
+
+func formatUsageIO(w *Workload) string {
+	if w == nil || w.Usage == nil {
+		return "—"
+	}
+	if !w.Usage.IOAvailable() {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1f", w.Usage.TotalReadWriteMiB())
+}
+
+func formatUsageMiBps(w *Workload) string {
+	if w == nil || w.Usage == nil {
+		return "—"
+	}
+	if !w.Usage.IOAvailable() {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1f", w.Usage.TotalMiBPerSec())
+}
+
+func formatUsageIOPS(w *Workload) string {
+	if w == nil || w.Usage == nil {
+		return "—"
+	}
+	iops, ok := w.Usage.IOPS()
+	if !ok {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.0f", iops)
 }

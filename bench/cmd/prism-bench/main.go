@@ -22,15 +22,17 @@ import (
 	"github.com/elk-utilities/prism/bench/internal/clickhouse"
 	"github.com/elk-utilities/prism/bench/internal/env"
 	"github.com/elk-utilities/prism/bench/internal/gen"
+	"github.com/elk-utilities/prism/bench/internal/monitor"
 	"github.com/elk-utilities/prism/bench/internal/results"
 	benchstore "github.com/elk-utilities/prism/bench/internal/store"
 	"github.com/elk-utilities/prism/bench/internal/timing"
 )
 
 const (
-	tenant      = "bench-tenant"
-	queryRuns   = 5
-	composeFile = "bench/docker-compose.bench.yml"
+	tenant        = "bench-tenant"
+	queryRuns     = 5
+	composeFile   = "bench/docker-compose.bench.yml"
+	clickhouseSvc = "clickhouse"
 )
 
 func main() {
@@ -101,6 +103,14 @@ func runMain() error {
 			slog.Error("compose down", "err", err)
 		}
 	}()
+
+	chContainerID, err := monitor.ResolveComposeContainerID(ctx, composePath, clickhouseSvc)
+	if err != nil {
+		return fmt.Errorf("clickhouse container: %w", err)
+	}
+	newCHSampler := func() (monitor.Sampler, error) {
+		return monitor.NewDockerSampler(chContainerID)
+	}
 
 	if err := clickhouse.WaitReady("http://127.0.0.1:8123", 2*time.Minute); err != nil {
 		return fmt.Errorf("clickhouse ready: %w", err)
@@ -178,12 +188,13 @@ func runMain() error {
 	logsPath := filepath.Join(dataDir, tenant, "bench-logs", "segment.parquet")
 	logsGlob := logsPath
 
-	storeIngestSec, err := timing.WallRun(func() error {
+	storeProcSampler := monitor.NewProcSampler(sd.Pid())
+	storeIngestSec, storeIngestUsage, err := timing.WallRunMonitored(ctx, func() error {
 		if err := sd.IngestMetricsHTTP(ctx, windows); err != nil {
 			return err
 		}
 		return sd.WriteLogsTier(ctx, logsPath, ds.Logs)
-	})
+	}, storeProcSampler)
 	if err != nil {
 		return fmt.Errorf("store ingest: %w", err)
 	}
@@ -191,20 +202,24 @@ func runMain() error {
 		return fmt.Errorf("store compact: %w", err)
 	}
 
-	chIngestSec, err := timing.WallRun(func() error {
+	chIngestSampler, err := newCHSampler()
+	if err != nil {
+		return fmt.Errorf("clickhouse ingest sampler: %w", err)
+	}
+	chIngestSec, chIngestUsage, err := timing.WallRunMonitored(ctx, func() error {
 		if err := ch.IngestMetrics(ctx, ds.Metrics); err != nil {
 			return err
 		}
 		return ch.IngestLogs(ctx, ds.Logs)
-	})
+	}, chIngestSampler)
 	if err != nil {
 		return fmt.Errorf("clickhouse ingest: %w", err)
 	}
 
 	totalRows := cfg.MetricsRows + cfg.LogsRows
 	workloads = append(workloads,
-		results.Workload{Name: "ingest", System: "prism-store", WallSeconds: storeIngestSec, Rows: totalRows, RowsPerSec: float64(totalRows) / storeIngestSec},
-		results.Workload{Name: "ingest", System: "clickhouse", WallSeconds: chIngestSec, Rows: totalRows, RowsPerSec: float64(totalRows) / chIngestSec},
+		results.Workload{Name: "ingest", System: "prism-store", WallSeconds: storeIngestSec, Rows: totalRows, RowsPerSec: float64(totalRows) / storeIngestSec, Usage: &storeIngestUsage},
+		results.Workload{Name: "ingest", System: "clickhouse", WallSeconds: chIngestSec, Rows: totalRows, RowsPerSec: float64(totalRows) / chIngestSec, Usage: &chIngestUsage},
 	)
 
 	duckVer, err := sd.DuckDBVersion(ctx)
@@ -249,7 +264,9 @@ func runMain() error {
 	rep.MetricsCountStore = storeMetricsCount
 	rep.MetricsCountClickHouse = chMetricsCount
 
-	storeCountStats, err := timing.RunQuery(queryRuns, func() error {
+	benchProcSampler := monitor.NewProcSampler(os.Getpid())
+
+	storeCountOut, err := timing.RunQueryMonitored(queryRuns, func() error {
 		n, err := sd.CountMetrics(ctx)
 		if err != nil {
 			return err
@@ -258,11 +275,15 @@ func runMain() error {
 			return fmt.Errorf("store metrics count %d != %d", n, cfg.MetricsRows)
 		}
 		return nil
-	})
+	}, benchProcSampler)
 	if err != nil {
 		return fmt.Errorf("store count: %w", err)
 	}
-	chCountStats, err := timing.RunQuery(queryRuns, func() error {
+	chCountSampler, err := newCHSampler()
+	if err != nil {
+		return fmt.Errorf("clickhouse count sampler: %w", err)
+	}
+	chCountOut, err := timing.RunQueryMonitored(queryRuns, func() error {
 		n, err := ch.CountMetrics(ctx)
 		if err != nil {
 			return err
@@ -271,33 +292,37 @@ func runMain() error {
 			return fmt.Errorf("clickhouse metrics count %d != %d", n, cfg.MetricsRows)
 		}
 		return nil
-	})
+	}, chCountSampler)
 	if err != nil {
 		return fmt.Errorf("clickhouse count: %w", err)
 	}
 	workloads = append(workloads,
-		results.Workload{Name: "count", System: "prism-store", P50Ms: storeCountStats.P50Ms, P95Ms: storeCountStats.P95Ms, MinMs: storeCountStats.MinMs},
-		results.Workload{Name: "count", System: "clickhouse", P50Ms: chCountStats.P50Ms, P95Ms: chCountStats.P95Ms, MinMs: chCountStats.MinMs},
+		results.Workload{Name: "count", System: "prism-store", P50Ms: storeCountOut.Stats.P50Ms, P95Ms: storeCountOut.Stats.P95Ms, MinMs: storeCountOut.Stats.MinMs, Usage: &storeCountOut.Usage},
+		results.Workload{Name: "count", System: "clickhouse", P50Ms: chCountOut.Stats.P50Ms, P95Ms: chCountOut.Stats.P95Ms, MinMs: chCountOut.Stats.MinMs, Usage: &chCountOut.Usage},
 	)
 
-	storeAggStats, err := timing.RunQuery(queryRuns, func() error {
+	storeAggOut, err := timing.RunQueryMonitored(queryRuns, func() error {
 		return sd.AggregateMetrics(ctx)
-	})
+	}, monitor.NewProcSampler(os.Getpid()))
 	if err != nil {
 		return fmt.Errorf("store aggregate: %w", err)
 	}
-	chAggStats, err := timing.RunQuery(queryRuns, func() error {
+	chAggSampler, err := newCHSampler()
+	if err != nil {
+		return fmt.Errorf("clickhouse aggregate sampler: %w", err)
+	}
+	chAggOut, err := timing.RunQueryMonitored(queryRuns, func() error {
 		return ch.AggregateMetrics(ctx)
-	})
+	}, chAggSampler)
 	if err != nil {
 		return fmt.Errorf("clickhouse aggregate: %w", err)
 	}
 	workloads = append(workloads,
-		results.Workload{Name: "aggregation", System: "prism-store", P50Ms: storeAggStats.P50Ms, P95Ms: storeAggStats.P95Ms, MinMs: storeAggStats.MinMs},
-		results.Workload{Name: "aggregation", System: "clickhouse", P50Ms: chAggStats.P50Ms, P95Ms: chAggStats.P95Ms, MinMs: chAggStats.MinMs},
+		results.Workload{Name: "aggregation", System: "prism-store", P50Ms: storeAggOut.Stats.P50Ms, P95Ms: storeAggOut.Stats.P95Ms, MinMs: storeAggOut.Stats.MinMs, Usage: &storeAggOut.Usage},
+		results.Workload{Name: "aggregation", System: "clickhouse", P50Ms: chAggOut.Stats.P50Ms, P95Ms: chAggOut.Stats.P95Ms, MinMs: chAggOut.Stats.MinMs, Usage: &chAggOut.Usage},
 	)
 
-	storeLikeStats, err := timing.RunQuery(queryRuns, func() error {
+	storeLikeOut, err := timing.RunQueryMonitored(queryRuns, func() error {
 		n, err := sd.CountLogsLike(ctx, logsGlob, logsStart, logsEnd)
 		if err != nil {
 			return err
@@ -306,11 +331,15 @@ func runMain() error {
 			return fmt.Errorf("store logs like %d != %d", n, expectedLike)
 		}
 		return nil
-	})
+	}, monitor.NewProcSampler(os.Getpid()))
 	if err != nil {
 		return fmt.Errorf("store logs like timing: %w", err)
 	}
-	chLikeStats, err := timing.RunQuery(queryRuns, func() error {
+	chLikeSampler, err := newCHSampler()
+	if err != nil {
+		return fmt.Errorf("clickhouse logs like sampler: %w", err)
+	}
+	chLikeOut, err := timing.RunQueryMonitored(queryRuns, func() error {
 		n, err := ch.CountLogsLike(ctx, logsStart, logsEnd)
 		if err != nil {
 			return err
@@ -319,13 +348,13 @@ func runMain() error {
 			return fmt.Errorf("clickhouse logs like %d != %d", n, expectedLike)
 		}
 		return nil
-	})
+	}, chLikeSampler)
 	if err != nil {
 		return fmt.Errorf("clickhouse logs like timing: %w", err)
 	}
 	workloads = append(workloads,
-		results.Workload{Name: "logs_like", System: "prism-store", P50Ms: storeLikeStats.P50Ms, P95Ms: storeLikeStats.P95Ms, MinMs: storeLikeStats.MinMs},
-		results.Workload{Name: "logs_like", System: "clickhouse", P50Ms: chLikeStats.P50Ms, P95Ms: chLikeStats.P95Ms, MinMs: chLikeStats.MinMs},
+		results.Workload{Name: "logs_like", System: "prism-store", P50Ms: storeLikeOut.Stats.P50Ms, P95Ms: storeLikeOut.Stats.P95Ms, MinMs: storeLikeOut.Stats.MinMs, Usage: &storeLikeOut.Usage},
+		results.Workload{Name: "logs_like", System: "clickhouse", P50Ms: chLikeOut.Stats.P50Ms, P95Ms: chLikeOut.Stats.P95Ms, MinMs: chLikeOut.Stats.MinMs, Usage: &chLikeOut.Usage},
 	)
 
 	rep.Workloads = workloads
