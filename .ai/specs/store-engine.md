@@ -1,6 +1,6 @@
 # Spec: prism-store — tiered storage engine (hot window → flush → L0, snapshot, tenant LRU)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-engine`
 - **Owner phase:** orchestrator → developer
@@ -55,17 +55,17 @@ receiver yet (that is #23); no compaction/rollups/retention (that is #25).
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `go-duckdb` added; `go mod tidy` clean; `CGO_ENABLED=0 go build ./cmd/prism` still passes; `go build ./cmd/prism-store` passes.
-- [ ] `Ingest`: empty body → `(0, nil)` no-op (no temp leak); non-empty inserts rows with `ts=clock()` (bound param), not `timestamp_ms` — asserted by `QueryHotTs`.
-- [ ] Multiple windows within one hot window accumulate in `hot_current` and produce a **single** L0 file on flush (schedule set once).
-- [ ] Flush: after the hot window, `hot_prev` → one sorted `tiers/L0/<nanos>.parquet`; empty `hot_prev` → no file + schedule cleared; `hot_current` recreated empty.
-- [ ] Hot snapshot: `hot/current.parquet` reflects in-flight `hot_current` rows, written atomically (no partial `.tmp` left).
-- [ ] Legacy import: `metrics-raw/*.parquet` → `L0/legacy-<nanos>.parquet` (ts from filename); `_seed.parquet`/dotfiles skipped; marker written; second open is a no-op (idempotent).
-- [ ] LRU: exceeding `MaxOpenTenants` evicts + closes the oldest handle; `Close()` closes all; no "database is closed"/leak under `-race`.
-- [ ] `testparquet` helper produces valid contract-v1 `metrics-raw` parquet used by the tests above.
-- [ ] Uses `strings.Contains`/`HasPrefix` and `tenant.TenantAllowed`; no hand-rolled substring/validator; file-path formatting carries an atomic explanatory comment.
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1.
-- [ ] `make lint test` green locally (runs with `CGO_ENABLED=1`).
+- [x] `go-duckdb` added; `go mod tidy` clean; `CGO_ENABLED=0 go build ./cmd/prism` still passes; `go build ./cmd/prism-store` passes.
+- [x] `Ingest`: empty body → `(0, nil)` no-op (no temp leak); non-empty inserts rows with `ts=clock()` (bound param), not `timestamp_ms` — asserted by `QueryHotTs`.
+- [x] Multiple windows within one hot window accumulate in `hot_current` and produce a **single** L0 file on flush (schedule set once).
+- [x] Flush: after the hot window, `hot_prev` → one sorted `tiers/L0/<nanos>.parquet`; empty `hot_prev` → no file + schedule cleared; `hot_current` recreated empty.
+- [x] Hot snapshot: `hot/current.parquet` reflects in-flight `hot_current` rows, written atomically (no partial `.tmp` left).
+- [x] Legacy import: `metrics-raw/*.parquet` → `L0/legacy-<nanos>.parquet` (ts from filename); `_seed.parquet`/dotfiles skipped; marker written; second open is a no-op (idempotent).
+- [x] LRU: exceeding `MaxOpenTenants` evicts + closes the oldest handle; `Close()` closes all; no "database is closed"/leak under `-race`.
+- [x] `testparquet` helper produces valid contract-v1 `metrics-raw` parquet used by the tests above.
+- [x] Uses `strings.Contains`/`HasPrefix` and `tenant.TenantAllowed`; no hand-rolled substring/validator; file-path formatting carries an atomic explanatory comment.
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1.
+- [x] `make lint test` green locally (runs with `CGO_ENABLED=1`).
 
 ## 6. Mandatory review gates  (reviewer owns)
 
