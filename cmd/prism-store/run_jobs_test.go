@@ -34,12 +34,12 @@ func TestRunServeJobsDisabledNoBackgroundLoop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	var loopStarts atomic.Int32
-	orig := backgroundLoopStarter
-	backgroundLoopStarter = func(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
+	orig := startBackgroundLoop
+	startBackgroundLoop = func(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
 		loopStarts.Add(1)
 		go RunBackgroundLoop(ctx, runner, cfg, logger)
 	}
-	t.Cleanup(func() { backgroundLoopStarter = orig })
+	t.Cleanup(func() { startBackgroundLoop = orig })
 
 	dataDir := t.TempDir()
 	publicAddr := freeTCPAddr(t)
@@ -92,12 +92,12 @@ func TestRunServeJobsEnabledStartsBackgroundLoop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	var loopStarts atomic.Int32
-	orig := backgroundLoopStarter
-	backgroundLoopStarter = func(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
+	orig := startBackgroundLoop
+	startBackgroundLoop = func(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
 		loopStarts.Add(1)
 		go RunBackgroundLoop(ctx, runner, cfg, logger)
 	}
-	t.Cleanup(func() { backgroundLoopStarter = orig })
+	t.Cleanup(func() { startBackgroundLoop = orig })
 
 	dataDir := t.TempDir()
 	publicAddr := freeTCPAddr(t)

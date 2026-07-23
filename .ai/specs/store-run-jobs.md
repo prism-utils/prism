@@ -1,6 +1,6 @@
 # Spec: prism-store — "run jobs" flag (toggle background maintenance)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-run-jobs`
 - **Owner phase:** orchestrator → developer
@@ -41,14 +41,14 @@ query API keep working. Default (jobs on) is the current behavior, unchanged.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `serverConfig` gains a `runJobs` bool from `envBool("RUN_JOBS", true)`; startup log includes `run_jobs`.
-- [ ] When `RUN_JOBS=false`, `RunBackgroundLoop` is **not** started (no goroutine, no tickers); a startup log line states background jobs are disabled.
-- [ ] When unset/true, behavior is byte-for-byte the current behavior (loop runs).
-- [ ] Test: with jobs disabled, the server serves `/healthz`/`/readyz` and shuts down cleanly, and NO lifecycle tick runs (e.g. inject a fake/counting runner or assert no snapshot/flush side effects over a short window). Prefer a table/behavior test using the existing `runServe`/loop seams; use a fake clock/runner, not `time.Sleep`-based timing.
-- [ ] Test: default (unset) starts the loop (guard the wiring so it can't silently regress).
-- [ ] Graceful shutdown still works in both states (no goroutine leak when jobs off; loop stops on ctx cancel when jobs on) — covered under `-race`.
-- [ ] Docs updated: `docs/STORE.md` + `main.go` usage comment document `RUN_JOBS` (default true, that false disables ALL background maintenance, and the no-flush/no-retention caveat).
-- [ ] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; no committed blobs.
+- [x] `serverConfig` gains a `runJobs` bool from `envBool("RUN_JOBS", true)`; startup log includes `run_jobs`.
+- [x] When `RUN_JOBS=false`, `RunBackgroundLoop` is **not** started (no goroutine, no tickers); a startup log line states background jobs are disabled.
+- [x] When unset/true, behavior is byte-for-byte the current behavior (loop runs).
+- [x] Test: with jobs disabled, the server serves `/healthz`/`/readyz` and shuts down cleanly, and NO lifecycle tick runs (e.g. inject a fake/counting runner or assert no snapshot/flush side effects over a short window). Prefer a table/behavior test using the existing `runServe`/loop seams; use a fake clock/runner, not `time.Sleep`-based timing.
+- [x] Test: default (unset) starts the loop (guard the wiring so it can't silently regress).
+- [x] Graceful shutdown still works in both states (no goroutine leak when jobs off; loop stops on ctx cancel when jobs on) — covered under `-race`.
+- [x] Docs updated: `docs/STORE.md` + `main.go` usage comment document `RUN_JOBS` (default true, that false disables ALL background maintenance, and the no-flush/no-retention caveat).
+- [x] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; no committed blobs.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
