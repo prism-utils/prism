@@ -83,7 +83,7 @@ func writeMetering(dataDir, tenant string, data meteringFileData) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o640); err != nil { //nolint:gosec // G306: tenant metering file uses store-wide 0640 per STORE.md
+	if err := os.WriteFile(tmp, b, 0o640); err != nil { //nolint:gosec // G306: 0640 is intentional group-readable metering sidecar permission.
 		return err
 	}
 	return os.Rename(tmp, path)
