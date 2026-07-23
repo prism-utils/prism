@@ -468,6 +468,14 @@ func (d *cgoDriver) ScanMetricsArrowAPI(ctx context.Context, sqlText string) (in
 	return int64(len(rows)), nil
 }
 
+func (d *cgoDriver) ScanMetricsJSONAPI(ctx context.Context, sqlText string) (int64, error) {
+	out, err := d.postSQL(ctx, sqlText)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(out.Rows)), nil
+}
+
 func (d *cgoDriver) postSQLArrow(ctx context.Context, sqlText string) ([][]any, error) {
 	url := d.BaseURL() + "/" + d.cfg.Tenant + "/sql"
 	body, err := json.Marshal(map[string]string{"sql": sqlText})

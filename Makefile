@@ -68,6 +68,11 @@ bench-api: ## RBAC + HTTP SQL API benchmark profile (see bench/README.md)
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make bench-api"; exit 1; }
 	CGO_ENABLED=1 go run -tags $(STORE_TAGS) ./bench/cmd/prism-bench --api --scale $(BENCH_SCALE)
 
+.PHONY: bench-api-arrow
+bench-api-arrow: ## Arrow transport + RBAC benchmark profile (see bench/README.md)
+	@command -v docker >/dev/null 2>&1 || { echo "docker required for make bench-api-arrow"; exit 1; }
+	CGO_ENABLED=1 go run -tags $(STORE_TAGS) ./bench/cmd/prism-bench --api --arrow --scale $(BENCH_SCALE)
+
 .PHONY: fuzz
 fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it finds.
 	@for pkg in $$(go list ./... ); do \

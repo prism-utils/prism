@@ -69,6 +69,35 @@ Resource sampling in the API profile: ingest, idle, count, and aggregation sampl
 
 Cleanup is automatic (`docker compose down -v` on exit). Ephemeral data lives under `bench/.work/` (gitignored).
 
+## Arrow transport profile (RBAC on)
+
+An opt-in third profile quantifies the **Arrow IPC transport** impact (#55) on top of the
+lazy-view sandbox (#54), with **RBAC enabled** throughout. It mirrors the `-api` profile for
+ingest, logs LIKE, and ClickHouse comparison, but drives store **count** and **aggregation**
+via Arrow transport and adds two scan phases over the **same SQL** — once with JSON, once
+with Arrow — to expose transport memory/latency divergence on a large result set (~100k rows).
+
+```bash
+make bench-api-arrow
+make bench-api-arrow BENCH_SCALE=2
+```
+
+Outputs (profile-suffixed; baseline and `-api` files untouched):
+
+- `bench/results-api-arrow.json`
+- `bench/results-timeseries-api-arrow.json`
+- `bench/RESULTS-api-arrow.md`
+- `bench/charts-api-arrow/*.svg`
+
+**What it isolates:** peak RSS and latency for JSON full-buffer vs Arrow streaming on
+identical scan SQL, with JWT/RBAC on every request. Count/aggregation use Arrow transport
+and are comparable to the JSON `-api` profile. **Scan is a store transport comparison only**
+— ClickHouse scan is omitted. Logs LIKE remains engine-level (embedded DuckDB; no logs API).
+
+Resource sampling: ingest, idle, count, aggregation, and both scan phases sample the
+`prism-store` binary (dynamic PID across the store restart); logs LIKE samples the benchmark
+process.
+
 Manual cleanup if a run was killed abruptly:
 
 ```bash

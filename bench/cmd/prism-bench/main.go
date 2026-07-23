@@ -35,6 +35,7 @@ const (
 	queryRuns     = 5
 	composeFile   = "bench/docker-compose.bench.yml"
 	clickhouseSvc = "clickhouse"
+	sqlAPIMaxRows = 100_000
 )
 
 type phaseClock struct {
@@ -79,9 +80,23 @@ func main() {
 	}
 }
 
+func resolveProfile(api, arrow bool) (string, error) {
+	if arrow && !api {
+		return "", fmt.Errorf("--arrow requires --api")
+	}
+	if api && arrow {
+		return "api-arrow", nil
+	}
+	if api {
+		return "api", nil
+	}
+	return "", nil
+}
+
 func runMain() error {
 	scale := flag.Int("scale", 1, "multiply default row counts")
 	apiProfile := flag.Bool("api", false, "run RBAC + HTTP SQL API profile (writes profile-suffixed results)")
+	arrowProfile := flag.Bool("arrow", false, "use Arrow IPC transport for store SQL (requires --api; profile api-arrow)")
 	workDir := flag.String("workdir", "bench/.work", "ephemeral data directory (relative to repo root unless absolute)")
 	cpus := flag.Float64("cpus", caps.DefaultCPUs, "vCPU cap per system")
 	memMiB := flag.Int("mem-mib", caps.DefaultMemMiB, "memory cap per system in MiB")
@@ -90,9 +105,9 @@ func runMain() error {
 
 	ctx := context.Background()
 	budget := caps.Budget{CPUs: *cpus, MemMiB: *memMiB}
-	profile := ""
-	if *apiProfile {
-		profile = "api"
+	profile, err := resolveProfile(*apiProfile, *arrowProfile)
+	if err != nil {
+		return err
 	}
 
 	if err := requireDocker(ctx); err != nil {
@@ -207,7 +222,7 @@ func runMain() error {
 		StoreBin: storeBin,
 		Budget:   budget,
 	}
-	if profile == "api" {
+	if profile == "api" || profile == "api-arrow" {
 		authEnv, err := authgen.New(filepath.Join(absWork, "auth"), tenant)
 		if err != nil {
 			return fmt.Errorf("auth setup: %w", err)
@@ -244,7 +259,7 @@ func runMain() error {
 		return fmt.Errorf("clickhouse stream sampler: %w", err)
 	}
 	var storeStream *monitor.StreamSampler
-	if profile == "api" {
+	if profile == "api" || profile == "api-arrow" {
 		storeStream = monitor.NewProcStreamSamplerFunc(func() int { return sd.Pid() })
 	} else {
 		storeStream = monitor.NewProcStreamSampler(sd.Pid())
@@ -342,11 +357,16 @@ func runMain() error {
 
 	expectedLike := gen.ExpectedDeadlineCount(cfg.LogsRows)
 
-	if profile == "api" {
+	switch profile {
+	case "api-arrow":
+		if err := runAPIArrowQueryPhase(ctx, sd, ch, cfg, logsGlob, logsStart, logsEnd, expectedLike, setPhase, &workloads, queryRuns, rep); err != nil {
+			return err
+		}
+	case "api":
 		if err := runAPIQueryPhase(ctx, sd, ch, cfg, logsGlob, logsStart, logsEnd, expectedLike, setPhase, &workloads, queryRuns, rep); err != nil {
 			return err
 		}
-	} else {
+	default:
 		if err := runBaselineQueryPhase(ctx, sd, ch, cfg, logsGlob, logsStart, logsEnd, expectedLike, setPhase, &workloads, queryRuns, rep); err != nil {
 			return err
 		}
@@ -357,7 +377,7 @@ func runMain() error {
 	benchPoints := benchStream.Stop()
 	chPoints := chStream.Stop()
 
-	storeStitched := monitor.StitchStoreSeries(storePoints, benchPoints, phaseSpans)
+	storeStitched := monitor.StitchStoreSeries(storePoints, benchPoints, phaseSpans, storeChartPhases(profile))
 
 	usageFor := func(system, phase string) monitor.Usage {
 		switch system {
@@ -365,8 +385,8 @@ func runMain() error {
 			switch phase {
 			case monitor.PhaseIdle, monitor.PhaseIngest:
 				return monitor.AggregatePhaseSpan(storePoints, phase, phaseSpans)
-			case monitor.PhaseCount, monitor.PhaseAggregation:
-				if profile == "api" {
+			case monitor.PhaseCount, monitor.PhaseAggregation, monitor.PhaseScanJSON, monitor.PhaseScanArrow:
+				if profile == "api" || profile == "api-arrow" {
 					return monitor.AggregatePhaseSpan(storePoints, phase, phaseSpans)
 				}
 				return monitor.AggregatePhaseSpan(benchPoints, phase, phaseSpans)
@@ -723,6 +743,213 @@ func runAPIQueryPhase(
 	*workloads = append(*workloads,
 		results.Workload{Name: "aggregation", System: "prism-store", P50Ms: storeAggOut.Stats.P50Ms, P95Ms: storeAggOut.Stats.P95Ms, MinMs: storeAggOut.Stats.MinMs},
 		results.Workload{Name: "aggregation", System: "clickhouse", P50Ms: chAggOut.Stats.P50Ms, P95Ms: chAggOut.Stats.P95Ms, MinMs: chAggOut.Stats.MinMs},
+	)
+	return nil
+}
+
+func storeChartPhases(profile string) []string {
+	switch profile {
+	case "api-arrow":
+		return []string{
+			monitor.PhaseIdle, monitor.PhaseIngest,
+			monitor.PhaseCount, monitor.PhaseAggregation,
+			monitor.PhaseScanJSON, monitor.PhaseScanArrow,
+		}
+	case "api":
+		return []string{monitor.PhaseIdle, monitor.PhaseIngest, monitor.PhaseCount, monitor.PhaseAggregation}
+	default:
+		return []string{monitor.PhaseIdle, monitor.PhaseIngest}
+	}
+}
+
+func scanRowLimit(metricsRows int64) int64 {
+	if metricsRows < sqlAPIMaxRows {
+		return metricsRows
+	}
+	return sqlAPIMaxRows
+}
+
+func metricsScanSQL(limit int64) string {
+	return fmt.Sprintf(`SELECT "__name__", labels, value, ts FROM metrics LIMIT %d`, limit)
+}
+
+//nolint:contextcheck // RunQueryMonitored has no ctx param; timed closures use outer ctx by design.
+func runAPIArrowQueryPhase(
+	ctx context.Context,
+	sd benchstore.Driver,
+	ch *clickhouse.Client,
+	cfg gen.Config,
+	logsGlob string,
+	logsStart, logsEnd time.Time,
+	expectedLike int64,
+	setPhase func(string),
+	workloads *[]results.Workload,
+	queryRuns int,
+	rep *results.Report,
+) error {
+	storeLike, err := sd.CountLogsLike(ctx, logsGlob, logsStart, logsEnd)
+	if err != nil {
+		return fmt.Errorf("store logs like count: %w", err)
+	}
+	chLike, err := ch.CountLogsLike(ctx, logsStart, logsEnd)
+	if err != nil {
+		return fmt.Errorf("clickhouse logs like count: %w", err)
+	}
+	if storeLike != chLike {
+		return fmt.Errorf("LIKE count mismatch: store=%d clickhouse=%d", storeLike, chLike)
+	}
+	if storeLike != expectedLike {
+		return fmt.Errorf("LIKE count wrong: got %d want %d", storeLike, expectedLike)
+	}
+	rep.LikeCountStore = storeLike
+	rep.LikeCountClickHouse = chLike
+
+	setPhase(monitor.PhaseLogsLike)
+	storeLikeOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := sd.CountLogsLike(ctx, logsGlob, logsStart, logsEnd)
+		if err != nil {
+			return err
+		}
+		if n != expectedLike {
+			return fmt.Errorf("store logs like %d != %d", n, expectedLike)
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store logs like timing: %w", err)
+	}
+	chLikeOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := ch.CountLogsLike(ctx, logsStart, logsEnd)
+		if err != nil {
+			return err
+		}
+		if n != expectedLike {
+			return fmt.Errorf("clickhouse logs like %d != %d", n, expectedLike)
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("clickhouse logs like timing: %w", err)
+	}
+	*workloads = append(*workloads,
+		results.Workload{Name: "logs_like", System: "prism-store", P50Ms: storeLikeOut.Stats.P50Ms, P95Ms: storeLikeOut.Stats.P95Ms, MinMs: storeLikeOut.Stats.MinMs},
+		results.Workload{Name: "logs_like", System: "clickhouse", P50Ms: chLikeOut.Stats.P50Ms, P95Ms: chLikeOut.Stats.P95Ms, MinMs: chLikeOut.Stats.MinMs},
+	)
+
+	stopCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	if err := sd.StopServer(stopCtx); err != nil {
+		cancel()
+		return fmt.Errorf("store stop for api restart: %w", err)
+	}
+	cancel()
+	if err := sd.StartServer(ctx); err != nil {
+		return fmt.Errorf("store restart for api queries: %w", err)
+	}
+
+	storeMetricsCount, err := sd.CountMetricsArrowAPI(ctx)
+	if err != nil {
+		return fmt.Errorf("store metrics count gate (arrow api): %w", err)
+	}
+	chMetricsCount, err := ch.CountMetrics(ctx)
+	if err != nil {
+		return fmt.Errorf("clickhouse metrics count gate: %w", err)
+	}
+	if storeMetricsCount != chMetricsCount {
+		return fmt.Errorf("metrics count mismatch: store=%d clickhouse=%d", storeMetricsCount, chMetricsCount)
+	}
+	if storeMetricsCount != cfg.MetricsRows {
+		return fmt.Errorf("metrics count wrong: got %d want %d", storeMetricsCount, cfg.MetricsRows)
+	}
+	rep.MetricsCountStore = storeMetricsCount
+	rep.MetricsCountClickHouse = chMetricsCount
+
+	setPhase(monitor.PhaseCount)
+	storeCountOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := sd.CountMetricsArrowAPI(ctx)
+		if err != nil {
+			return err
+		}
+		if n != cfg.MetricsRows {
+			return fmt.Errorf("store metrics count %d != %d", n, cfg.MetricsRows)
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store count (arrow api): %w", err)
+	}
+	chCountOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := ch.CountMetrics(ctx)
+		if err != nil {
+			return err
+		}
+		if n != cfg.MetricsRows {
+			return fmt.Errorf("clickhouse metrics count %d != %d", n, cfg.MetricsRows)
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("clickhouse count: %w", err)
+	}
+	*workloads = append(*workloads,
+		results.Workload{Name: "count", System: "prism-store", P50Ms: storeCountOut.Stats.P50Ms, P95Ms: storeCountOut.Stats.P95Ms, MinMs: storeCountOut.Stats.MinMs},
+		results.Workload{Name: "count", System: "clickhouse", P50Ms: chCountOut.Stats.P50Ms, P95Ms: chCountOut.Stats.P95Ms, MinMs: chCountOut.Stats.MinMs},
+	)
+
+	setPhase(monitor.PhaseAggregation)
+	storeAggOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		return sd.AggregateMetricsArrowAPI(ctx)
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store aggregate (arrow api): %w", err)
+	}
+	chAggOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		return ch.AggregateMetrics(ctx)
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("clickhouse aggregate: %w", err)
+	}
+	*workloads = append(*workloads,
+		results.Workload{Name: "aggregation", System: "prism-store", P50Ms: storeAggOut.Stats.P50Ms, P95Ms: storeAggOut.Stats.P95Ms, MinMs: storeAggOut.Stats.MinMs},
+		results.Workload{Name: "aggregation", System: "clickhouse", P50Ms: chAggOut.Stats.P50Ms, P95Ms: chAggOut.Stats.P95Ms, MinMs: chAggOut.Stats.MinMs},
+	)
+
+	scanLimit := scanRowLimit(cfg.MetricsRows)
+	scanSQL := metricsScanSQL(scanLimit)
+
+	setPhase(monitor.PhaseScanJSON)
+	var jsonScanRows int64
+	storeScanJSONOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := sd.ScanMetricsJSONAPI(ctx, scanSQL)
+		if err != nil {
+			return err
+		}
+		jsonScanRows = n
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store scan (json api): %w", err)
+	}
+
+	setPhase(monitor.PhaseScanArrow)
+	var arrowScanRows int64
+	storeScanArrowOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := sd.ScanMetricsArrowAPI(ctx, scanSQL)
+		if err != nil {
+			return err
+		}
+		arrowScanRows = n
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store scan (arrow api): %w", err)
+	}
+	if jsonScanRows != arrowScanRows {
+		return fmt.Errorf("scan row count mismatch: json=%d arrow=%d", jsonScanRows, arrowScanRows)
+	}
+
+	*workloads = append(*workloads,
+		results.Workload{Name: monitor.PhaseScanJSON, System: "prism-store", P50Ms: storeScanJSONOut.Stats.P50Ms, P95Ms: storeScanJSONOut.Stats.P95Ms, MinMs: storeScanJSONOut.Stats.MinMs, Rows: jsonScanRows},
+		results.Workload{Name: monitor.PhaseScanArrow, System: "prism-store", P50Ms: storeScanArrowOut.Stats.P50Ms, P95Ms: storeScanArrowOut.Stats.P95Ms, MinMs: storeScanArrowOut.Stats.MinMs, Rows: arrowScanRows},
 	)
 	return nil
 }

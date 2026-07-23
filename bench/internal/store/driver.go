@@ -45,6 +45,7 @@ type Driver interface {
 	CountMetricsArrowAPI(ctx context.Context) (int64, error)
 	AggregateMetricsArrowAPI(ctx context.Context) error
 	ScanMetricsArrowAPI(ctx context.Context, sqlText string) (int64, error)
+	ScanMetricsJSONAPI(ctx context.Context, sqlText string) (int64, error)
 	CountLogsLike(ctx context.Context, logsGlob string, start, end time.Time) (int64, error)
 	DuckDBVersion(ctx context.Context) (string, error)
 	BaseURL() string

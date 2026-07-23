@@ -1,6 +1,6 @@
 # Spec: Arrow-transport benchmark profile (memory + latency impact, RBAC on)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/bench-arrow-transport`
 - **Owner phase:** orchestrator → developer → reviewer; then orchestrator RUNS the benchmark and commits results.
@@ -57,15 +57,15 @@ Write NEW artifacts (`bench/results-api-arrow.*`, `bench/RESULTS-api-arrow.md`, 
   - perf/memory: a large result set is where streaming (Arrow) vs full-buffer (JSON) memory diverges — measuring both on the same build isolates the transport from the lazy-view change. product: attaching (not replacing) preserves the historical record the user asked to keep; `make bench-api-arrow` keeps it reproducible by anyone with Docker.
 
 ## 5. Acceptance checklist (developer)
-- [ ] `--arrow` flag added; requires `--api`; profile resolves to `api-arrow`; artifacts via `ArtifactPaths(repoRoot,"api-arrow")`.
-- [ ] `ScanMetricsJSONAPI` added; scan SQL identical for both transports; both return equal row counts (gate).
-- [ ] Monitor phases `scan_json`/`scan_arrow` added; count/aggregation driven via Arrow; per-phase RSS/CPU attached for the new phases.
-- [ ] Orchestrator runs: idle → ingest (JWT/RBAC) → logs_like → count (Arrow) → aggregation (Arrow) → scan_json → scan_arrow; store restart + count gate preserved.
-- [ ] Render supports `api-arrow` (title, workload table incl. scan JSON vs Arrow, per-phase resource table, chart embeds, caveats); chart paths resolve correctly for both `bench/RESULTS-api-arrow.md` (relative `charts-api-arrow/...`) and root README (`bench/charts-api-arrow/...`).
-- [ ] `Makefile bench-api-arrow` target (CGO + `-tags duckdb_arrow`); `bench/README.md` + root `README.md` new subsection (old `-api` kept).
-- [ ] Unit tests: paths for `api-arrow`; render for `api-arrow`; driver `ScanMetricsJSONAPI` + Arrow scan round-trip (reuse live-tenant harness). `--arrow` without `--api` errors.
-- [ ] `make lint test` green (with `duckdb_arrow`); `go build ./bench/...` (tagged) ok; `git status` clean; TDD (tests-first).
-- [ ] Committed result artifacts are left for the orchestrator run (do NOT fabricate numbers).
+- [x] `--arrow` flag added; requires `--api`; profile resolves to `api-arrow`; artifacts via `ArtifactPaths(repoRoot,"api-arrow")`.
+- [x] `ScanMetricsJSONAPI` added; scan SQL identical for both transports; both return equal row counts (gate).
+- [x] Monitor phases `scan_json`/`scan_arrow` added; count/aggregation driven via Arrow; per-phase RSS/CPU attached for the new phases.
+- [x] Orchestrator runs: idle → ingest (JWT/RBAC) → logs_like → count (Arrow) → aggregation (Arrow) → scan_json → scan_arrow; store restart + count gate preserved.
+- [x] Render supports `api-arrow` (title, workload table incl. scan JSON vs Arrow, per-phase resource table, chart embeds, caveats); chart paths resolve correctly for both `bench/RESULTS-api-arrow.md` (relative `charts-api-arrow/...`) and root README (`bench/charts-api-arrow/...`).
+- [x] `Makefile bench-api-arrow` target (CGO + `-tags duckdb_arrow`); `bench/README.md` + root `README.md` new subsection (old `-api` kept).
+- [x] Unit tests: paths for `api-arrow`; render for `api-arrow`; driver `ScanMetricsJSONAPI` + Arrow scan round-trip (reuse live-tenant harness). `--arrow` without `--api` errors.
+- [x] `make lint test` green (with `duckdb_arrow`); `go build ./bench/...` (tagged) ok; `git status` clean; TDD (tests-first).
+- [x] Committed result artifacts are left for the orchestrator run (do NOT fabricate numbers).
 
 ## 6. Mandatory review gates (reviewer)
 - [ ] Gate 1 — Guidelines: fairness/consistency with the existing api profile (same caps, seed, count gate); reused chart/render helpers; wrapped errors; atomic comments §3.8; no fabricated results committed.

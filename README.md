@@ -244,6 +244,43 @@ overhead against ClickHouse's fast path.
 
 Full tables + caveats: [`bench/RESULTS-api.md`](bench/RESULTS-api.md). Reproduce: `make bench-api`.
 
+### Arrow transport profile — attached (2026-07-23, `make bench-api-arrow`)
+
+This profile measures store **count** and **aggregation** over HTTP `/sql` with **Arrow IPC**
+transport (lazy-view sandbox + streaming), plus a **JSON-vs-Arrow scan** on the same SQL to
+isolate transport memory and latency — all with RBAC/JWT on every request. It attaches
+beside the JSON `-api` profile above; neither replaces the embedded baseline.
+
+**Latency** (p50 / p95 / min ms; ingest: wall + rows/s):
+
+| Workload | prism-store (Arrow) | ClickHouse (native) |
+|----------|---------------------|---------------------|
+| ingest | _numbers populated by `make bench-api-arrow` (see [`bench/RESULTS-api-arrow.md`](bench/RESULTS-api-arrow.md))_ | _same_ |
+| count | _same_ | _same_ |
+| aggregation | _same_ | _same_ |
+| logs LIKE | _same_ | _same_ |
+
+**Scan transport** (store only, same SQL — not vs ClickHouse):
+
+| Transport | p50 / p95 / min (ms) | rows |
+|-----------|----------------------|------|
+| JSON | _same_ | _same_ |
+| Arrow | _same_ | _same_ |
+
+**Resource usage** (scan phases highlight JSON-vs-Arrow peak RSS):
+
+| Workload | System | CPU mean / peak | Peak RSS |
+|----------|--------|-----------------|----------|
+| scan (JSON) | prism-store | _same_ | _same_ |
+| scan (Arrow) | prism-store | _same_ | _same_ |
+
+Contrast with the JSON `-api` profile above (~280–300 ms count/agg, ~471–483 MiB peak RSS)
+to see the combined lazy-view (#54) + Arrow transport (#55) impact.
+
+**Charts** (same run): [`bench/charts-api-arrow/cpu-cores.svg`](bench/charts-api-arrow/cpu-cores.svg), [`bench/charts-api-arrow/memory-rss.svg`](bench/charts-api-arrow/memory-rss.svg), [`bench/charts-api-arrow/disk-io.svg`](bench/charts-api-arrow/disk-io.svg)
+
+Full tables + caveats: [`bench/RESULTS-api-arrow.md`](bench/RESULTS-api-arrow.md). Reproduce: `make bench-api-arrow`.
+
 ## Requirements
 
 - Go 1.25+ (build/test only; the shipped agent artifact is a static binary).
