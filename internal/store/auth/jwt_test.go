@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +135,58 @@ func TestJWTConfigValidate(t *testing.T) {
 	cfg := auth.JWTConfig{}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validate error for empty config")
+	}
+}
+
+func TestJWTVerifierRejectsAlgNone(t *testing.T) {
+	env := authtest.NewJWTEnv(t, "prism-store")
+	v := env.Verifier(t)
+	tok, err := authtest.UnsafeAlgNoneToken(env.Issuer, "prism-store", "attacker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.Verify(context.Background(), tok)
+	if err == nil {
+		t.Fatal("expected alg=none token to be rejected")
+	}
+	if !errors.Is(err, auth.ErrMalformedToken) && !errors.Is(err, auth.ErrInvalidSignature) {
+		t.Fatalf("err = %v, want malformed or invalid signature", err)
+	}
+}
+
+func TestJWTVerifierRejectsHMACAlgorithmConfusion(t *testing.T) {
+	env := authtest.NewJWTEnv(t, "prism-store")
+	v := env.Verifier(t)
+	tok, err := authtest.HMACConfusionToken(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.Verify(context.Background(), tok)
+	if err == nil {
+		t.Fatal("expected HMAC confusion token to be rejected")
+	}
+	if !errors.Is(err, auth.ErrInvalidSignature) && !errors.Is(err, auth.ErrMalformedToken) {
+		t.Fatalf("err = %v, want signature or malformed failure", err)
+	}
+}
+
+func TestJWTVerifierRejectsTamperedPayload(t *testing.T) {
+	env := authtest.NewJWTEnv(t, "prism-store")
+	v := env.Verifier(t)
+	tok, err := env.SignToken(authtest.WithSubject("alice@corp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatal("expected JWT compact form")
+	}
+	tampered := parts[0] + ".eyJzdWIiOiJhZG1pbiJ9." + parts[2]
+	_, err = v.Verify(context.Background(), tampered)
+	if err == nil {
+		t.Fatal("expected tampered payload to be rejected")
+	}
+	if !errors.Is(err, auth.ErrInvalidSignature) && !errors.Is(err, auth.ErrMalformedToken) {
+		t.Fatalf("err = %v, want signature failure", err)
 	}
 }
