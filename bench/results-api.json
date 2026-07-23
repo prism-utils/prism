@@ -1,0 +1,182 @@
+{
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "cpu_model": "Apple M1 Pro",
+    "ram_gib": 16,
+    "clickhouse_version": "24.8.14.39",
+    "duckdb_version": "v1.1.3",
+    "git_commit": "3cedbda",
+    "metrics_rows": 1000000,
+    "logs_rows": 1000000,
+    "scale": 1,
+    "measured_at": "2026-07-23T14:52:16.166941Z",
+    "resource_cpus_per_system": 2,
+    "resource_mem_mib_per_system": 1024,
+    "duckdb_threads": 2,
+    "duckdb_memory_limit": "1024MB",
+    "idle_window_sec": 5,
+    "profile": "api",
+    "chart_paths": [
+      "bench/charts-api/cpu-cores.svg",
+      "bench/charts-api/memory-rss.svg",
+      "bench/charts-api/disk-io.svg"
+    ]
+  },
+  "like_count_store": 10000,
+  "like_count_clickhouse": 10000,
+  "metrics_count_store": 1000000,
+  "metrics_count_clickhouse": 1000000,
+  "workloads": [
+    {
+      "name": "idle",
+      "system": "prism-store",
+      "usage": {
+        "cpu_cores_mean": 0,
+        "cpu_cores_peak": 0,
+        "rss_peak_bytes": 23838720,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "duration_sec": 5.078794667
+      }
+    },
+    {
+      "name": "idle",
+      "system": "clickhouse",
+      "usage": {
+        "cpu_cores_mean": 0.06262009047832388,
+        "cpu_cores_peak": 1.0791209066223977,
+        "rss_peak_bytes": 256110592,
+        "read_bytes": 0,
+        "write_bytes": 200704,
+        "read_ops": 0,
+        "write_ops": 0,
+        "duration_sec": 5.078794667
+      }
+    },
+    {
+      "name": "ingest",
+      "system": "prism-store",
+      "wall_seconds": 1.39688925,
+      "rows_per_sec": 1431752.732007924,
+      "rows": 2000000,
+      "usage": {
+        "cpu_cores_mean": 0.182484750748576,
+        "cpu_cores_peak": 1.8723257454136006,
+        "rss_peak_bytes": 96747520,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "duration_sec": 3.657348208
+      }
+    },
+    {
+      "name": "ingest",
+      "system": "clickhouse",
+      "wall_seconds": 1.844922209,
+      "rows_per_sec": 1084056.5473403113,
+      "rows": 2000000,
+      "usage": {
+        "cpu_cores_mean": 0.2839621673800172,
+        "cpu_cores_peak": 1.753116310613332,
+        "rss_peak_bytes": 409911296,
+        "read_bytes": 4096,
+        "write_bytes": 0,
+        "read_ops": 0,
+        "write_ops": 0,
+        "duration_sec": 3.657348208
+      }
+    },
+    {
+      "name": "logs_like",
+      "system": "prism-store",
+      "p50_ms": 62.498,
+      "p95_ms": 66.631,
+      "min_ms": 58.507,
+      "usage": {
+        "cpu_cores_mean": 0.9867392973720855,
+        "cpu_cores_peak": 3.207075815513208,
+        "rss_peak_bytes": 1562361856,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "duration_sec": 1.418548833
+      }
+    },
+    {
+      "name": "logs_like",
+      "system": "clickhouse",
+      "p50_ms": 38.579,
+      "p95_ms": 48.811,
+      "min_ms": 34.037,
+      "usage": {
+        "cpu_cores_mean": 0.3363540168304502,
+        "cpu_cores_peak": 1.83562631680765,
+        "rss_peak_bytes": 443281408,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "duration_sec": 1.418548833
+      }
+    },
+    {
+      "name": "count",
+      "system": "prism-store",
+      "p50_ms": 286.491,
+      "p95_ms": 286.75,
+      "min_ms": 277.584,
+      "usage": {
+        "cpu_cores_mean": 1.1877311453343915,
+        "cpu_cores_peak": 2.2561583904511373,
+        "rss_peak_bytes": 494125056,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "duration_sec": 1.8258616669999999
+      }
+    },
+    {
+      "name": "count",
+      "system": "clickhouse",
+      "p50_ms": 2.035,
+      "p95_ms": 2.147,
+      "min_ms": 1.263,
+      "usage": {
+        "cpu_cores_mean": 0.059669842165411345,
+        "cpu_cores_peak": 0.37933951893735834,
+        "rss_peak_bytes": 403058688,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "duration_sec": 1.8258616669999999
+      }
+    },
+    {
+      "name": "aggregation",
+      "system": "prism-store",
+      "p50_ms": 296.85,
+      "p95_ms": 300.817,
+      "min_ms": 291.267,
+      "usage": {
+        "cpu_cores_mean": 1.2022489224816293,
+        "cpu_cores_peak": 2.118784628518723,
+        "rss_peak_bytes": 506871808,
+        "read_bytes": 0,
+        "write_bytes": 0,
+        "duration_sec": 1.859211167
+      }
+    },
+    {
+      "name": "aggregation",
+      "system": "clickhouse",
+      "p50_ms": 10.625,
+      "p95_ms": 25.301,
+      "min_ms": 8.673,
+      "usage": {
+        "cpu_cores_mean": 0.09790486854347837,
+        "cpu_cores_peak": 0.7560218486284525,
+        "rss_peak_bytes": 402694144,
+        "read_bytes": 0,
+        "write_bytes": 39129088,
+        "read_ops": 0,
+        "write_ops": 0,
+        "duration_sec": 1.859211167
+      }
+    }
+  ]
+}

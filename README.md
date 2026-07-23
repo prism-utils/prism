@@ -192,6 +192,58 @@ Both systems ran under the same **2 vCPU / 1 GiB** envelope so neither could all
 Full tables, fairness notes, and cleanup: [`bench/README.md`](bench/README.md),
 [`bench/RESULTS.md`](bench/RESULTS.md).
 
+### RBAC + HTTP SQL API profile — attached, not a replacement (2026-07-23, `make bench-api`)
+
+The baseline above runs the store queries in-process (embedded DuckDB). This
+**attached** profile instead drives the store's **count** and **aggregation**
+through the RBAC-guarded HTTP SQL API (`POST /{ns}/sql`, #51): ingest sends a
+**JWT** (`writer`/`admin`), queries send a JWT and execute inside the per-request,
+tenant-scoped **materialize-then-lock** sandbox. It measures the *end-to-end
+production path* (HTTP + JWT verify + policy check + sandbox) — a deliberately
+different, heavier cost than the embedded baseline. Same host/dataset/caps.
+
+**Latency** (p50 / p95 / min ms; ingest: wall + rows/s):
+
+| Workload | prism-store (HTTP `/sql` + RBAC) | ClickHouse (native) |
+|----------|----------------------------------|---------------------|
+| ingest | 1.40s · 1,431,753 rows/s | 1.84s · 1,084,057 rows/s |
+| count | 286.5 / 286.8 / 277.6 | 2.0 / 2.1 / 1.3 |
+| aggregation | 296.9 / 300.8 / 291.3 | 10.6 / 25.3 / 8.7 |
+| logs LIKE | 62.5 / 66.6 / 58.5 | 38.6 / 48.8 / 34.0 |
+
+**Resource usage** (store count/aggregation now sample the `prism-store` **binary** serving HTTP):
+
+| Workload | System | CPU mean / peak | Peak RSS | I/O | IOPS |
+|----------|--------|-----------------|----------|-----|------|
+| idle (baseline) | prism-store | 0.00 / 0.00 cores | 22.7 MiB | n/a | n/a |
+| idle (baseline) | ClickHouse | 0.06 / 1.08 cores | 244.2 MiB | 0.2 MiB | 0 |
+| ingest | prism-store | 0.18 / 1.87 cores | 92.3 MiB | n/a | n/a |
+| ingest | ClickHouse | 0.28 / 1.75 cores | 390.9 MiB | 0.0 MiB | 0 |
+| count | prism-store | 1.19 / 2.26 cores | 471.2 MiB | n/a | n/a |
+| count | ClickHouse | 0.06 / 0.38 cores | 384.4 MiB | n/a | n/a |
+| aggregation | prism-store | 1.20 / 2.12 cores | 483.4 MiB | n/a | n/a |
+| aggregation | ClickHouse | 0.10 / 0.76 cores | 384.0 MiB | 37.3 MiB | 0 |
+| logs LIKE | prism-store | 0.99 / 3.21 cores | 1490.0 MiB | n/a | n/a |
+| logs LIKE | ClickHouse | 0.34 / 1.84 cores | 422.7 MiB | n/a | n/a |
+
+**Charts** (same run): [`bench/charts-api/cpu-cores.svg`](bench/charts-api/cpu-cores.svg), [`bench/charts-api/memory-rss.svg`](bench/charts-api/memory-rss.svg), [`bench/charts-api/disk-io.svg`](bench/charts-api/disk-io.svg)
+
+**Interpretation.** **Ingest** still leads ClickHouse even with JWT auth on every
+request. **Count/aggregation over the API cost ~280–300 ms** vs the embedded
+baseline's sub-15 ms — the gap is the per-request sandbox: on the bundled **DuckDB
+v1.1.3**, `allowed_directories` does not exist, so the tenant's data is
+**materialized into an in-memory table** (then external access is disabled +
+configuration locked) before every query. That copy dominates at 1M rows. When
+`go-duckdb` bundles DuckDB ≥1.2, the sandbox can use `allowed_directories` + a lazy
+view (no per-query materialization), which should close most of this gap; the
+embedded baseline shows the underlying engine is already competitive. **logs LIKE**
+stays engine-level (no logs API) and is unchanged in shape. ClickHouse is queried
+over its **native protocol** here (not HTTP), so the count/aggregation columns are
+not a like-for-like transport comparison — they show the store's full RBAC/API
+overhead against ClickHouse's fast path.
+
+Full tables + caveats: [`bench/RESULTS-api.md`](bench/RESULTS-api.md). Reproduce: `make bench-api`.
+
 ## Requirements
 
 - Go 1.25+ (build/test only; the shipped agent artifact is a static binary).
