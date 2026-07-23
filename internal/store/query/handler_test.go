@@ -140,6 +140,50 @@ func TestHandlerSuccess200JSON(t *testing.T) {
 	}
 }
 
+func TestHandlerExecError500(t *testing.T) {
+	dataDir := t.TempDir()
+	start := time.Unix(1700000000, 0).UTC()
+	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, func() time.Time { return start })
+	t.Cleanup(func() { _ = eng.Close() })
+
+	dir := t.TempDir()
+	path := testparquet.WriteWindow(t, dir, "w.parquet", []testparquet.Row{
+		{Name: "up", Labels: "{}", Value: 1, TimestampMs: 0},
+	})
+	f, _ := os.Open(path)
+	if _, err := eng.Ingest(testTenant, f); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	_ = f.Close()
+
+	if err := eng.WithRead(testTenant, func(db *sql.DB) error {
+		_, err := db.ExecContext(context.Background(), "DROP TABLE hot_current")
+		return err
+	}); err != nil {
+		t.Fatalf("drop hot_current: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mux := http.NewServeMux()
+	cfg := &query.Config{DataDir: dataDir}
+	mux.Handle(query.QueryRoutePattern(""), query.Handler(cfg, eng, logger))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	startS := start.Format(time.RFC3339)
+	endS := start.Add(time.Hour).Format(time.RFC3339)
+	resp := doQueryReq(t, queryURL(srv.URL, testTenant, startS, endS))
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusInternalServerError {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: got %d want 500 body %s", resp.StatusCode, body)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "query failed") {
+		t.Fatalf("body: %s", body)
+	}
+}
+
 func TestConcurrentQueryAndFlush(t *testing.T) {
 	start := time.Unix(1700000000, 0).UTC()
 	dataDir := t.TempDir()
