@@ -720,6 +720,9 @@ via environment variables (no YAML config file).
 | `MERGE_TICK_SECONDS` | `60` | Tier merge ticker interval. |
 | `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies. |
 | `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset. |
+| `E2E_EXPOSE_QUERY_SQL` | _(empty — off)_ | When `1`, query JSON responses include the generated SQL (e2e/regression only). |
+
+See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, and the view-SQL helper.
 
 ### HTTP routes
 
@@ -727,6 +730,7 @@ via environment variables (no YAML config file).
 |---|---|---|---|
 | `GET` | `/healthz` | `200` body `ok\n` | — |
 | `GET` | `/readyz` | `200` body `ready\n` | `503` when `DATA_DIR` is not writable |
+| `GET` | `<ROUTE_PREFIX>/{tenant}/query?start=&end=&step=` | `200 application/json` | see query validation in [`STORE.md`](STORE.md) |
 | `POST` | `<ROUTE_PREFIX>/{tenant}/ingest/{artifact}` | `204 No Content` | see validation chain below |
 
 When `ROUTE_PREFIX` is empty the ingest path is `/{tenant}/ingest/{artifact}`.

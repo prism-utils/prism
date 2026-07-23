@@ -1,6 +1,6 @@
 # Spec: prism-store — query API + Grafana DuckDB view SQL
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-query`
 - **Owner phase:** orchestrator → developer
@@ -59,18 +59,18 @@ that emits the Grafana DuckDB datasource view SQL so any consumer can wire
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `BuildSQL` unions hot + hot_prev + present tiers (+ selected rollup); every part filters `ts`/`bucket` with bound `?` args; wrapped `ORDER BY ts`.
-- [ ] SQL contains **no** `union_by_name` and **no** `filename` (hard test `AssertNoUnionByName`); paths are tenant-scoped (tenant-isolation test: A's SQL never contains B's tenant path).
-- [ ] `pickRollupStep`: `step` hint wins; ≥7d→1h, ≥24h→5m, ≥1h→1m, else raw — table test.
-- [ ] Query handler: missing/invalid start/end `400`; unknown tenant `404`; missing tenant root `400`; exec error `500`; success `200` JSON with `rows`; `sql` present only when `E2E_EXPOSE_QUERY_SQL=1`.
-- [ ] Query runs under `engine.WithRead`; a test ingests + queries concurrently with a flush and returns a consistent, gap-free result under `-race`.
-- [ ] Cross-tier gap-free: a range over hot+L0+L1 returns each row once, ordered by ts.
-- [ ] Freshness, retention, tenant-isolation integration tests pass.
-- [ ] `query.ViewSQL` + `prism-store print-view-sql --tenant` emit path-scoped view SQL with no `union_by_name`/`filename`, same row shape as the API; covered by a test.
-- [ ] Aggregate perf benchmark present (target < 300 ms) — reported, not a flaky gate.
-- [ ] `docs/STORE.md` + `docs/CONFIG.md` updated.
-- [ ] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
-- [ ] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
+- [x] `BuildSQL` unions hot + hot_prev + present tiers (+ selected rollup); every part filters `ts`/`bucket` with bound `?` args; wrapped `ORDER BY ts`.
+- [x] SQL contains **no** `union_by_name` and **no** `filename` (hard test `AssertNoUnionByName`); paths are tenant-scoped (tenant-isolation test: A's SQL never contains B's tenant path).
+- [x] `pickRollupStep`: `step` hint wins; ≥7d→1h, ≥24h→5m, ≥1h→1m, else raw — table test.
+- [x] Query handler: missing/invalid start/end `400`; unknown tenant `404`; missing tenant root `400`; exec error `500`; success `200` JSON with `rows`; `sql` present only when `E2E_EXPOSE_QUERY_SQL=1`.
+- [x] Query runs under `engine.WithRead`; a test ingests + queries concurrently with a flush and returns a consistent, gap-free result under `-race`.
+- [x] Cross-tier gap-free: a range over hot+L0+L1 returns each row once, ordered by ts.
+- [x] Freshness, retention, tenant-isolation integration tests pass.
+- [x] `query.ViewSQL` + `prism-store print-view-sql --tenant` emit path-scoped view SQL with no `union_by_name`/`filename`, same row shape as the API; covered by a test.
+- [x] Aggregate perf benchmark present (target < 300 ms) — reported, not a flaky gate.
+- [x] `docs/STORE.md` + `docs/CONFIG.md` updated.
+- [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
+- [x] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
