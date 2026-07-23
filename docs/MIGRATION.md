@@ -52,6 +52,8 @@ default to prism-proxy-equivalent behavior.
 | — | `AUTHZ_POLICY_FILE` | New (optional): enables **RBAC** (JWT/OIDC + deny-by-default per-tenant `reader`/`writer`/`admin` policy) on HTTP query/ingest/admin routes. Leave unset to keep prism-proxy token behavior. |
 | — | `OIDC_ISSUER` / `OIDC_JWKS_URL` / `OIDC_JWKS_FILE` / `OIDC_AUDIENCE` / `AUTHZ_RELOAD_SECONDS` | New: JWT verification config, required when RBAC is enabled (`OIDC_JWKS_FILE` for offline/air-gapped). |
 | — | `SQL_API_ENABLED` / `SQL_API_MAX_ROWS` / `SQL_API_TIMEOUT_SECONDS` / `SQL_API_MAX_BODY_BYTES` | New: arbitrary read-only SQL API (`POST {ROUTE_PREFIX}/{ns}/sql`); default on, RBAC-guarded. |
+| — | `SQL_API_QUEUE_ENABLED` / `SQL_API_MAX_INFLIGHT` / `SQL_API_MAX_QUEUE` / `SQL_API_QUEUE_TIMEOUT_MS` | New (v1.3): optional `/sql` in-flight limiter; **all default off / backward-compatible** (`SQL_API_QUEUE_ENABLED=false`). |
+| — | `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT` / `MAX_OPEN_TENANTS` / `QUERY_HOT_ONLY` / `RUN_JOBS` | New: DuckDB governance and reader/writer split; see [`MEMORY.md`](MEMORY.md). |
 | — | **`duckdb_arrow` build tag** | **Build-from-source only:** `prism-store` release/CI builds pass `-tags duckdb_arrow` (CGO) to enable Arrow IPC streaming on `POST /sql` when clients send `Accept: application/vnd.apache.arrow.stream`. Prebuilt images include it; plain `go build ./...` without the tag serves JSON only (Arrow requests → `406`). |
 
 > **RBAC precedence / caution.** When `AUTHZ_POLICY_FILE` is set, RBAC is
@@ -62,7 +64,7 @@ default to prism-proxy-equivalent behavior.
 > prism-proxy cutover, and adopt it as a follow-up once JWT issuance (k8s SA tokens
 > or Vault) is wired.
 
-Full reference: [`docs/CONFIG.md`](CONFIG.md).
+Full reference: [`docs/CONFIG.md`](docs/CONFIG.md) §14 and [`docs/MEMORY.md`](docs/MEMORY.md).
 
 ## Cutover steps (homelab-apps / homelab-gitops)
 

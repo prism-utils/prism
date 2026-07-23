@@ -1,6 +1,6 @@
 # Spec: /sql in-flight queue (off by default) + configurable workers/memory caps + docs
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/sql-queue`
 - **Ships as:** `v1.3.0` (feature; latest tag `v1.2.0`). Multi-arch package published after merge.
@@ -96,10 +96,10 @@ Status: READY
 - [x] `make lint test` green with `-tags duckdb_arrow`; `go build -tags duckdb_arrow ./...`; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; `git status` clean.
 
 ### Docs (§1.D) — all required
-- [ ] `docs/CONFIG.md` §14 complete & matches `loadConfig()`.
-- [ ] `docs/STORE.md` features overview + SQL limits (queue) + **clean RBAC guide**.
-- [ ] `docs/MEMORY.md` created and linked from README/STORE/CONFIG.
-- [ ] `docs/MIGRATION.md`, `docs/DESIGN.md`, `README.md` updated.
+- [x] `docs/CONFIG.md` §14 complete & matches `loadConfig()`.
+- [x] `docs/STORE.md` features overview + SQL limits (queue) + **clean RBAC guide**.
+- [x] `docs/MEMORY.md` created and linked from README/STORE/CONFIG.
+- [x] `docs/MIGRATION.md`, `docs/DESIGN.md`, `README.md` updated.
 
 ## 5. Mandatory review gates (reviewer) — SECURITY-SENSITIVE (limiter sits in the auth/tenant path)
 - [ ] Gate 1 — Guidelines: reusable middleware; single shared limiter; wrapped errors; atomic comments §3.8; no behavior change when disabled.

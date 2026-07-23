@@ -695,51 +695,68 @@ PRISM_METRICS_URL=… PRISM_OUT=… PRISM_LOG=… prism validate -config prism.y
 
 ## 14. `prism-store` (ingest receiver)
 
-`cmd/prism-store` is the durable store server. Ingest is configured entirely
-via environment variables (no YAML config file).
+`cmd/prism-store` is the durable store server. Configuration is entirely via
+environment variables (no YAML config file). This table is the **authoritative,
+complete** reference — every variable read by `loadConfig()` in
+`cmd/prism-store/main.go` and `loadRBACConfig()` in `cmd/prism-store/rbac.go`,
+plus `E2E_EXPOSE_QUERY_SQL` (read by `query.ExposeSQLFromEnv()`).
 
-| Variable | Default | Description |
-|---|---|---|
-| `LISTEN_ADDR` | `:8080` | HTTP bind address (`/healthz`, `/readyz`, ingest). |
-| `FLIGHT_ADDR` | _(empty — off)_ | When set, binds an Arrow Flight `DoPut` receiver on this address. |
-| `DATA_DIR` | `/data` | Shared data root for all tenants. |
-| `ALLOWED_ARTIFACTS` | `metrics-raw` | Comma-separated artifact types accepted on ingest routes. |
-| `MAX_BODY_BYTES` | `268435456` | Maximum HTTP ingest body size (256 MiB). |
-| `INGEST_TOKEN` | _(empty)_ | Static bearer token when `AUTH_MODE=bearer`. |
-| `AUTH_MODE` | `none` | Pluggable auth: `none`, `bearer`, `mtls`, `trusted-header`. |
-| `ROUTE_PREFIX` | _(empty)_ | Optional path prefix prepended to ingest routes (e.g. `/prism-proxy`). |
-| `HOT_WINDOW_SECONDS` | _(unset)_ | Hot-window duration in seconds (overrides minutes when set). |
-| `HOT_WINDOW_MINUTES` | `10` | Hot-window duration in minutes when seconds unset. |
-| `SEGMENTS_PER_TIER` | `6` | Minimum live segments at a tier before merge compaction runs. |
-| `MAX_SEGMENT_BYTES` | `2147483648` | Seal threshold (2 GiB); sealed segments are never merge inputs. |
-| `RETENTION_DAYS` | `15` | Delete tier segments and rollups strictly older than this window. |
-| `ROLLUP_STEPS` | `1m,5m,1h` | Comma-separated rollup intervals built after L1+ merges. |
-| `MAX_TIER` | `8` | Highest tier scanned (`L0`…`L8`). |
-| `HOT_SNAPSHOT_SECONDS` | `15` | Hot snapshot export ticker interval. |
-| `FLUSH_TICK_SECONDS` | `30` | Hot→L0 flush ticker interval. |
-| `MERGE_TICK_SECONDS` | `60` | Tier merge ticker interval. |
-| `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies. |
-| `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset. |
-| `E2E_EXPOSE_QUERY_SQL` | _(empty — off)_ | When `1`, query JSON responses include the generated SQL (e2e/regression only). |
-| `SQL_API_ENABLED` | `true` | When `false`, arbitrary SQL route `POST /{ns}/sql` is not registered. |
-| `SQL_API_MAX_ROWS` | `100000` | Maximum rows per SQL response (`truncated` when exceeded). |
-| `SQL_API_TIMEOUT_SECONDS` | `30` | Per-query timeout for `POST /{ns}/sql`. |
-| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum POST `/sql` JSON body size (1 MiB). |
+For memory sizing see [`MEMORY.md`](MEMORY.md). For features and RBAC operation
+see [`STORE.md`](STORE.md).
+
+| Env | Type | Default | Meaning |
+|---|---|---|---|
+| `ADMIN_LISTEN_ADDR` | string | _(empty — off)_ | When set, binds `/admin/*`, `/stats`, and query/SQL on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
+| `ADMIN_TOKEN` | string | _(empty — off)_ | Static bearer for admin-plane routes when RBAC is off. Constant-time compare. Superseded when `AUTHZ_POLICY_FILE` is set. |
+| `ALLOWED_ARTIFACTS` | string (comma-separated) | `metrics-raw` | Artifact types accepted on ingest routes. |
+| `AUTH_MODE` | string | `none` | Ingest/Flight auth when RBAC is off: `none`, `bearer`, `mtls`, `trusted-header`. HTTP ingest ignores this when RBAC is on (JWT). Flight always uses `AUTH_MODE`. |
+| `AUTHZ_POLICY_FILE` | string | _(empty — off)_ | Path to deny-by-default RBAC policy YAML. When set, enables JWT/OIDC + RBAC on HTTP query/ingest/admin routes. |
+| `AUTHZ_RELOAD_SECONDS` | int (seconds) | `15` | Policy file reload poll interval. |
+| `CLIENT_TENANTS` | string (comma-separated) | _(empty)_ | Owned tenant namespaces in `client` mode; **required** when `MODE=client`. |
+| `CLUSTER_CLIENTS` | string | _(empty)_ | Static `tenant=http://host:port,...` map for `cluster` mode; **required** when `MODE=cluster`. |
+| `DATA_DIR` | string | `/data` | Shared data root for all tenants. |
+| `DUCKDB_MEMORY_LIMIT` | string | _(empty)_ | DuckDB `memory_limit` for tenant engines, `/sql` sandboxes, merge, and rollup workers when set. Unset ⇒ DuckDB default (~80% RAM per instance). |
+| `DUCKDB_THREADS` | int | `0` (unset) | DuckDB `threads` when `> 0` on all governed instances. Unset ⇒ DuckDB default. |
+| `E2E_EXPOSE_QUERY_SQL` | string | _(empty — off)_ | When `1`, structured query JSON includes generated SQL (e2e/regression only). |
+| `FLIGHT_ADDR` | string | _(empty — off)_ | When set, binds an Arrow Flight `DoPut` receiver on this address. |
+| `FLUSH_TICK_SECONDS` | int (seconds) | `30` | Hot→L0 flush ticker interval. |
+| `HOT_SNAPSHOT_SECONDS` | int (seconds) | `15` | Hot snapshot export ticker interval. |
+| `HOT_WINDOW_MINUTES` | int (minutes) | `10` | Hot-window duration when `HOT_WINDOW_SECONDS` is unset. |
+| `HOT_WINDOW_SECONDS` | int (seconds) | _(unset)_ | Hot-window duration in seconds; overrides minutes when set to a positive integer. |
+| `INGEST_TOKEN` | string | _(empty)_ | Static bearer token when `AUTH_MODE=bearer` (RBAC off). |
+| `LISTEN_ADDR` | string | `:8080` | Primary HTTP bind (`/healthz`, `/readyz`, ingest or combined mux). |
+| `MAX_BODY_BYTES` | int64 (bytes) | `268435456` | Maximum HTTP ingest body size (256 MiB). |
+| `MAX_OPEN_TENANTS` | int | `32` | LRU cap on concurrently open per-tenant DuckDB engines (`engine.duckdb`). |
+| `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments are never merge inputs. |
+| `MAX_TIER` | int | `8` | Highest tier directory scanned (`L0`…`L8`). |
+| `MERGE_TICK_SECONDS` | int (seconds) | `60` | Tier merge ticker interval. |
+| `MODE` | string | `standalone` | Deployment role: `standalone`, `client`, or `cluster`. |
+| `OIDC_AUDIENCE` | string (comma-separated) | _(required when RBAC on)_ | Accepted JWT `aud` values. |
+| `OIDC_ISSUER` | string | _(required when RBAC on)_ | OIDC issuer URL; discovery fetches JWKS when JWKS file/URL unset. |
+| `OIDC_JWKS_FILE` | string | _(empty)_ | Filesystem path to static JWKS JSON (offline/air-gapped). |
+| `OIDC_JWKS_URL` | string | _(empty)_ | Static JWKS URL (alternative to discovery). |
+| `QUERY_HOT_ONLY` | bool | `false` | When `true`, structured query and `/sql` sandbox union only hot data (no tier/rollup Parquet). |
+| `RETENTION_DAYS` | int | `15` | Delete tier segments and rollups strictly older than this window. |
+| `RETENTION_TICK_HOURS` | int (hours) | `1` | Retention ticker interval when `RETENTION_TICK_SECONDS` is unset. |
+| `RETENTION_TICK_SECONDS` | int (seconds) | _(unset)_ | Retention ticker in seconds; overrides hours when set to a positive integer. |
+| `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. |
+| `ROUTE_PREFIX` | string | _(empty)_ | Optional path prefix for ingest/query/SQL routes (e.g. `/prism-proxy`). |
+| `RUN_JOBS` | bool | `true` | When `false`, skip background maintenance (snapshot, flush, merge, rollups, retention). Ingest/query still run. |
+| `SEGMENTS_PER_TIER` | int | `6` | Minimum live segments at a tier before merge compaction runs. |
+| `SQL_API_ENABLED` | bool | `true` | When `false`, `POST /{ns}/sql` is not registered. |
+| `SQL_API_MAX_BODY_BYTES` | int64 (bytes) | `1048576` | Maximum POST `/sql` JSON body (1 MiB). |
+| `SQL_API_MAX_INFLIGHT` | int | `4` | Max concurrent `/sql` executions when `SQL_API_QUEUE_ENABLED=true`. |
+| `SQL_API_MAX_QUEUE` | int | `64` | Max `/sql` requests allowed to wait for a slot when queue enabled. |
+| `SQL_API_MAX_ROWS` | int | `100000` | Maximum rows per SQL response (`truncated` when exceeded). |
+| `SQL_API_QUEUE_ENABLED` | bool | `false` | Enable in-flight limiter on `/sql` (data nodes only; off = prior unbounded behavior). |
+| `SQL_API_QUEUE_TIMEOUT_MS` | int (milliseconds) | `5000` | Max wait for an `/sql` slot before `429`. |
+| `SQL_API_TIMEOUT_SECONDS` | int (seconds) | `30` | Per-query timeout for `POST /{ns}/sql`. |
 
 **Arrow transport (build-from-source):** release CI and `make docker-store` build
 `prism-store` with `-tags duckdb_arrow` (CGO) so `Accept:
-application/vnd.apache.arrow.stream` returns a streaming Arrow IPC body. Builds
-without the tag compile a stub that responds `406 Not Acceptable` to Arrow
-requests; JSON is unaffected.
-| `DUCKDB_MEMORY_LIMIT` | _(empty)_ | DuckDB memory cap for engine and SQL sandbox when set. |
-| `ADMIN_LISTEN_ADDR` | _(empty — off)_ | When set, binds `/admin/*`, `/stats`, and query on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
-| `ADMIN_TOKEN` | _(empty — off)_ | Static bearer token for admin-plane routes (`/admin/*`, `/stats`, query on admin bind). Constant-time compare; unset = open (use network isolation). Superseded when `AUTHZ_POLICY_FILE` is set. |
-| `AUTHZ_POLICY_FILE` | _(empty — off)_ | Path to deny-by-default RBAC policy YAML. When set, enables JWT/OIDC auth + RBAC on HTTP query/ingest/admin routes. |
-| `OIDC_ISSUER` | _(required when RBAC on)_ | OIDC issuer URL for JWT verification (discovery fetches JWKS when JWKS file/URL unset). |
-| `OIDC_JWKS_URL` | _(empty)_ | Static JWKS URL (alternative to discovery). |
-| `OIDC_JWKS_FILE` | _(empty)_ | Filesystem path to static JWKS JSON (offline-friendly). |
-| `OIDC_AUDIENCE` | _(required when RBAC on)_ | Comma-separated accepted `aud` values. |
-| `AUTHZ_RELOAD_SECONDS` | `15` | Policy file reload poll interval. |
+application/vnd.apache.arrow.stream` returns a streaming Arrow IPC body on the
+same `POST /{ns}/sql` route. Builds without the tag compile a stub that responds
+`406 Not Acceptable` to Arrow requests; JSON is unaffected.
 
 When **`AUTHZ_POLICY_FILE`** is set, RBAC supersedes `ADMIN_TOKEN` / `INGEST_TOKEN`
 on HTTP data/admin routes. **`AUTH_MODE` still governs Arrow Flight** — RBAC does
@@ -747,7 +764,7 @@ not cover Flight. If RBAC is on and `FLIGHT_ADDR` is set, `AUTH_MODE=none` is
 rejected at startup; use `bearer`/`mtls`/`trusted-header` for Flight or disable
 `FLIGHT_ADDR`.
 
-See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, admin provisioning, the `/stats` billing contract, RBAC policy format, and the view-SQL helper.
+See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, admin provisioning, the `/stats` billing contract, RBAC, and the view-SQL helper. Memory sizing: [`MEMORY.md`](MEMORY.md).
 
 ### HTTP routes
 

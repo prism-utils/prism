@@ -686,3 +686,14 @@ go-duckdb v2 Arrow interface (`duckdb_arrow` tag).
 `duckdb_arrow`; stub returns `406` without the tag so `go build ./...` still
 works. `cmd/prism` import graph unchanged (CGO-free). Production store builds
 (`Makefile`, goreleaser, docker-store) always include the tag.
+
+### Optional `/sql` in-flight limiter + uniform DuckDB caps (2026-07)
+
+**Decision:** optional bounded queue on `POST /{ns}/sql` (`SQL_API_QUEUE_ENABLED`,
+default off) with `429` + `Retry-After` backpressure on data nodes only; reuse
+`DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT` for merge and rollup workers (not just
+engine/sandbox); wire `MAX_OPEN_TENANTS` LRU on the tenant engine.
+
+**Consequences:** turns unbounded `concurrent /sql × memory_limit` into a
+configurable ceiling when enabled; one knob set governs every DuckDB instance.
+See [`MEMORY.md`](MEMORY.md) and [`CONFIG.md`](CONFIG.md) §14.
