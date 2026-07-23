@@ -152,8 +152,8 @@ func TestConcurrentIngestAndFlushRace(t *testing.T) {
 	t.Cleanup(func() { _ = e.Close() })
 
 	dir := t.TempDir()
-	const workers = 8
-	const ingestsPerWorker = 5
+	const workers = 16
+	const ingestsPerWorker = 25
 	paths := make([]string, workers*ingestsPerWorker)
 	for i := range paths {
 		paths[i] = testparquet.WriteWindow(t, dir, "w"+string(rune('a'+i%26))+".parquet", []testparquet.Row{
