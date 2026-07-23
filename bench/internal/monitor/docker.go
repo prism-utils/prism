@@ -172,13 +172,17 @@ func (d *DockerSampler) fetchFallback(ctx context.Context) (dockerSample, error)
 	if err != nil {
 		return dockerSample{}, err
 	}
-	line := strings.TrimSpace(string(out))
+	return parseDockerCLIStatsLine(string(out))
+}
+
+func parseDockerCLIStatsLine(out string) (dockerSample, error) {
+	line := strings.TrimSpace(out)
 	if line == "" {
 		return dockerSample{}, fmt.Errorf("monitor: empty docker stats output")
 	}
 	var row dockerCLIFallback
 	if err := json.Unmarshal([]byte(line), &row); err != nil {
-		return dockerSample{}, err
+		return dockerSample{}, fmt.Errorf("monitor: docker stats cli json: %w", err)
 	}
 	cpu := parseCPUPerc(row.CPUPerc)
 	rss := parseMemUsageBytes(row.MemUsage)
