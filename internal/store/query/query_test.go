@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,186 @@ func TestPickRollupStep(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("pickRollupStep(%q, %v): got %q want %q", tc.step, tc.end.Sub(start), got, tc.want)
 		}
+	}
+}
+
+func TestBuildSQLHotOnlyOmitsParquetAndRollups(t *testing.T) {
+	dataDir := t.TempDir()
+	tenantRoot := filepath.Join(dataDir, testTenant)
+	if err := os.MkdirAll(filepath.Join(tenantRoot, "tiers", "L0"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	testparquet.WriteSegmentWithTs(t, filepath.Join(tenantRoot, "tiers", "L0", "l0.parquet"),
+		time.Unix(1700000000, 0).UTC(), "tier", 1)
+	rollupDir := layout.RollupDir(dataDir, testTenant, "5m")
+	if err := os.MkdirAll(rollupDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	testparquet.WriteRollupBucket(t, filepath.Join(rollupDir, "r.parquet"),
+		time.Unix(1700000000, 0).UTC(), "up", 1)
+
+	b := Builder{DataDir: dataDir, HotOnly: true}
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(48 * time.Hour)
+	sqlText, args, err := b.BuildSQL(&Request{Tenant: testTenant, Start: start, End: end})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(sqlText, hotCurrentTable) || !strings.Contains(sqlText, hotPrevTable) {
+		t.Fatalf("hot-only SQL must include hot tables: %s", sqlText)
+	}
+	if strings.Contains(sqlText, "read_parquet") {
+		t.Fatalf("hot-only SQL must not read parquet: %s", sqlText)
+	}
+	if strings.Contains(sqlText, "rollups") {
+		t.Fatalf("hot-only SQL must not include rollups path: %s", sqlText)
+	}
+	if len(args) != 4 {
+		t.Fatalf("hot-only with hot_current+hot_prev wants 4 args, got %d", len(args))
+	}
+}
+
+func TestBuildSQLHotOnlyFalseIncludesTiersAndRollups(t *testing.T) {
+	dataDir := t.TempDir()
+	tenantRoot := filepath.Join(dataDir, testTenant)
+	if err := os.MkdirAll(filepath.Join(tenantRoot, "tiers", "L0"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	testparquet.WriteSegmentWithTs(t, filepath.Join(tenantRoot, "tiers", "L0", "l0.parquet"),
+		time.Unix(1700000000, 0).UTC(), "tier", 1)
+	rollupDir := layout.RollupDir(dataDir, testTenant, "5m")
+	if err := os.MkdirAll(rollupDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	testparquet.WriteRollupBucket(t, filepath.Join(rollupDir, "r.parquet"),
+		time.Unix(1700000000, 0).UTC(), "up", 1)
+
+	b := Builder{DataDir: dataDir}
+	start := time.Unix(1700000000, 0).UTC()
+	end := start.Add(48 * time.Hour)
+	sqlText, args, err := b.BuildSQL(&Request{Tenant: testTenant, Start: start, End: end})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(sqlText, "read_parquet") || !strings.Contains(sqlText, "rollups/5m") {
+		t.Fatalf("full SQL must include tiers and rollups: %s", sqlText)
+	}
+	if len(args) < 8 {
+		t.Fatalf("full union wants at least 8 args (4 parts), got %d", len(args))
+	}
+}
+
+func TestQueryHotOnlyReturnsOnlyHotRows(t *testing.T) {
+	dataDir := t.TempDir()
+	start := time.Unix(1700000000, 0).UTC()
+	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, func() time.Time { return start })
+	t.Cleanup(func() { _ = eng.Close() })
+
+	dir := t.TempDir()
+	path := testparquet.WriteWindow(t, dir, "w.parquet", []testparquet.Row{
+		{Name: "hot_metric", Labels: "{}", Value: 1, TimestampMs: 0},
+	})
+	if _, err := eng.Ingest(testTenant, readFile(t, path)); err != nil {
+		t.Fatalf("ingest hot: %v", err)
+	}
+
+	l0Path := layout.TierDir(dataDir, testTenant, 0)
+	_ = os.MkdirAll(l0Path, 0o750)
+	testparquet.WriteSegmentWithTs(t, filepath.Join(l0Path, "l0.parquet"), start.Add(30*time.Minute), "l0_metric", 2)
+
+	fullQB := Builder{DataDir: dataDir}
+	hotQB := Builder{DataDir: dataDir, HotOnly: true}
+	req := &Request{Tenant: testTenant, Start: start, End: start.Add(2 * time.Hour)}
+
+	var hotRows, fullRows []Row
+	if err := eng.WithRead(testTenant, func(db *sql.DB) error {
+		hotSQL, hotArgs, err := hotQB.BuildSQLWithDB(context.Background(), req, db)
+		if err != nil {
+			return err
+		}
+		if len(hotArgs) != 4 {
+			return fmt.Errorf("hot-only args: got %d want 4", len(hotArgs))
+		}
+		hotRows, err = Execute(context.Background(), db, hotSQL, hotArgs)
+		if err != nil {
+			return err
+		}
+
+		fullSQL, fullArgs, err := fullQB.BuildSQLWithDB(context.Background(), req, db)
+		if err != nil {
+			return err
+		}
+		if len(fullArgs) <= len(hotArgs) {
+			return fmt.Errorf("full args %d must exceed hot-only %d", len(fullArgs), len(hotArgs))
+		}
+		fullRows, err = Execute(context.Background(), db, fullSQL, fullArgs)
+		return err
+	}); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+
+	if len(hotRows) != 1 || hotRows[0].Metric != "hot_metric" {
+		t.Fatalf("hot-only want hot_metric only, got %+v", hotRows)
+	}
+	if len(fullRows) < 2 {
+		t.Fatalf("full mode want hot+L0 union, got %d rows", len(fullRows))
+	}
+	names := map[string]bool{}
+	for _, r := range fullRows {
+		names[r.Metric] = true
+	}
+	if !names["hot_metric"] || !names["l0_metric"] {
+		t.Fatalf("full mode missing metrics: %v", names)
+	}
+}
+
+func TestAggregateSQLRunsOverHotOnly(t *testing.T) {
+	dataDir := t.TempDir()
+	start := time.Unix(1700000000, 0).UTC()
+	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, func() time.Time { return start })
+	t.Cleanup(func() { _ = eng.Close() })
+
+	dir := t.TempDir()
+	path := testparquet.WriteWindow(t, dir, "w.parquet", []testparquet.Row{
+		{Name: "a", Labels: "{}", Value: 10, TimestampMs: 0},
+		{Name: "b", Labels: "{}", Value: 20, TimestampMs: 0},
+	})
+	if _, err := eng.Ingest(testTenant, readFile(t, path)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	l0File := filepath.Join(layout.TierDir(dataDir, testTenant, 0), "l0.parquet")
+	testparquet.WriteSegmentWithTs(t, l0File, start.Add(30*time.Minute), "tier_only", 99)
+
+	b := Builder{DataDir: dataDir, HotOnly: true}
+	sqlText, args, err := b.BuildSQLWithDB(context.Background(), &Request{
+		Tenant: testTenant,
+		Start:  start,
+		End:    start.Add(time.Hour),
+	}, nil)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	aggSQL, err := AggregateSQL(sqlText)
+	if err != nil {
+		t.Fatalf("aggregate sql: %v", err)
+	}
+
+	if err := eng.WithRead(testTenant, func(db *sql.DB) error {
+		var cnt int64
+		var sum sql.NullFloat64
+		if err := db.QueryRowContext(context.Background(), aggSQL, args...).Scan(&cnt, &sum); err != nil {
+			return err
+		}
+		if cnt != 2 {
+			return fmt.Errorf("hot-only aggregate count = %d want 2", cnt)
+		}
+		if sum.Float64 != 30 {
+			return fmt.Errorf("hot-only aggregate sum = %v want 30", sum.Float64)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("aggregate execute: %v", err)
 	}
 }
 

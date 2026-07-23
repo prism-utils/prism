@@ -39,6 +39,7 @@ const (
 // Builder constructs unified-view SQL without union_by_name or filename.
 type Builder struct {
 	DataDir string
+	HotOnly bool
 }
 
 // BuildSQL returns parameterized SQL and args for the unified view.
@@ -69,24 +70,26 @@ func (b *Builder) buildSQL(ctx context.Context, req *Request, db *sql.DB) (strin
 		)
 	}
 
-	for tier := 0; tier < maxTier; tier++ {
-		glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
-		if matches, _ := filepath.Glob(glob); len(matches) > 0 {
-			parts = append(parts, fmt.Sprintf(
-				"SELECT * FROM read_parquet('%s') WHERE ts >= ? AND ts < ?",
-				layout.ToSlash(glob),
-			))
+	if !b.HotOnly {
+		for tier := 0; tier < maxTier; tier++ {
+			glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
+			if matches, _ := filepath.Glob(glob); len(matches) > 0 {
+				parts = append(parts, fmt.Sprintf(
+					"SELECT * FROM read_parquet('%s') WHERE ts >= ? AND ts < ?",
+					layout.ToSlash(glob),
+				))
+			}
 		}
-	}
 
-	if step := pickRollupStep(req.Step, req.Start, req.End); step != "" {
-		glob := filepath.Join(tenantRoot, "rollups", step, "*.parquet")
-		if matches, _ := filepath.Glob(glob); len(matches) > 0 {
-			parts = append(parts, fmt.Sprintf(
-				`SELECT "__name__", '{}' AS labels, avg AS value, 0 AS timestamp_ms, bucket AS ts
+		if step := pickRollupStep(req.Step, req.Start, req.End); step != "" {
+			glob := filepath.Join(tenantRoot, "rollups", step, "*.parquet")
+			if matches, _ := filepath.Glob(glob); len(matches) > 0 {
+				parts = append(parts, fmt.Sprintf(
+					`SELECT "__name__", '{}' AS labels, avg AS value, 0 AS timestamp_ms, bucket AS ts
 				 FROM read_parquet('%s') WHERE bucket >= ? AND bucket < ?`,
-				layout.ToSlash(glob),
-			))
+					layout.ToSlash(glob),
+				))
+			}
 		}
 	}
 
