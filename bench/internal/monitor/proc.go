@@ -14,6 +14,8 @@ const defaultProcInterval = 75 * time.Millisecond
 // ProcSampler polls a process tree for CPU, RSS, and (on Linux) I/O counters.
 type ProcSampler struct {
 	pid      int32
+	pidFn    func() int
+	lastRoot int32
 	interval time.Duration
 	ioOK     bool
 
@@ -45,6 +47,23 @@ func NewProcSampler(pid int) *ProcSampler {
 		ioOK:     runtime.GOOS == "linux",
 		done:     make(chan struct{}),
 	}
+}
+
+// NewProcSamplerFunc returns a sampler that resolves the root pid on every sample.
+func NewProcSamplerFunc(pidFn func() int) *ProcSampler {
+	return &ProcSampler{
+		pidFn:    pidFn,
+		interval: defaultProcInterval,
+		ioOK:     runtime.GOOS == "linux",
+		done:     make(chan struct{}),
+	}
+}
+
+func (p *ProcSampler) rootPID() int32 {
+	if p.pidFn != nil {
+		return int32(p.pidFn()) //nolint:gosec // G115: benchmark PIDs fit int32.
+	}
+	return p.pid
 }
 
 // Start begins background polling until Stop or ctx cancellation.
@@ -80,8 +99,22 @@ func (p *ProcSampler) Stop() Usage {
 }
 
 func (p *ProcSampler) appendSampleLocked(now time.Time) {
-	pids, err := collectPIDs(p.pid)
+	root := p.rootPID()
+	if root != p.lastRoot {
+		p.prevCPU = nil
+		p.prevIO = nil
+		p.prevAt = time.Time{}
+		p.lastRoot = root
+	}
+	if root == 0 {
+		p.samples = append(p.samples, procSample{})
+		p.prevAt = now
+		return
+	}
+	pids, err := collectPIDs(root)
 	if err != nil || len(pids) == 0 {
+		p.samples = append(p.samples, procSample{})
+		p.prevAt = now
 		return
 	}
 	prevCPU := p.prevCPU

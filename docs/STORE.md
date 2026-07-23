@@ -404,7 +404,7 @@ statement for DuckDB datasource `initSQL` wiring.
 
 ---
 
-## Arbitrary SQL API (`internal/store/query`, `sql.go`)
+## Arbitrary SQL API
 
 Read-only **arbitrary SQL** over a single tenant's metrics, RBAC-guarded
 (action **`query`**, same plane as structured query). Each request runs in a
