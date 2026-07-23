@@ -81,3 +81,7 @@ Independent verification:
 - **TDD:** `88c3a0a test:` precedes `c7949ed ci:` implementation commit.
 - **CI/tag-only (config-checked, not locally executed):** GHCR push, keyless cosign OIDC, arm64 goreleaser docker image build, release Trivy on ubuntu runner.
 - **Note:** `make docker-store` on darwin builds a host binary → `docker run … version` fails with exec-format-error unless `GOOS=linux`; on linux CI/ubuntu (where release runs) the target is correct. Dockerfile structure verified via successful `docker build`.
+
+**Re-review: ALL_OK** (2026-07-23, post-`935e3a5`)
+
+CI `full` job failed: `make integration` inherited global `CGO_ENABLED=0` after store smoke landed under `test/integration`, causing go-duckdb `undefined: Conn`. Fix `935e3a5` (Makefile-only): shared `INTEGRATION_GO_TEST := CGO_ENABLED=1 go test … ./test/integration/...` used by both `integration` and `store-integration`; redundant `store-integration` removed from `full-tests`. Verified: commit is Makefile-only; agent `make build` / `CGO_ENABLED=0 go build ./cmd/prism` unchanged; `make lint`, `make test`, `make store-integration` green; integration compile path links DuckDB (no `undefined: Conn`); no duplicate integration entrypoints.
