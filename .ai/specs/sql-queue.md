@@ -1,6 +1,6 @@
 # Spec: /sql in-flight queue (off by default) + configurable workers/memory caps + docs
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/sql-queue`
 - **Ships as:** `v1.3.0` (feature; latest tag `v1.2.0`). Multi-arch package published after merge.
@@ -102,12 +102,49 @@ Status: IN_REVIEW
 - [x] `docs/MIGRATION.md`, `docs/DESIGN.md`, `README.md` updated.
 
 ## 5. Mandatory review gates (reviewer) — SECURITY-SENSITIVE (limiter sits in the auth/tenant path)
-- [ ] Gate 1 — Guidelines: reusable middleware; single shared limiter; wrapped errors; atomic comments §3.8; no behavior change when disabled.
-- [ ] Gate 2 — Edge cases: order is auth→guard→limiter→handler (auth/guard reject without consuming a slot); no slot leak on panic/cancel/timeout; `MaxInFlight<=0` guarded; 429 body/headers correct; limiter absent on coordinator; merge/rollup caps actually applied.
-- [ ] Gate 3 — Docs match code: every env in CONFIG.md exists in `loadConfig()` and vice-versa; STORE features/RBAC accurate; MEMORY.md matches actual knobs; helm values ↔ template ↔ golden consistent.
-- [ ] Gate 4 — Atomic comments.
-- [ ] **SECURITY AUDIT:** limiter cannot bypass auth/RBAC/tenant guard; no cross-tenant slot starvation vector introduced beyond intended global cap (note: global not per-tenant — documented); no unbounded goroutine growth (waiters bounded by `MaxQueue`); default-off = no new surface.
-- [ ] Full `docs/REVIEW.md`; TESTING layering; TDD via `git log` (tests-first).
+- [x] Gate 1 — Guidelines: reusable middleware; single shared limiter; wrapped errors; atomic comments §3.8; no behavior change when disabled.
+- [x] Gate 2 — Edge cases: order is auth→guard→limiter→handler (auth/guard reject without consuming a slot); no slot leak on panic/cancel/timeout; `MaxInFlight<=0` guarded; 429 body/headers correct; limiter absent on coordinator; merge/rollup caps actually applied.
+- [x] Gate 3 — Docs match code: every env in CONFIG.md exists in `loadConfig()` and vice-versa; STORE features/RBAC accurate; MEMORY.md matches actual knobs; helm values ↔ template ↔ golden consistent.
+- [x] Gate 4 — Atomic comments.
+- [x] **SECURITY AUDIT:** limiter cannot bypass auth/RBAC/tenant guard; no cross-tenant slot starvation vector introduced beyond intended global cap (note: global not per-tenant — documented); no unbounded goroutine growth (waiters bounded by `MaxQueue`); default-off = no new surface.
+- [x] Full `docs/REVIEW.md`; TESTING layering; TDD via `git log` (tests-first).
 
 ## 6. Reviewer notes
-_(empty until first review)_
+
+**Verdict: ALL_OK** (2026-07-23). Reviewer re-ran all checks in worktree `feat/sql-queue`.
+
+### Verification outputs
+- `make lint` — 0 issues (`CGO_ENABLED=1 golangci-lint run --build-tags duckdb_arrow ./...`).
+- `make test` — all packages green with `-race -tags duckdb_arrow`.
+- `go build -tags duckdb_arrow ./...` — OK.
+- `CGO_ENABLED=0 go build ./cmd/prism` — OK.
+- `helm template golden … | diff …/testdata/golden/default.yaml` — exit 0 (golden current).
+- `helm lint deploy/charts/prism-store` — 0 failures.
+- `git status --short` — clean.
+- TDD: `a1a90ac test(store): …` precedes `4855d13 feat(store): …`.
+
+### CONFIG ↔ env bidirectional diff (§14)
+- **45** vars in `docs/CONFIG.md` §14 table.
+- **44** vars read by `loadConfig()` + `loadRBACConfig()` in `cmd/prism-store`.
+- **1** table entry outside those functions: `E2E_EXPOSE_QUERY_SQL` — read by `query.ExposeSQLFromEnv()` at `internal/store/query/query.go:183`, wired at `cmd/prism-store/main.go:312`; explicitly documented in §14 preamble.
+- **0** vars read by `loadConfig()`/`loadRBACConfig()` missing from §14.
+- **`MAX_OPEN_TENANTS`:** read at `cmd/prism-store/main.go:168` (`envInt("MAX_OPEN_TENANTS", defaultMaxOpenTenants)`), wired to `engine.New` at `:505`, logged at `:571`, helm `values.yaml:91` → `statefulset.yaml:117-118` → golden; CONFIG §14 row and MEMORY.md consistent.
+
+### Gate evidence (file:line)
+- **Middleware order:** `cmd/prism-store/main.go:348-353` — wrap innermost-first → runtime `protectAdminRoute` → `OwnedTenantGuard` → `queue.Middleware` → `SQLHandler`.
+- **Single shared limiter:** one `queue.NewLimiter` at `:494-499`, passed to both muxes at `:545`, `:553`.
+- **Disabled default:** `LimiterConfig.Enabled` default false (`:164`); `Middleware` passthrough when nil/disabled (`internal/store/queue/limiter.go:46-48`).
+- **Slot release:** `defer func() { <-l.sem }()` on both acquire paths (`limiter.go:53`, `:70`); panic covered by defer semantics (no extra goroutines).
+- **`MaxInFlight<=0`:** clamped to 1 in `NewLimiter` (`limiter.go:32-35`).
+- **429:** `rejectTooMany` sets `Retry-After: 1`, body `too many concurrent queries`, status 429 (`limiter.go:104-107`); tests assert status + header (`limiter_test.go:131-136`, `:172-177`).
+- **Coordinator:** `runCluster` uses `cluster.NewServeMux` only (`main.go:439-444`) — no limiter.
+- **Merge/rollup caps:** `duckdb_caps.go:28-42` and `rollup.go:209-230` SET threads/memory_limit with `'` escaping; lifecycle plumbs caps (`lifecycle.go:81-116`); tests `merge/executor_test.go:59-84`, `rollup/rollup_test.go:78-100`.
+- **Wrapped errors:** merge/rollup init fns use `%w` (`duckdb_caps.go:33,39`; `rollup.go:220,226`).
+- **Security:** limiter sits inside auth + tenant guard; global cap documented in `docs/MEMORY.md` / `docs/STORE.md` § SQL limits; waiter count bounded by atomic CAS (`limiter.go:88-97`), no spawned wait goroutines.
+- **Helm:** `values.yaml` ⟷ `statefulset.yaml` ⟷ golden aligned; optional `DUCKDB_*` emitted only when non-empty.
+- **Links:** `docs/MEMORY.md` exists; linked from README, CONFIG, STORE, DESIGN, MIGRATION.
+
+### Non-blocking observations
+- Queue tests use short `time.Sleep` polls (`limiter_test.go:77`, `:126`) — acceptable for concurrency barrier tests; no goleak needed (limiter spawns no goroutines).
+- 429 **body** text not asserted in tests (headers/status are); behavior matches spec in code.
+- No explicit panic slot-leak test; defer-on-acquire path is sufficient.
