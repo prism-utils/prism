@@ -149,22 +149,22 @@ make bench BENCH_SCALE=2
 
 | Workload | System | CPU mean / peak | Peak RSS | I/O | IOPS |
 |----------|--------|-----------------|----------|-----|------|
-| ingest | prism-store | 0.48 / 1.85 cores | 95.9 MiB | n/a | n/a |
-| ingest | ClickHouse | 0.27 / 0.48 cores | 296.6 MiB | 0.0 MiB | 0 |
-| count | prism-store | 0.07 / 0.14 cores | 635.5 MiB | n/a | n/a |
-| count | ClickHouse | 0.05 / 0.05 cores | 364.1 MiB | 0.0 MiB | 0 |
-| aggregation | prism-store | 0.64 / 1.28 cores | 501.2 MiB | n/a | n/a |
-| aggregation | ClickHouse | 0.04 / 0.04 cores | 337.9 MiB | 0.0 MiB | 0 |
-| logs LIKE | prism-store | 2.51 / 5.02 cores | 522.9 MiB | n/a | n/a |
-| logs LIKE | ClickHouse | 0.04 / 0.04 cores | 394.4 MiB | 0.0 MiB | 0 |
+| ingest | prism-store | 0.50 / 2.12 cores | 90.7 MiB | n/a | n/a |
+| ingest | ClickHouse | 0.25 / 0.45 cores | 311.1 MiB | 0.0 MiB | 0 |
+| count | prism-store | 0.07 / 0.14 cores | 644.8 MiB | n/a | n/a |
+| count | ClickHouse | 0.05 / 0.05 cores | 372.0 MiB | 0.0 MiB | 0 |
+| aggregation | prism-store | 0.86 / 1.72 cores | 659.6 MiB | n/a | n/a |
+| aggregation | ClickHouse | 0.04 / 0.04 cores | 330.5 MiB | 0.0 MiB | 0 |
+| logs LIKE | prism-store | 1.95 / 3.91 cores | 682.4 MiB | n/a | n/a |
+| logs LIKE | ClickHouse | 0.05 / 0.05 cores | 362.0 MiB | 0.0 MiB | 0 |
 
 **Interpretation:** Metrics **count** and **aggregation** scan the full ingested
 table on both systems (no `ts` range pruning) — apples-to-apples over the same N
-rows. On this laptop prism-store leads ingest, count, and aggregation (p50).
-ClickHouse wins logs `LIKE` (p50 16.4 ms vs 19.6 ms) with fair tuning
-(`tokenbf_v1` skip index, typed schema, batched inserts). Logs LIKE uses the
-same dataset-`ts` window on both sides. Store logs `LIKE` is **engine-level**
-(DuckDB over a logs-shaped Parquet tier) — not a shipping logs API.
+rows. On this laptop prism-store leads **ingest** and **count** (p50). ClickHouse
+wins **aggregation** (p50 6.2 ms vs 8.2 ms) and **logs LIKE** (p50 16.1 ms vs
+18.7 ms) with fair tuning (`tokenbf_v1` skip index, typed schema, batched inserts).
+Logs LIKE uses the same dataset-`ts` window on both sides. Store logs `LIKE` is
+**engine-level** (DuckDB over a logs-shaped Parquet tier) — not a shipping logs API.
 
 Full tables, fairness notes, and cleanup: [`bench/README.md`](bench/README.md),
 [`bench/RESULTS.md`](bench/RESULTS.md).
