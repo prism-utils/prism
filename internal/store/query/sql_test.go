@@ -22,6 +22,7 @@ import (
 	"github.com/elk-utilities/prism/internal/store/authz"
 	"github.com/elk-utilities/prism/internal/store/cluster"
 	"github.com/elk-utilities/prism/internal/store/engine"
+	"github.com/elk-utilities/prism/internal/store/layout"
 	"github.com/elk-utilities/prism/internal/store/query"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 	"github.com/elk-utilities/prism/internal/store/testparquet"
@@ -1059,5 +1060,70 @@ func TestSQLResetRejected400(t *testing.T) {
 		}
 	default:
 		t.Fatalf("unexpected type %T", v)
+	}
+}
+
+func hotOnlySQLFixture(t *testing.T) (dataDir string, eng *engine.Engine, hotRows int) {
+	t.Helper()
+	dataDir = t.TempDir()
+	start := time.Unix(1700000000, 0).UTC()
+	eng = engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, func() time.Time { return start })
+	t.Cleanup(func() { _ = eng.Close() })
+
+	hotRows = 3
+	seedTenantMetrics(t, eng, dataDir, tenantSQLA, []testparquet.Row{
+		{Name: "hot_a", Labels: "{}", Value: 1, TimestampMs: 1},
+		{Name: "hot_b", Labels: "{}", Value: 2, TimestampMs: 2},
+		{Name: "hot_c", Labels: "{}", Value: 3, TimestampMs: 3},
+	})
+
+	l0Dir := layout.TierDir(dataDir, tenantSQLA, 0)
+	if err := os.MkdirAll(l0Dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		testparquet.WriteSegmentWithTs(t, filepath.Join(l0Dir, fmt.Sprintf("tier_%d.parquet", i)),
+			start.Add(time.Duration(i)*time.Minute), fmt.Sprintf("tier_%d", i), float64(i+10))
+	}
+	return dataDir, eng, hotRows
+}
+
+func TestSQLHotOnlyCountExcludesTiersJSON(t *testing.T) {
+	dataDir, eng, hotRows := hotOnlySQLFixture(t)
+
+	hotSrv := testSQLServer(t, dataDir, sqlConfig(dataDir, func(c *query.SQLConfig) { c.HotOnly = true }), eng)
+	fullSrv := testSQLServer(t, dataDir, sqlConfig(dataDir), eng)
+
+	hotCode, hotOut := execSQL(t, hotSrv, tenantSQLA, "SELECT COUNT(*) AS c FROM metrics")
+	if hotCode != http.StatusOK {
+		t.Fatalf("hot-only status=%d", hotCode)
+	}
+	if got := int(numericCell(t, hotOut.Rows[0][0])); got != hotRows {
+		t.Fatalf("hot-only count=%d want %d (tiers must be skipped)", got, hotRows)
+	}
+
+	fullCode, fullOut := execSQL(t, fullSrv, tenantSQLA, "SELECT COUNT(*) AS c FROM metrics")
+	if fullCode != http.StatusOK {
+		t.Fatalf("full status=%d", fullCode)
+	}
+	if got := int(numericCell(t, fullOut.Rows[0][0])); got <= hotRows {
+		t.Fatalf("full count=%d want > %d (hot + tiers)", got, hotRows)
+	}
+}
+
+func TestSQLHotOnlyIsolationCrossTenantStill400(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	cfg := sqlConfig(dataDir, func(c *query.SQLConfig) { c.HotOnly = true })
+	srv := testSQLServer(t, dataDir, cfg, eng)
+
+	bGlob := filepath.Join(dataDir, tenantSQLB, "tiers", "L0", "*.parquet")
+	execSQLExpect400(t, srv, tenantSQLA, fmt.Sprintf("SELECT * FROM read_parquet('%s')", filepath.ToSlash(bGlob)))
+
+	code, out := execSQL(t, srv, tenantSQLA, "SELECT COUNT(*) AS c FROM metrics")
+	if code != http.StatusOK {
+		t.Fatalf("count status=%d", code)
+	}
+	if numericCell(t, out.Rows[0][0]) != 3 {
+		t.Fatalf("tenant A count=%v want 3", out.Rows[0][0])
 	}
 }

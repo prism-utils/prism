@@ -110,6 +110,33 @@ func TestRenderMarkdownRoot_apiArrowChartPaths(t *testing.T) {
 	require.Contains(t, doc, "![cpu-cores.svg](bench/charts-api-arrow/cpu-cores.svg)")
 }
 
+func TestRenderMarkdown_apiArrowHotProfile(t *testing.T) {
+	doc := results.RenderMarkdown(&results.Report{
+		Environment: results.Environment{
+			Profile:     "api-arrow-hot",
+			OS:          "linux",
+			Arch:        "amd64",
+			CPUModel:    "test",
+			RAMGiB:      8,
+			MetricsRows: 1000,
+			LogsRows:    1000,
+			ChartPaths:  []string{"bench/charts-api-arrow-hot/cpu-cores.svg"},
+		},
+		MetricsCountClickHouse: 1000,
+		MetricsCountStore:      1000,
+		LikeCountStore:         10,
+		LikeCountClickHouse:    10,
+		Workloads: []results.Workload{
+			{Name: "count", System: "prism-store", P50Ms: 50, P95Ms: 55, MinMs: 48},
+			{Name: "count", System: "clickhouse", P50Ms: 2, P95Ms: 3, MinMs: 1},
+		},
+	})
+	require.Contains(t, doc, "hot cache only")
+	require.Contains(t, doc, "sandbox reads the hot snapshot")
+	require.Contains(t, doc, "make bench-api-arrow-hot")
+	require.Contains(t, doc, "![cpu-cores.svg](charts-api-arrow-hot/cpu-cores.svg)")
+}
+
 func TestRenderMarkdown_resourceUsageWithAndWithoutIOPS(t *testing.T) {
 	ro, wo := uint64(500), uint64(300)
 	withIOPS := monitor.Usage{

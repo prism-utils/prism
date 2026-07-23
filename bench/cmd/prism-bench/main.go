@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/elk-utilities/prism/bench/internal/authgen"
@@ -80,23 +81,46 @@ func main() {
 	}
 }
 
-func resolveProfile(api, arrow bool) (string, error) {
+func resolveProfile(api, arrow, hotOnly bool) (string, error) {
+	if hotOnly && !api {
+		return "", fmt.Errorf("--hot-only requires --api")
+	}
 	if arrow && !api {
 		return "", fmt.Errorf("--arrow requires --api")
 	}
-	if api && arrow {
-		return "api-arrow", nil
+	var base string
+	switch {
+	case api && arrow:
+		base = "api-arrow"
+	case api:
+		base = "api"
+	default:
+		return "", nil
 	}
-	if api {
-		return "api", nil
+	if hotOnly {
+		return base + "-hot", nil
 	}
-	return "", nil
+	return base, nil
+}
+
+func profileUsesAPI(profile string) bool {
+	return profile == "api" || profile == "api-hot" ||
+		profile == "api-arrow" || profile == "api-arrow-hot"
+}
+
+func profileUsesArrow(profile string) bool {
+	return profile == "api-arrow" || profile == "api-arrow-hot"
+}
+
+func profileUsesHotOnly(profile string) bool {
+	return strings.HasSuffix(profile, "-hot")
 }
 
 func runMain() error {
 	scale := flag.Int("scale", 1, "multiply default row counts")
 	apiProfile := flag.Bool("api", false, "run RBAC + HTTP SQL API profile (writes profile-suffixed results)")
 	arrowProfile := flag.Bool("arrow", false, "use Arrow IPC transport for store SQL (requires --api; profile api-arrow)")
+	hotOnlyProfile := flag.Bool("hot-only", false, "serve store queries from hot snapshot only (requires --api; profile suffix -hot)")
 	workDir := flag.String("workdir", "bench/.work", "ephemeral data directory (relative to repo root unless absolute)")
 	cpus := flag.Float64("cpus", caps.DefaultCPUs, "vCPU cap per system")
 	memMiB := flag.Int("mem-mib", caps.DefaultMemMiB, "memory cap per system in MiB")
@@ -105,7 +129,7 @@ func runMain() error {
 
 	ctx := context.Background()
 	budget := caps.Budget{CPUs: *cpus, MemMiB: *memMiB}
-	profile, err := resolveProfile(*apiProfile, *arrowProfile)
+	profile, err := resolveProfile(*apiProfile, *arrowProfile, *hotOnlyProfile)
 	if err != nil {
 		return err
 	}
@@ -223,7 +247,7 @@ func runMain() error {
 		StoreBin: storeBin,
 		Budget:   budget,
 	}
-	if profile == "api" || profile == "api-arrow" {
+	if profileUsesAPI(profile) {
 		authEnv, err := authgen.New(filepath.Join(absWork, "auth"), tenant)
 		if err != nil {
 			return fmt.Errorf("auth setup: %w", err)
@@ -239,6 +263,7 @@ func runMain() error {
 			Audience:   authEnv.Audience(),
 		}
 		storeCfg.Token = tok
+		storeCfg.HotOnly = profileUsesHotOnly(profile)
 	}
 	sd, err := benchstore.New(storeCfg)
 	if err != nil {
@@ -260,7 +285,7 @@ func runMain() error {
 		return fmt.Errorf("clickhouse stream sampler: %w", err)
 	}
 	var storeStream *monitor.StreamSampler
-	if profile == "api" || profile == "api-arrow" {
+	if profileUsesAPI(profile) {
 		storeStream = monitor.NewProcStreamSamplerFunc(func() int { return sd.Pid() })
 	} else {
 		storeStream = monitor.NewProcStreamSampler(sd.Pid())
@@ -358,12 +383,12 @@ func runMain() error {
 
 	expectedLike := gen.ExpectedDeadlineCount(cfg.LogsRows)
 
-	switch profile {
-	case "api-arrow":
+	switch {
+	case profileUsesArrow(profile):
 		if err := runAPIArrowQueryPhase(ctx, sd, ch, cfg, logsGlob, logsStart, logsEnd, expectedLike, setPhase, &workloads, queryRuns, rep); err != nil {
 			return err
 		}
-	case "api":
+	case profileUsesAPI(profile):
 		if err := runAPIQueryPhase(ctx, sd, ch, cfg, logsGlob, logsStart, logsEnd, expectedLike, setPhase, &workloads, queryRuns, rep); err != nil {
 			return err
 		}
@@ -387,7 +412,7 @@ func runMain() error {
 			case monitor.PhaseIdle, monitor.PhaseIngest:
 				return monitor.AggregatePhaseSpan(storePoints, phase, phaseSpans)
 			case monitor.PhaseCount, monitor.PhaseAggregation, monitor.PhaseScanJSON, monitor.PhaseScanArrow:
-				if profile == "api" || profile == "api-arrow" {
+				if profileUsesAPI(profile) {
 					return monitor.AggregatePhaseSpan(storePoints, phase, phaseSpans)
 				}
 				return monitor.AggregatePhaseSpan(benchPoints, phase, phaseSpans)
@@ -749,14 +774,14 @@ func runAPIQueryPhase(
 }
 
 func storeChartPhases(profile string) []string {
-	switch profile {
-	case "api-arrow":
+	switch {
+	case profileUsesArrow(profile):
 		return []string{
 			monitor.PhaseIdle, monitor.PhaseIngest,
 			monitor.PhaseCount, monitor.PhaseAggregation,
 			monitor.PhaseScanJSON, monitor.PhaseScanArrow,
 		}
-	case "api":
+	case profileUsesAPI(profile):
 		return []string{monitor.PhaseIdle, monitor.PhaseIngest, monitor.PhaseCount, monitor.PhaseAggregation}
 	default:
 		return []string{monitor.PhaseIdle, monitor.PhaseIngest}

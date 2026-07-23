@@ -52,6 +52,7 @@ type SQLConfig struct {
 	MemoryLimit  string
 	Threads      int
 	MaxBodyBytes int64
+	HotOnly      bool
 }
 
 // SQLRoutePattern returns the ServeMux pattern for POST /{ns}/sql.
@@ -163,7 +164,7 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			return
 		}
 
-		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, sandboxLimits{
+		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, cfg.HotOnly, sandboxLimits{
 			MemoryLimit: cfg.MemoryLimit,
 			Threads:     cfg.Threads,
 		})
@@ -238,12 +239,12 @@ func wantsArrowStream(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), arrowStreamMediaType)
 }
 
-func prepareSandboxConn(ctx context.Context, tenantRoot string, limits sandboxLimits) (*sql.Conn, func(), error) {
+func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, limits sandboxLimits) (*sql.Conn, func(), error) {
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
 		return nil, nil, err
 	}
-	viewSQL, err := sandboxMetricsUnionSQL(tenantRoot)
+	viewSQL, err := sandboxMetricsUnionSQL(tenantRoot, hotOnly)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -375,7 +376,7 @@ func lockSandbox(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
-func sandboxMetricsUnionSQL(tenantRoot string) (string, error) {
+func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
 	absRoot, err := filepath.Abs(tenantRoot)
 	if err != nil {
 		return "", err
@@ -385,7 +386,7 @@ func sandboxMetricsUnionSQL(tenantRoot string) (string, error) {
 	}
 	absRoot = filepath.Clean(absRoot)
 
-	paths, err := collectSafeParquetPaths(absRoot, tenantRoot)
+	paths, err := collectSafeParquetPaths(absRoot, tenantRoot, hotOnly)
 	if err != nil {
 		return "", err
 	}
@@ -623,7 +624,7 @@ func stripStringLiterals(s string) string {
 	return b.String()
 }
 
-func collectSafeParquetPaths(absTenantRoot, tenantRoot string) ([]string, error) {
+func collectSafeParquetPaths(absTenantRoot, tenantRoot string, hotOnly bool) ([]string, error) {
 	root, err := filepath.EvalSymlinks(absTenantRoot)
 	if err != nil {
 		root = absTenantRoot
@@ -636,6 +637,9 @@ func collectSafeParquetPaths(absTenantRoot, tenantRoot string) ([]string, error)
 		return nil, err
 	} else if ok {
 		paths = append(paths, snapshot)
+	}
+	if hotOnly {
+		return paths, nil
 	}
 	for tier := 0; tier < maxTier; tier++ {
 		glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")

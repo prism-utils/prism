@@ -27,6 +27,7 @@ type Config struct {
 	Budget     caps.Budget
 	RBAC       *RBACConfig
 	Token      string
+	HotOnly    bool
 }
 
 // Driver runs ingest and query workloads against prism-store.

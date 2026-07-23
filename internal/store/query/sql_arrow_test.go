@@ -496,3 +496,23 @@ func engineNewForSQLTest(t *testing.T, dataDir string, start time.Time) *engine.
 	t.Cleanup(func() { _ = eng.Close() })
 	return eng
 }
+
+func TestSQLHotOnlyCountExcludesTiersArrow(t *testing.T) {
+	dataDir, eng, hotRows := hotOnlySQLFixture(t)
+	cfg := sqlConfig(dataDir, func(c *query.SQLConfig) { c.HotOnly = true })
+	srv := testSQLServer(t, dataDir, cfg, eng)
+
+	resp := postSQLArrow(t, sqlURL(srv.URL, tenantSQLA), `{"sql":"SELECT COUNT(*) AS c FROM metrics"}`, "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, b)
+	}
+	_, rows, _ := decodeArrowStream(t, resp.Body)
+	if len(rows) != 1 {
+		t.Fatalf("rows=%v", rows)
+	}
+	if got := int(numericCell(t, rows[0][0])); got != hotRows {
+		t.Fatalf("hot-only arrow count=%d want %d", got, hotRows)
+	}
+}

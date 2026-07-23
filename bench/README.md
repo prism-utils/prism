@@ -98,6 +98,25 @@ Resource sampling: ingest, idle, count, aggregation, and both scan phases sample
 `prism-store` binary (dynamic PID across the store restart); logs LIKE samples the benchmark
 process.
 
+## Hot-only Arrow transport profile (RBAC on)
+
+Same as the Arrow transport profile above, but with `QUERY_HOT_ONLY=true` so the `/sql`
+sandbox reads **only** the hot snapshot (`hot/current.parquet`) and skips tier Parquet.
+All bench metrics rows live in the hot cache, so correctness gates still match the full
+dataset count.
+
+```bash
+make bench-api-arrow-hot
+make bench-api-arrow-hot BENCH_SCALE=2
+```
+
+Outputs (profile-suffixed; other profiles untouched):
+
+- `bench/results-api-arrow-hot.json`
+- `bench/results-timeseries-api-arrow-hot.json`
+- `bench/RESULTS-api-arrow-hot.md`
+- `bench/charts-api-arrow-hot/*.svg`
+
 Manual cleanup if a run was killed abruptly:
 
 ```bash

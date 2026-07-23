@@ -289,6 +289,16 @@ buffers rather than engine RSS.
 
 Full tables + caveats: [`bench/RESULTS-api-arrow.md`](bench/RESULTS-api-arrow.md). Reproduce: `make bench-api-arrow`.
 
+#### Hot-cache-only transport variant — attached (2026-07-23, `make bench-api-arrow-hot`)
+
+Same Arrow-transport profile with `QUERY_HOT_ONLY=true`, so the `/sql` sandbox reads **only the
+hot snapshot** and skips the parquet tiers. In this dataset the full ~1M rows are resident in the
+hot buffer, so counts match and latencies track the full profile (count 130.9 ms, aggregation
+143.5 ms; scan Arrow 172.0 ms vs JSON 366.1 ms) — this run isolates the hot-only serving path
+(no tier fan-out) for the transport. Results:
+[`bench/RESULTS-api-arrow-hot.md`](bench/RESULTS-api-arrow-hot.md) and
+[`bench/charts-api-arrow-hot/`](bench/charts-api-arrow-hot/). Reproduce: `make bench-api-arrow-hot`.
+
 ## Requirements
 
 - Go 1.25+ (build/test only; the shipped agent artifact is a static binary).

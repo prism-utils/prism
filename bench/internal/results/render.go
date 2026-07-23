@@ -88,17 +88,22 @@ func RenderMarkdownRoot(rep *Report) string {
 
 func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 	env := rep.Environment
-	apiProfile := env.Profile == "api"
-	apiArrowProfile := env.Profile == "api-arrow"
+	apiProfile := env.Profile == "api" || env.Profile == "api-hot"
+	apiArrowProfile := env.Profile == "api-arrow" || env.Profile == "api-arrow-hot"
+	hotNote := hotOnlyBenchNote(env.Profile)
 	var b strings.Builder
 	switch {
 	case apiArrowProfile:
-		b.WriteString("# Arrow transport profile (RBAC on)\n\n")
-		b.WriteString("Measured on this host with `make bench-api-arrow` — store queries over the RBAC-guarded HTTP SQL API with **Arrow IPC** transport for count/aggregation and a JSON-vs-Arrow scan comparison.\n\n")
+		b.WriteString("# Arrow transport profile (RBAC on)")
+		b.WriteString(hotNote)
+		b.WriteString("\n\n")
+		fmt.Fprintf(&b, "Measured on this host with `make %s` — store queries over the RBAC-guarded HTTP SQL API with **Arrow IPC** transport for count/aggregation and a JSON-vs-Arrow scan comparison.\n\n", benchMakeTarget(env.Profile))
 		b.WriteString("*prism-store count/aggregation use Arrow transport (`Accept: application/vnd.apache.arrow.stream`); scan phases compare JSON vs Arrow on the same SQL. ClickHouse uses its native protocol client; logs LIKE remains engine-level (no logs API). JWT/RBAC overhead applies to every store HTTP request.*\n\n")
 	case apiProfile:
-		b.WriteString("# Benchmark: prism-store (RBAC + HTTP `/sql`) vs ClickHouse\n\n")
-		b.WriteString("Measured on this host with `make bench-api` — queries over the RBAC-guarded HTTP SQL API.\n\n")
+		b.WriteString("# Benchmark: prism-store (RBAC + HTTP `/sql`) vs ClickHouse")
+		b.WriteString(hotNote)
+		b.WriteString("\n\n")
+		fmt.Fprintf(&b, "Measured on this host with `make %s` — queries over the RBAC-guarded HTTP SQL API.\n\n", benchMakeTarget(env.Profile))
 		b.WriteString("*prism-store count/aggregation are end-to-end HTTP + JWT/RBAC + per-request sandbox (materialize-then-lock); ClickHouse uses its native protocol client; logs LIKE remains engine-level (no logs API).*\n\n")
 	default:
 		b.WriteString("# Benchmark: prism-store vs ClickHouse\n\n")
@@ -213,9 +218,9 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 	b.WriteString("\n## Reproduce\n\n")
 	switch {
 	case apiArrowProfile:
-		b.WriteString("```bash\nmake bench-api-arrow        # default scale (2M rows total)\nmake bench-api-arrow BENCH_SCALE=2\n```\n")
+		fmt.Fprintf(&b, "```bash\nmake %s        # default scale (2M rows total)\nmake %s BENCH_SCALE=2\n```\n", benchMakeTarget(env.Profile), benchMakeTarget(env.Profile))
 	case apiProfile:
-		b.WriteString("```bash\nmake bench-api        # default scale (2M rows total)\nmake bench-api BENCH_SCALE=2\n```\n")
+		fmt.Fprintf(&b, "```bash\nmake %s        # default scale (2M rows total)\nmake %s BENCH_SCALE=2\n```\n", benchMakeTarget(env.Profile), benchMakeTarget(env.Profile))
 	default:
 		b.WriteString("```bash\nmake bench        # default scale (2M rows total)\nmake bench BENCH_SCALE=2\n```\n")
 	}
@@ -224,34 +229,60 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 }
 
 func chartEmbedForBenchResults(storedPath string, profile string) string {
+	if profile != "" {
+		chartPrefix := "bench/charts-" + profile + "/"
+		if strings.HasPrefix(storedPath, chartPrefix) {
+			return strings.TrimPrefix(storedPath, "bench/")
+		}
+		rel := "charts-" + profile + "/"
+		if strings.HasPrefix(storedPath, rel) {
+			return storedPath
+		}
+	}
 	switch profile {
-	case "api-arrow":
-		const prefix = "bench/charts-api-arrow/"
-		if strings.HasPrefix(storedPath, prefix) {
+	case "api-arrow", "api-arrow-hot":
+		if strings.HasPrefix(storedPath, "bench/charts-api-arrow/") {
 			return strings.TrimPrefix(storedPath, "bench/")
 		}
 		if strings.HasPrefix(storedPath, "charts-api-arrow/") {
 			return storedPath
 		}
-		return storedPath
-	case "api":
-		const prefix = "bench/charts-api/"
-		if strings.HasPrefix(storedPath, prefix) {
+	case "api", "api-hot":
+		if strings.HasPrefix(storedPath, "bench/charts-api/") {
 			return strings.TrimPrefix(storedPath, "bench/")
 		}
 		if strings.HasPrefix(storedPath, "charts-api/") {
 			return storedPath
 		}
+	}
+	if strings.HasPrefix(storedPath, "bench/charts/") {
+		return strings.TrimPrefix(storedPath, "bench/")
+	}
+	if strings.HasPrefix(storedPath, "charts/") {
 		return storedPath
+	}
+	return storedPath
+}
+
+func hotOnlyBenchNote(profile string) string {
+	if strings.HasSuffix(profile, "-hot") {
+		return " (hot cache only — sandbox reads the hot snapshot; parquet tiers skipped)"
+	}
+	return ""
+}
+
+func benchMakeTarget(profile string) string {
+	switch profile {
+	case "api-hot":
+		return "bench-api-hot"
+	case "api-arrow-hot":
+		return "bench-api-arrow-hot"
+	case "api-arrow":
+		return "bench-api-arrow"
+	case "api":
+		return "bench-api"
 	default:
-		const prefix = "bench/charts/"
-		if strings.HasPrefix(storedPath, prefix) {
-			return strings.TrimPrefix(storedPath, "bench/")
-		}
-		if strings.HasPrefix(storedPath, "charts/") {
-			return storedPath
-		}
-		return storedPath
+		return "bench"
 	}
 }
 

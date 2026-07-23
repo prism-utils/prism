@@ -328,6 +328,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 				MemoryLimit:  cfg.duckdbMemoryLimit,
 				Threads:      cfg.duckdbThreads,
 				MaxBodyBytes: cfg.sqlAPIMaxBodyBytes,
+				HotOnly:      cfg.queryHotOnly,
 			}
 			sqlHandler := query.SQLHandler(sqlCfg, eng, logger)
 			if ownedTenants != nil {
