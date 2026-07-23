@@ -22,7 +22,7 @@ container**, as a **single static, CGO-free binary** (`cmd/prism`).
 | **`prism`** (agent) | Config-driven edge collector; produces Parquet artifacts per [`docs/OUTPUT_CONTRACT.md`](docs/OUTPUT_CONTRACT.md). | Static, `CGO_ENABLED=0` |
 | **`prism-store`** (store) | Durable tiered columnar store + query server; consumes agent output. | CGO-linked (DuckDB, later slices) |
 
-Store design: [`docs/STORE.md`](docs/STORE.md). Architecture ADR: [`docs/DESIGN.md`](docs/DESIGN.md) §15.
+Store design: [`docs/STORE.md`](docs/STORE.md). Architecture ADR: [`docs/DESIGN.md`](docs/DESIGN.md) §15. Cutover from `prism-proxy`: [`docs/MIGRATION.md`](docs/MIGRATION.md).
 
 ## What it does
 
