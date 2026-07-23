@@ -1,6 +1,6 @@
 # Spec: prism-store — "hot only" query mode flag
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-query-hot-only`
 - **Owner phase:** orchestrator → developer
@@ -48,12 +48,12 @@ rollups). Default behavior (unified hot + Parquet view) is unchanged.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** minimal change, env parsed in the existing style, wrapped errors, no globals, comments self-contained; default-off verified (no behavior change when unset).
-- [ ] **Gate 2 — Edge cases:** hot-only when `hot_prev` absent (single part, one arg pair); hot-only when tiers exist but must be ignored; hot-only with a rollup-eligible wide range still ignores rollups; args/placeholders balanced; empty result returns `[]` not error.
-- [ ] **Gate 3 — Docs/comments match code:** the documented default + exclusions match the builder; Grafana-view caveat accurate.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] Full `docs/REVIEW.md` checklist; TDD verified via `git log` (test-first).
+- [x] **Gate 1 — Guidelines:** minimal change, env parsed in the existing style, wrapped errors, no globals, comments self-contained; default-off verified (no behavior change when unset).
+- [x] **Gate 2 — Edge cases:** hot-only when `hot_prev` absent (single part, one arg pair); hot-only when tiers exist but must be ignored; hot-only with a rollup-eligible wide range still ignores rollups; args/placeholders balanced; empty result returns `[]` not error.
+- [x] **Gate 3 — Docs/comments match code:** the documented default + exclusions match the builder; Grafana-view caveat accurate.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] Full `docs/REVIEW.md` checklist; TDD verified via `git log` (test-first).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**APPROVE** (2026-07-23). TDD order confirmed (`7517d7a` test → `7e41cf8` feat). `make lint`/`make test -race`/builds/`make tidy`/clean tree all green. Default-off verified: `HotOnly` zero-value false; tier+rollup loop gated on `!b.HotOnly`; `TestBuildSQLHotOnlyFalseIncludesTiersAndRollups` + existing union tests unchanged. Hot-only SQL/args/integration/aggregate covered; `hot_prev`-absent single-part path verified ad-hoc (2 args, `[]` on empty). Docs (`STORE.md`, `main.go` usage) match wiring; `view.go` untouched.
