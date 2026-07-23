@@ -9,9 +9,9 @@ func TestTenantAllowed(t *testing.T) {
 	long63 := "a" + strings.Repeat("b", 62)
 	long64 := "a" + strings.Repeat("b", 63)
 	tests := []struct {
-		name  string
-		ns    string
-		want  bool
+		name string
+		ns   string
+		want bool
 	}{
 		{name: "empty", ns: "", want: false},
 		{name: "single char valid", ns: "a", want: true},

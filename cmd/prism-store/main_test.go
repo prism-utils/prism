@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	handleHealthz(rec, req)
 	if rec.Code != http.StatusOK {
@@ -25,7 +26,7 @@ func TestHealthz(t *testing.T) {
 
 func TestReadyzWritable(t *testing.T) {
 	dir := t.TempDir()
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	handleReadyz(dir)(rec, req)
 	if rec.Code != http.StatusOK {
@@ -42,7 +43,7 @@ func TestReadyzUnwritable(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	handleReadyz(blocker)(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -63,7 +64,7 @@ func TestNewServeMuxRoutes(t *testing.T) {
 	mux := newServeMux(serverConfig{dataDir: dir})
 
 	for _, path := range []string{"/healthz", "/readyz"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
