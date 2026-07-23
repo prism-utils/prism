@@ -130,7 +130,7 @@ func (r *Runner) TickRetention() error {
 			return err
 		}
 		for _, del := range merge.Retention(segs, now, retCfg) {
-			if err := os.Remove(del.Segment.Path); err != nil && !os.IsNotExist(err) {
+			if err := removePath(del.Segment.Path); err != nil {
 				return err
 			}
 		}
@@ -161,11 +161,18 @@ func (r *Runner) deleteExpiredRollups(tenant string, cutoff time.Time) error {
 				return err
 			}
 			if maxBucket.Before(cutoff) {
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				if err := removePath(path); err != nil {
 					return err
 				}
 			}
 		}
+	}
+	return nil
+}
+
+func removePath(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
