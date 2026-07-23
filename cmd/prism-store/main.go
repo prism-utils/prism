@@ -191,7 +191,8 @@ func versionLine() string {
 	return fmt.Sprintf("prism-store %s", version.Version)
 }
 
-func backgroundLoop(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
+// RunBackgroundLoop runs lifecycle tickers until ctx is cancelled.
+func RunBackgroundLoop(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
 	snapshotTick := time.NewTicker(cfg.snapshotTick)
 	flushTick := time.NewTicker(cfg.flushTick)
 	mergeTick := time.NewTicker(cfg.mergeTick)
@@ -248,7 +249,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 		MaxTier:         cfg.maxTier,
 	}, eng, now)
 
-	go backgroundLoop(ctx, runner, cfg, logger)
+	go RunBackgroundLoop(ctx, runner, cfg, logger)
 
 	ingestCfg := cfg.ingestConfig(mode)
 
