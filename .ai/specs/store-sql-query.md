@@ -109,3 +109,20 @@ Re-review after developer fixes. **All §6 gates pass.**
 **Security (unchanged, re-confirmed):** materialize-then-lock on single `:memory:` conn — bootstrap → `CREATE TABLE metrics AS …` (tenant parquet only) → `lockSandbox` (`enable_external_access=false`, extension knobs, `lock_configuration=true` last) → user SQL. `TestSQLIsolationCrossTenant` still blocks cross-tenant/host-fs attacks and post-lock `SET enable_external_access=true`. RBAC `ActionQuery` + cluster deny-before-proxy intact.
 
 **Commands:** `make lint` 0 issues; `make test -race` green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `go list -deps ./cmd/prism` 447 packages unchanged vs `origin/main`; `make tidy` clean; `git status` clean.
+
+### 2026-07-23 — APPROVED hardening round (`ALL_OK` confirmed)
+
+Re-validated commits `3ef6240` (tests-only) → `e5b44e7` (fix). **No High findings; five Medium items verified fixed.** All §6 gates remain checked; materialize-then-lock boundary, RBAC `ActionQuery`, and cluster deny-before-proxy unchanged.
+
+**Five Medium fixes verified:**
+1. **WITH/DML read-only gate** — `validateReadOnlySQL` strips comments/strings, rejects forbidden keywords, `mainQueryAfterWith` requires top-level SELECT; `TestValidateReadOnlySQL_withDMLO400`, `TestSQLWithDMLRejected400`, `TestSQLWithSelect200`.
+2. **Body size cap** — `http.MaxBytesReader` on `/sql` body (`SQL_API_MAX_BODY_BYTES`, default 1 MiB); `TestSQLMaxBodyBytes400`.
+3. **Sandbox threads** — `SET threads=<DUCKDB_THREADS>` in bootstrap when set; `TestApplySandboxBootstrap_appliesThreads`.
+4. **Symlink-safe materialization** — `collectSafeParquetPaths` / `safeTenantParquetFile` (Lstat + EvalSymlinks + under-root); `TestSQLSymlinkParquetExcluded`.
+5. **Extended file-builtin isolation** — `glob`/`parquet_metadata`/`parquet_schema`/`read_json`/`read_text` all 400 post-lockdown in `TestSQLIsolationCrossTenant`.
+
+**TDD (hardening):** `3ef6240` adds only test files; compile fails (`undefined: sandboxLimits`). `e5b44e7` implements fixes.
+
+**Docs/Helm:** `SQL_API_MAX_BODY_BYTES` + `DUCKDB_THREADS` (sandbox) in `docs/STORE.md` limits + `docs/CONFIG.md`; Helm `sqlAPIMaxBodyBytes` / `SQL_API_MAX_BODY_BYTES` env wired.
+
+**Commands:** `make lint` 0 issues; `make test -race` green (all hardening tests pass); builds + deps unchanged; `make tidy` clean; `git status` clean.
