@@ -1,6 +1,6 @@
 # Spec: prism-store — "run jobs" flag (toggle background maintenance)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-run-jobs`
 - **Owner phase:** orchestrator → developer
@@ -52,12 +52,12 @@ query API keep working. Default (jobs on) is the current behavior, unchanged.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** minimal, env parsed in existing style, no globals, wrapped errors, comments self-contained; default-on verified.
-- [ ] **Gate 2 — Edge cases:** jobs off → clean shutdown, no leaked goroutine (goleak or `-race`), server still serves; jobs on → loop still stops on ctx cancel; toggling does not affect ingest/query wiring.
-- [ ] **Gate 3 — Docs/comments match code:** documented default + the "disables all maintenance" semantics + the no-flush/no-retention caveat match the code.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] Full `docs/REVIEW.md` checklist; TDD verified via `git log` (test-first).
+- [x] **Gate 1 — Guidelines:** minimal, env parsed in existing style, no globals, wrapped errors, comments self-contained; default-on verified.
+- [x] **Gate 2 — Edge cases:** jobs off → clean shutdown, no leaked goroutine (goleak or `-race`), server still serves; jobs on → loop still stops on ctx cancel; toggling does not affect ingest/query wiring.
+- [x] **Gate 3 — Docs/comments match code:** documented default + the "disables all maintenance" semantics + the no-flush/no-retention caveat match the code.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] Full `docs/REVIEW.md` checklist; TDD verified via `git log` (test-first).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**2026-07-23 — APPROVE.** TDD order confirmed (`c0461ca` test → `dd11866` feat). `make lint` and `make test -race` green; builds and `go mod tidy` clean. `RUN_JOBS` default-on wiring guarded by config + serve tests; jobs-off skips `startBackgroundLoop` (count 0), health endpoints OK, ctx-cancel shutdown clean under goleak/`-race`. Injectable seam is minimal and prod-identical via `defaultBackgroundLoopStart`. Docs (`STORE.md`, `main.go` usage) match semantics.
