@@ -61,7 +61,7 @@ func TestVersionOutput(t *testing.T) {
 
 func TestNewServeMuxRoutes(t *testing.T) {
 	dir := t.TempDir()
-	mux := newServeMux(serverConfig{dataDir: dir})
+	mux := newServeMux(serverConfig{dataDir: dir}, nil, nil)
 
 	for _, path := range []string{"/healthz", "/readyz"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
@@ -74,8 +74,7 @@ func TestNewServeMuxRoutes(t *testing.T) {
 }
 
 func TestLoadConfigDefaults(t *testing.T) {
-	t.Setenv("LISTEN_ADDR", "")
-	t.Setenv("DATA_DIR", "")
+	clearStoreEnv(t)
 	cfg := loadConfig()
 	if cfg.listenAddr != defaultListenAddr {
 		t.Fatalf("listenAddr = %q, want %q", cfg.listenAddr, defaultListenAddr)
@@ -83,17 +82,67 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.dataDir != defaultDataDir {
 		t.Fatalf("dataDir = %q, want %q", cfg.dataDir, defaultDataDir)
 	}
+	if cfg.flightAddr != "" {
+		t.Fatalf("flightAddr = %q, want empty", cfg.flightAddr)
+	}
+	if cfg.maxBodyBytes != defaultMaxBodyBytes {
+		t.Fatalf("maxBodyBytes = %d, want %d", cfg.maxBodyBytes, defaultMaxBodyBytes)
+	}
+	if len(cfg.allowedArtifacts) != 1 || cfg.allowedArtifacts[0] != "metrics-raw" {
+		t.Fatalf("allowedArtifacts = %v", cfg.allowedArtifacts)
+	}
+	if cfg.authMode != defaultAuthMode {
+		t.Fatalf("authMode = %q, want %q", cfg.authMode, defaultAuthMode)
+	}
+	if cfg.routePrefix != "" {
+		t.Fatalf("routePrefix = %q, want empty", cfg.routePrefix)
+	}
 }
 
 func TestLoadConfigFromEnv(t *testing.T) {
+	clearStoreEnv(t)
 	t.Setenv("LISTEN_ADDR", ":9090")
 	t.Setenv("DATA_DIR", "/tmp/store-data")
+	t.Setenv("FLIGHT_ADDR", ":9091")
+	t.Setenv("ALLOWED_ARTIFACTS", "metrics-raw,logs-raw")
+	t.Setenv("MAX_BODY_BYTES", "1048576")
+	t.Setenv("INGEST_TOKEN", "tok")
+	t.Setenv("AUTH_MODE", "bearer")
+	t.Setenv("ROUTE_PREFIX", "/api")
 	cfg := loadConfig()
 	if cfg.listenAddr != ":9090" {
 		t.Fatalf("listenAddr = %q", cfg.listenAddr)
 	}
 	if cfg.dataDir != "/tmp/store-data" {
 		t.Fatalf("dataDir = %q", cfg.dataDir)
+	}
+	if cfg.flightAddr != ":9091" {
+		t.Fatalf("flightAddr = %q", cfg.flightAddr)
+	}
+	if len(cfg.allowedArtifacts) != 2 {
+		t.Fatalf("allowedArtifacts = %v", cfg.allowedArtifacts)
+	}
+	if cfg.maxBodyBytes != 1048576 {
+		t.Fatalf("maxBodyBytes = %d", cfg.maxBodyBytes)
+	}
+	if cfg.ingestToken != "tok" {
+		t.Fatalf("ingestToken = %q", cfg.ingestToken)
+	}
+	if cfg.authMode != "bearer" {
+		t.Fatalf("authMode = %q", cfg.authMode)
+	}
+	if cfg.routePrefix != "/api" {
+		t.Fatalf("routePrefix = %q", cfg.routePrefix)
+	}
+}
+
+func clearStoreEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"LISTEN_ADDR", "DATA_DIR", "FLIGHT_ADDR", "ALLOWED_ARTIFACTS",
+		"MAX_BODY_BYTES", "INGEST_TOKEN", "AUTH_MODE", "ROUTE_PREFIX",
+	} {
+		t.Setenv(k, "")
 	}
 }
 
