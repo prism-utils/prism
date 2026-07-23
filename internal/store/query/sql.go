@@ -158,6 +158,11 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			rowCap = *req.MaxRows
 		}
 
+		if wantsArrowStream(r) && !arrowTransportSupported() {
+			http.Error(w, "arrow transport unavailable", http.StatusNotAcceptable)
+			return
+		}
+
 		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, sandboxLimits{
 			MemoryLimit: cfg.MemoryLimit,
 			Threads:     cfg.Threads,

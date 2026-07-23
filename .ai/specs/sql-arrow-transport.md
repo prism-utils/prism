@@ -1,6 +1,6 @@
 # Spec: Arrow IPC streaming query transport for POST /{ns}/sql
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/sql-arrow-transport`
 - **Owner phase:** orchestrator → developer → reviewer + security-review
@@ -72,12 +72,65 @@ Add an Arrow IPC streaming response to `POST /{ns}/sql`, selected by HTTP conten
 - [x] `make lint test` green (with tag); e2e/integration green; `git status` clean; TDD history (tests-first).
 
 ## 6. Mandatory review gates (reviewer) — SECURITY-SENSITIVE
-- [ ] Gate 1 — Guidelines: shared sandbox path (no duplicated/weakened setup for Arrow); idiomatic build tags + stub; wrapped errors; atomic comments §3.8.
-- [ ] Gate 2 — Edge cases: truncation boundary (exactly cap / cap+1), empty result, mid-stream error semantics, flusher present, timeout ctx honored during streaming, body/row caps.
-- [ ] Gate 3 — Docs match code (content negotiation, trailer, build tag).
-- [ ] Gate 4 — Atomic comments.
-- [ ] **SECURITY AUDIT:** Arrow path reuses the identical locked sandbox + RBAC (`ActionQuery`) — no cross-tenant/host-fs escape via the Arrow/`conn.Raw` route; the `LIMIT` wrapper can't be used to break out (it wraps the validated SELECT only); no info leak in errors/trailers; cluster deny-before-proxy holds for Arrow; static agent build unaffected.
-- [ ] Full `docs/REVIEW.md`; TESTING layering; TDD (`git log`).
+- [x] Gate 1 — Guidelines: shared sandbox path (no duplicated/weakened setup for Arrow); idiomatic build tags + stub; wrapped errors; atomic comments §3.8.
+- [x] Gate 2 — Edge cases: truncation boundary (exactly cap / cap+1), empty result, mid-stream error semantics, flusher present, timeout ctx honored during streaming, body/row caps.
+- [x] Gate 3 — Docs match code (content negotiation, trailer, build tag).
+- [x] Gate 4 — Atomic comments.
+- [x] **SECURITY AUDIT:** Arrow path reuses the identical locked sandbox + RBAC (`ActionQuery`) — no cross-tenant/host-fs escape via the Arrow/`conn.Raw` route; the `LIMIT` wrapper can't be used to break out (it wraps the validated SELECT only); no info leak in errors/trailers; cluster deny-before-proxy holds for Arrow; static agent build unaffected.
+- [x] Full `docs/REVIEW.md`; TESTING layering; TDD (`git log`).
 
 ## 7. Reviewer notes
-_(empty until first review)_
+
+**Verdict: ALL_OK** (2026-07-23, prism-reviewer). Independent re-run; no code edits.
+
+### TDD & scope
+- History: `44f5613 test(store): add Arrow IPC streaming tests…` → `754ed14 feat(store): stream Arrow IPC…` (tests-first ✓).
+- Scope: single transport slice; 3 commits on branch.
+
+### Verification (re-run in worktree)
+| Command | Result |
+|---|---|
+| `make lint` (`--build-tags duckdb_arrow`) | PASS — 0 issues |
+| `make test` (`-race -tags duckdb_arrow`) | PASS — all packages green; `internal/store/query` 11.3s |
+| `make store-integration` | PASS (cached) |
+| `go build ./...` (no tag) | PASS |
+| `go test ./internal/store/query/...` (no tag) | PASS — includes `TestSQLArrowStub406` |
+| `CGO_ENABLED=0 go build ./cmd/prism` | PASS |
+| `go list -deps ./cmd/prism \| grep -i duckdb` | empty ✓ |
+
+### Gate 1 — Guidelines
+- **Shared sandbox:** `SQLHandler` calls `prepareSandboxConn` once (`sql.go:161–180`); Arrow dispatch at `:182–198` and JSON at `:201` both use the same locked `*sql.Conn`. `prepareSandboxConn` = open → metrics view → `lockSandbox` (`sql.go:236–254`); no forked bootstrap for Arrow.
+- **Build tags + stub:** `sql_arrow.go` (`//go:build duckdb_arrow`), `sql_arrow_stub.go` (`//go:build !duckdb_arrow` → 406).
+- **Wrapped errors:** `wrapSandboxErr` / `fmt.Errorf("…: %w", err)` throughout `sql_arrow.go:27–35`, `sql.go:813–817`.
+- **Atomic comments:** no new cross-location references in changed production code; pre-existing nolint at `sql.go:149` unchanged.
+
+### Gate 2 — Edge cases
+- **cap+1 / truncation:** `sql_arrow.go:21` `LIMIT rowCap+1`; slice path `:77–89`; `TestSQLArrowRowCapTruncated` — 50 rows, cap 10 → exactly 10 rows + trailer `true`.
+- **Under cap:** `TestSQLArrowTrailerDeclared` — trailer `false`; parity tests match JSON row counts.
+- **Empty result:** `TestSQLArrowEmptyResultSchemaOnly` — schema-only IPC stream, 0 rows.
+- **Mid-stream errors:** `sql_arrow.go:68–70`, `:92–96` — log + return `nil` after 200 (status immutable); documented `docs/STORE.md:432–433`.
+- **Flusher:** `sql_arrow.go:51`, `:73`, `:109–116` — optional `http.Flusher`, flush per batch.
+- **Timeout ctx:** request `context.WithTimeout` at `sql.go:135–136` plumbed to `ar.QueryContext(ctx, …)` (`sql_arrow.go:33`); `TestSQLTimeoutInterrupts` (JSON) proves sandbox query cancellation on shared handler path.
+- **Body cap:** shared `http.MaxBytesReader` at `sql.go:102` (before dispatch); `TestSQLMaxBodyBytes400`.
+- **Accept:** `wantsArrowStream` = `strings.Contains(Accept, arrowStreamMediaType)` (`sql.go:232–234`); `TestSQLArrowDefaultJSONWithoutAccept`; `*/*` falls through to JSON per docs (no substring match).
+
+### Gate 3 — Docs
+- `docs/STORE.md:425–438` — Accept negotiation, trailer, mid-stream semantics, `duckdb_arrow`, stub 406, RBAC `query`.
+- `docs/CONFIG.md:730–732`, `docs/MIGRATION.md:55`, `docs/DESIGN.md:675–686` — consistent with Makefile `STORE_TAGS` and goreleaser tags.
+
+### Gate 4 — Atomic comments
+- New/changed `.go` files carry no comments referencing other files/symbols/lines.
+
+### Security audit
+- **Sandbox parity:** Arrow runs on conn already through `applySandboxBootstrap` (`allowed_directories`) + `lockSandbox` (`enable_external_access=false`, `lock_configuration=true`, etc.) before `conn.Raw` (`sql_arrow.go:24–39`).
+- **RBAC:** unchanged `WrapSQL` → `ActionQuery` (`authz/middleware.go:32–34`); Arrow tests cover 200/403/404/401.
+- **Isolation:** `TestSQLArrowIsolationCrossTenant` — cross-tenant `read_parquet` → 400, no stream body.
+- **LIMIT wrapper:** wraps post-`validateReadOnlySQL` text only; semicolon/multi-stmt/forbidden keywords blocked before dispatch.
+- **Info leak:** handler maps to generic `bad query` / `query failed`; trailer is boolean only.
+- **Cluster:** `router.go:95` `FlushInterval: -1`; `TestClusterSQLArrowRBACDenyBeforeProxy` — upstream hits 0 on deny.
+- **Agent isolation:** `CGO_ENABLED=0 go build ./cmd/prism` ok; no duckdb in `go list -deps ./cmd/prism`.
+
+### Non-blocking observations (not gate failures)
+- No dedicated Arrow timeout or mid-stream fault-injection test (behavior covered by shared ctx + docs/code path review).
+- No explicit `Accept: */*` test (logic + docs agree; trivial to add later).
+- Exactly-`rowCap` rows with `truncated=false` inferred from under-cap tests + LIMIT math; no isolated boundary case at `rows==rowCap`.

@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p scanctx-store
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-            go build -trimpath \
+            go build -trimpath -tags duckdb_arrow \
               -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
               -o scanctx-store/prism-store ./cmd/prism-store
       - name: build store image for scanning
