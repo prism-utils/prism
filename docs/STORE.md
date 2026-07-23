@@ -83,6 +83,8 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 | `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies |
 | `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset |
 | `E2E_EXPOSE_QUERY_SQL` | _(empty)_ | When `1`, query JSON includes generated SQL (e2e/regression only) |
+| `ADMIN_LISTEN_ADDR` | _(empty)_ | When set, binds admin/stats/query on a second HTTP server (see below) |
+| `ADMIN_TOKEN` | _(empty)_ | Static bearer token for admin-plane routes when set |
 
 See [`CONFIG.md`](CONFIG.md) §14 for the full `prism-store` env reference.
 
@@ -251,6 +253,76 @@ path-scoped, same row projection, no `union_by_name`/`filename`.
 
 CLI: `prism-store print-view-sql --tenant <ns> [--data-dir <dir>]` prints the
 statement for DuckDB datasource `initSQL` wiring.
+
+---
+
+## Admin provisioning (`internal/store/admin`, `internal/store/seed`)
+
+Tenant lifecycle and billing metering endpoints ported from the homelab proxy.
+Handlers live in `internal/store/admin`; zero-row Parquet seeds in
+`internal/store/seed`.
+
+### Control-plane bind
+
+When `ADMIN_LISTEN_ADDR` is set, a **second** `http.Server` serves admin,
+stats, and query routes; the public `LISTEN_ADDR` server keeps ingest plus
+health probes only. When unset, all routes share the single mux (dev/back-compat).
+Both planes serve `/healthz` and `/readyz`. Graceful shutdown stops both servers.
+
+When `ADMIN_TOKEN` is set, admin-plane routes (`/admin/*`, `/stats`, and query
+when on the admin plane) require `Authorization: Bearer <token>` (constant-time
+compare). When unset, no auth — rely on network isolation (NetworkPolicy/gateway).
+
+### `POST /admin/tenants/{ns}/ensure`
+
+Idempotently seeds zero-row Parquet placeholders so DuckDB `read_parquet` globs
+never error on empty tenants.
+
+| Condition | Status |
+|---|---|
+| unknown/malformed tenant | `404 unknown tenant` |
+| seed or engine failure | `500 ensure failed` |
+| success (including repeat calls) | `204 No Content` |
+
+Seeds written (all idempotent, atomic `.tmp` + rename):
+
+- `<tenant>/metrics-raw/_seed.parquet` — embedded contract-v1 zero-row fixture
+- `<tenant>/tiers/_seed.parquet`, `hot/current.parquet`
+- `<tenant>/rollups/{1m,5m,1h}/_seed.parquet` — zero-row rollup schema
+
+Reserved name: `_seed.parquet` (`seed.SeedName`).
+
+### `GET /stats?ns=` — billing contract
+
+**Frozen JSON shape** (field names, casing, and `omitempty` must not change —
+consumers scrape this for credit metering):
+
+```json
+{
+  "artifacts": {
+    "<artifact>": {
+      "windows": 0,
+      "latestUnixNanos": 0
+    }
+  },
+  "totalWindows": 0,
+  "onDiskBytes": 0,
+  "compactionCpuSeconds": 0.0
+}
+```
+
+`onDiskBytes` and `compactionCpuSeconds` appear **only when `ns` is provided**
+(`omitempty` omits zero values). Without `ns`, the response aggregates across
+all tenant directories under `DATA_DIR`.
+
+Per-tenant `windows` = hot row count + L0 segment count. `latestUnixNanos` =
+max L0 file mtime. `onDiskBytes` from `stats.TenantOnDiskBytes` (excludes
+legacy `metrics-raw/`). `compactionCpuSeconds` from `.metering.json`.
+
+| Condition | Status |
+|---|---|
+| non-empty unknown `ns` | `404` |
+| success | `200 application/json` |
 
 ---
 

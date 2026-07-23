@@ -1,6 +1,7 @@
 package admin_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -40,8 +41,26 @@ func testAdminMux(t *testing.T, cfg *admin.Config, eng *engine.Engine, token str
 	mux := http.NewServeMux()
 	cfg.AdminToken = token
 	mux.Handle(admin.EnsureRoutePattern(), admin.WithBearerAuth(cfg.AdminToken, admin.EnsureHandler(cfg, eng, logger)))
-	mux.HandleFunc(admin.StatsRoutePattern(), admin.StatsHandler(cfg, eng))
+	mux.Handle(admin.StatsRoutePattern(), admin.WithBearerAuth(cfg.AdminToken, admin.StatsHandler(cfg, eng)))
 	return mux
+}
+
+func doAdminReq(t *testing.T, req *http.Request) *http.Response {
+	t.Helper()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
+func postEnsure(t *testing.T, url string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	return doAdminReq(t, req)
 }
 
 func TestEnsureUnknownTenant404(t *testing.T) {
@@ -53,11 +72,8 @@ func TestEnsureUnknownTenant404(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/admin/tenants/not valid!/ensure", "application/json", nil)
-	if err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	defer resp.Body.Close()
+	resp := postEnsure(t, srv.URL+"/admin/tenants/not valid!/ensure")
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", resp.StatusCode)
 	}
@@ -74,14 +90,11 @@ func TestEnsureTenant204AndIdempotent(t *testing.T) {
 
 	url := srv.URL + "/admin/tenants/" + testTenant + "/ensure"
 	for i := 0; i < 2; i++ {
-		resp, err := http.Post(url, "application/json", nil)
-		if err != nil {
-			t.Fatalf("ensure pass %d: %v", i, err)
-		}
-		resp.Body.Close()
+		resp := postEnsure(t, url)
 		if resp.StatusCode != http.StatusNoContent {
 			t.Fatalf("pass %d: want 204, got %d", i, resp.StatusCode)
 		}
+		_ = resp.Body.Close()
 	}
 
 	seedPath := dir + "/" + testTenant + "/metrics-raw/" + seed.SeedName
@@ -91,8 +104,8 @@ func TestEnsureTenant204AndIdempotent(t *testing.T) {
 	}
 	firstSize := info.Size()
 
-	resp, _ := http.Post(url, "application/json", nil)
-	resp.Body.Close()
+	resp := postEnsure(t, url)
+	_ = resp.Body.Close()
 	info2, _ := os.Stat(seedPath)
 	if info2.Size() != firstSize {
 		t.Fatalf("repeat ensure changed seed size")
@@ -108,17 +121,51 @@ func TestStatsUnknownTenant404(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/stats?ns=not-valid!")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/stats?ns=not-valid!", nil)
 	if err != nil {
-		t.Fatalf("stats: %v", err)
+		t.Fatalf("new request: %v", err)
 	}
-	defer resp.Body.Close()
+	resp := doAdminReq(t, req)
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", resp.StatusCode)
 	}
 }
 
-func TestStatsGoldenJSONEmptyTenant(t *testing.T) {
+func TestStatsGoldenJSONContract(t *testing.T) {
+	empty := admin.StatsResponse{
+		Artifacts: map[string]admin.ArtifactStats{
+			"metrics-raw": {Windows: 0, LatestUnixNanos: 0},
+		},
+	}
+	body, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"artifacts":{"metrics-raw":{"windows":0,"latestUnixNanos":0}},"totalWindows":0}`
+	if string(body) != want {
+		t.Fatalf("empty stats JSON mismatch\ngot:  %s\nwant: %s", body, want)
+	}
+
+	withMetering := admin.StatsResponse{
+		Artifacts: map[string]admin.ArtifactStats{
+			"metrics-raw": {Windows: 2, LatestUnixNanos: 1700000000000000000},
+		},
+		TotalWindows:         2,
+		OnDiskBytes:          4096,
+		CompactionCpuSeconds: 1.5,
+	}
+	body2, err := json.Marshal(withMetering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want2 := `{"artifacts":{"metrics-raw":{"windows":2,"latestUnixNanos":1700000000000000000}},"totalWindows":2,"onDiskBytes":4096,"compactionCpuSeconds":1.5}`
+	if string(body2) != want2 {
+		t.Fatalf("metered stats JSON mismatch\ngot:  %s\nwant: %s", body2, want2)
+	}
+}
+
+func TestStatsAggregateGoldenViaHTTP(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testAdminConfig(dir)
 	eng := testEngine(t, dir)
@@ -126,12 +173,6 @@ func TestStatsGoldenJSONEmptyTenant(t *testing.T) {
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-
-	body := fetchStatsBody(t, srv.URL, testTenant)
-	want := `{"artifacts":{"metrics-raw":{"windows":0,"latestUnixNanos":0}},"totalWindows":0}`
-	if string(body) != want {
-		t.Fatalf("tenant stats JSON mismatch\ngot:  %s\nwant: %s", body, want)
-	}
 
 	aggBody := fetchStatsBody(t, srv.URL, "")
 	wantAgg := `{"artifacts":{"metrics-raw":{"windows":0,"latestUnixNanos":0}},"totalWindows":0}`
@@ -245,33 +286,34 @@ func TestAdminTokenEnforced(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/stats?ns=" + testTenant)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/stats?ns="+testTenant, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	resp := doAdminReq(t, req)
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401 without token, got %d", resp.StatusCode)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/stats?ns="+testTenant, nil)
-	req.Header.Set("Authorization", "Bearer wrong")
-	resp2, err := http.DefaultClient.Do(req)
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/stats?ns="+testTenant, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp2.Body.Close()
+	req2.Header.Set("Authorization", "Bearer wrong")
+	resp2 := doAdminReq(t, req2)
+	_ = resp2.Body.Close()
 	if resp2.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401 with wrong token, got %d", resp2.StatusCode)
 	}
 
-	req3, _ := http.NewRequest(http.MethodGet, srv.URL+"/stats?ns="+testTenant, nil)
-	req3.Header.Set("Authorization", "Bearer s3cret")
-	resp3, err := http.DefaultClient.Do(req3)
+	req3, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/stats?ns="+testTenant, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp3.Body.Close()
+	req3.Header.Set("Authorization", "Bearer s3cret")
+	resp3 := doAdminReq(t, req3)
+	_ = resp3.Body.Close()
 	if resp3.StatusCode != http.StatusOK {
 		t.Fatalf("want 200 with token, got %d", resp3.StatusCode)
 	}
@@ -283,11 +325,12 @@ func fetchStatsBody(t *testing.T, base, ns string) []byte {
 	if ns != "" {
 		u += "?ns=" + ns
 	}
-	resp, err := http.Get(u)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
 	if err != nil {
-		t.Fatalf("get /stats: %v", err)
+		t.Fatalf("new request: %v", err)
 	}
-	defer resp.Body.Close()
+	resp := doAdminReq(t, req)
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200 from /stats, got %d", resp.StatusCode)
 	}
@@ -295,7 +338,11 @@ func fetchStatsBody(t *testing.T, base, ns string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return body
+	return bytesTrimSpace(body)
+}
+
+func bytesTrimSpace(b []byte) []byte {
+	return []byte(strings.TrimSpace(string(b)))
 }
 
 func decodeStats(t *testing.T, body []byte) admin.StatsResponse {

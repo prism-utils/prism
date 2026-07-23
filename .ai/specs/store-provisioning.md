@@ -1,6 +1,6 @@
 # Spec: prism-store — tenant provisioning (/ensure) + /stats metering
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-provisioning`
 - **Owner phase:** orchestrator → developer
@@ -55,16 +55,16 @@ so admin/stats/query are not publicly reachable.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `seed.EnsureMetricsRawSeedForTenant` + `EnsureTieredLayoutForTenant` write all documented zero-row files, idempotently and atomically; embedded fixture present; `SeedName` reserved.
-- [ ] `POST /admin/tenants/{ns}/ensure`: `404` unknown tenant, `500` on failure, `204` success; repeat call stays `204` and adds no rows (idempotent) — tested.
-- [ ] `GET /stats?ns=<t>`: returns the exact documented shape; `windows` = hot rows + L0 count; `latestUnixNanos` = max L0 mtime; `onDiskBytes` excludes legacy `metrics-raw/`; `compactionCpuSeconds` from metering file.
-- [ ] `GET /stats` (no `ns`): aggregates `windows`/`totalWindows` across tenant dirs; omits `onDiskBytes`/`compactionCpuSeconds`.
-- [ ] JSON field names/casing/omitempty match the reference byte-for-byte (golden-style assertion).
-- [ ] `ADMIN_LISTEN_ADDR` set ⇒ admin/stats/query on the second server, ingest stays on public; unset ⇒ single mux. Both planes serve `/healthz`+`/readyz`. Shutdown stops both.
-- [ ] `ADMIN_TOKEN` set ⇒ `401` without/with wrong bearer, pass with correct (constant-time); unset ⇒ open.
-- [ ] `docs/STORE.md` (billing contract + ensure/seeds) and `docs/CONFIG.md` (`ADMIN_LISTEN_ADDR`, `ADMIN_TOKEN`) updated.
-- [ ] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
-- [ ] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
+- [x] `seed.EnsureMetricsRawSeedForTenant` + `EnsureTieredLayoutForTenant` write all documented zero-row files, idempotently and atomically; embedded fixture present; `SeedName` reserved.
+- [x] `POST /admin/tenants/{ns}/ensure`: `404` unknown tenant, `500` on failure, `204` success; repeat call stays `204` and adds no rows (idempotent) — tested.
+- [x] `GET /stats?ns=<t>`: returns the exact documented shape; `windows` = hot rows + L0 count; `latestUnixNanos` = max L0 mtime; `onDiskBytes` excludes legacy `metrics-raw/`; `compactionCpuSeconds` from metering file.
+- [x] `GET /stats` (no `ns`): aggregates `windows`/`totalWindows` across tenant dirs; omits `onDiskBytes`/`compactionCpuSeconds`.
+- [x] JSON field names/casing/omitempty match the reference byte-for-byte (golden-style assertion).
+- [x] `ADMIN_LISTEN_ADDR` set ⇒ admin/stats/query on the second server, ingest stays on public; unset ⇒ single mux. Both planes serve `/healthz`+`/readyz`. Shutdown stops both.
+- [x] `ADMIN_TOKEN` set ⇒ `401` without/with wrong bearer, pass with correct (constant-time); unset ⇒ open.
+- [x] `docs/STORE.md` (billing contract + ensure/seeds) and `docs/CONFIG.md` (`ADMIN_LISTEN_ADDR`, `ADMIN_TOKEN`) updated.
+- [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
+- [x] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
 
 ## 6. Mandatory review gates  (reviewer owns)
 

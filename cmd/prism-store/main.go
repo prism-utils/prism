@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/elk-utilities/prism/internal/store/admin"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/lifecycle"
@@ -51,13 +52,23 @@ const (
 	shutdownTimeout          = 10 * time.Second
 )
 
+type servePlane int
+
+const (
+	planeCombined servePlane = iota
+	planePublic
+	planeAdmin
+)
+
 type serverConfig struct {
 	listenAddr       string
+	adminListenAddr  string
 	flightAddr       string
 	dataDir          string
 	allowedArtifacts []string
 	maxBodyBytes     int64
 	ingestToken      string
+	adminToken       string
 	authMode         string
 	routePrefix      string
 	hotWindow        time.Duration
@@ -75,6 +86,8 @@ type serverConfig struct {
 func loadConfig() serverConfig {
 	c := serverConfig{
 		listenAddr:      envOr("LISTEN_ADDR", defaultListenAddr),
+		adminListenAddr: os.Getenv("ADMIN_LISTEN_ADDR"),
+		adminToken:      os.Getenv("ADMIN_TOKEN"),
 		flightAddr:      os.Getenv("FLIGHT_ADDR"),
 		dataDir:         envOr("DATA_DIR", defaultDataDir),
 		maxBodyBytes:    defaultMaxBodyBytes,
@@ -158,6 +171,22 @@ func (c *serverConfig) ingestConfig(mode storeingest.AuthMode) storeingest.Confi
 	}
 }
 
+func (c *serverConfig) adminConfig() *admin.Config {
+	return &admin.Config{
+		DataDir:          c.dataDir,
+		AllowedArtifacts: c.allowedArtifacts,
+		AdminToken:       c.adminToken,
+		RoutePrefix:      c.routePrefix,
+	}
+}
+
+func publicPlane(cfg *serverConfig) servePlane {
+	if cfg.adminListenAddr != "" {
+		return planePublic
+	}
+	return planeCombined
+}
+
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok\n"))
@@ -174,24 +203,41 @@ func handleReadyz(dataDir string) http.HandlerFunc {
 	}
 }
 
-func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger) *http.ServeMux {
+func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(cfg.dataDir))
-	if eng != nil && logger != nil {
-		mode, err := storeingest.ParseAuthMode(cfg.authMode)
-		if err != nil {
-			logger.Error("invalid auth mode", "auth_mode", cfg.authMode, "err", err)
-		} else {
-			ingestCfg := cfg.ingestConfig(mode)
-			mux.Handle(storeingest.IngestRoutePattern(cfg.routePrefix), storeingest.Handler(&ingestCfg, eng, logger))
-			queryCfg := &query.Config{
-				DataDir:     cfg.dataDir,
-				RoutePrefix: cfg.routePrefix,
-				ExposeSQL:   query.ExposeSQLFromEnv(),
-			}
-			mux.Handle(query.QueryRoutePattern(cfg.routePrefix), query.Handler(queryCfg, eng, logger))
-		}
+	if eng == nil || logger == nil {
+		return mux
+	}
+
+	mode, err := storeingest.ParseAuthMode(cfg.authMode)
+	if err != nil {
+		logger.Error("invalid auth mode", "auth_mode", cfg.authMode, "err", err)
+		return mux
+	}
+
+	serveIngest := plane == planeCombined || plane == planePublic
+	serveAdmin := plane == planeCombined || plane == planeAdmin
+	if !serveIngest && !serveAdmin {
+		return mux
+	}
+
+	adminCfg := cfg.adminConfig()
+	queryCfg := &query.Config{
+		DataDir:     cfg.dataDir,
+		RoutePrefix: cfg.routePrefix,
+		ExposeSQL:   query.ExposeSQLFromEnv(),
+	}
+
+	if serveIngest {
+		ingestCfg := cfg.ingestConfig(mode)
+		mux.Handle(storeingest.IngestRoutePattern(cfg.routePrefix), storeingest.Handler(&ingestCfg, eng, logger))
+	}
+	if serveAdmin {
+		mux.Handle(admin.EnsureRoutePattern(), admin.WithBearerAuth(adminCfg.AdminToken, admin.EnsureHandler(adminCfg, eng, logger)))
+		mux.Handle(admin.StatsRoutePattern(), admin.WithBearerAuth(adminCfg.AdminToken, admin.StatsHandler(adminCfg, eng)))
+		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), admin.WithBearerAuth(adminCfg.AdminToken, query.Handler(queryCfg, eng, logger)))
 	}
 	return mux
 }
@@ -278,11 +324,20 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
-		Handler:           newServeMux(cfg, eng, logger),
+		Handler:           newServeMux(cfg, eng, logger, publicPlane(cfg)),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
-	errCh := make(chan error, 1)
+	var adminSrv *http.Server
+	if cfg.adminListenAddr != "" {
+		adminSrv = &http.Server{
+			Addr:              cfg.adminListenAddr,
+			Handler:           newServeMux(cfg, eng, logger, planeAdmin),
+			ReadHeaderTimeout: readHeaderTimeout,
+		}
+	}
+
+	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("prism-store listening",
 			"addr", cfg.listenAddr,
@@ -292,16 +347,23 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 			"segments_per_tier", cfg.segmentsPerTier,
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			errCh <- fmt.Errorf("public listen: %w", err)
 		}
-		close(errCh)
 	}()
+	if adminSrv != nil {
+		go func() {
+			logger.Info("prism-store admin listening", "addr", cfg.adminListenAddr)
+			if err := adminSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("admin listen: %w", err)
+			}
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
 		if err != nil {
-			return fmt.Errorf("listen: %w", err)
+			return err
 		}
 	}
 
@@ -309,6 +371,11 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
+	}
+	if adminSrv != nil {
+		if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("admin shutdown: %w", err)
+		}
 	}
 	if flightDone != nil {
 		select {
