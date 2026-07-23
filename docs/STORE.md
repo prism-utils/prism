@@ -72,16 +72,25 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 | `HOT_WINDOW_SECONDS` | _(unset)_ | Hot-window duration in seconds (overrides minutes when set) |
 | `HOT_WINDOW_MINUTES` | `10` | Hot-window duration in minutes when seconds unset |
 | `MaxOpenTenants` | `32` | Bounded LRU of open per-tenant DuckDB handles |
-| `RowGroupSize` | `1000000` | Parquet row-group size for flush, snapshot, and legacy COPY |
+| `RowGroupSize` | `1000000` | Parquet row-group size for flush, snapshot, and merge COPY |
+| `SEGMENTS_PER_TIER` | `6` | Lucene-style merge trigger: minimum live segments at a tier before compaction |
+| `MAX_SEGMENT_BYTES` | `2147483648` | Seal threshold (2 GiB); segments at or above this size are never merge inputs |
+| `RETENTION_DAYS` | `15` | Delete tier segments and rollups whose max timestamp is strictly before `now − N days` |
+| `ROLLUP_STEPS` | `1m,5m,1h` | Comma-separated downsampling intervals materialized after L1+ merges |
+| `MAX_TIER` | `8` | Highest tier directory scanned (`L0`…`L8`) |
+| `HOT_SNAPSHOT_SECONDS` | `15` | Hot snapshot export ticker interval |
+| `FLUSH_TICK_SECONDS` | `30` | Hot→L0 flush ticker interval |
+| `MERGE_TICK_SECONDS` | `60` | Tier merge ticker interval (at most one merge action per tenant per tick) |
+| `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies |
+| `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset |
 
-Retention, rollup steps, and background tickers are documented when their
-sub-issues merge.
+See [`CONFIG.md`](CONFIG.md) §14 for the full `prism-store` env reference.
 
 ---
 
 ## Storage engine (`internal/store/engine`)
 
-Per-tenant embedded DuckDB at `<DATA_DIR>/<tenant>/engine.duckdb`. The engine owns the hot ingest path, hot→L0 flush, near-real-time hot snapshots, a bounded tenant LRU, and a one-time legacy `metrics-raw` importer. Compaction, rollups, and tickers land in #25.
+Per-tenant embedded DuckDB at `<DATA_DIR>/<tenant>/engine.duckdb`. The engine owns the hot ingest path, hot→L0 flush, near-real-time hot snapshots, a bounded tenant LRU, and a one-time legacy `metrics-raw` importer. Background compaction, rollups, retention, and tickers are described below.
 
 ### On-disk layout (per tenant)
 
@@ -126,7 +135,7 @@ Multiple ingests within one hot window accumulate in `hot_current` and produce a
 
 ### Hot snapshot
 
-`ExportHotSnapshots` atomically writes `<tenant>/hot/current.parquet` from `hot_current ORDER BY ts` (temp + rename). Reads see in-flight rows; a ~15s export ticker is wired in #25.
+`ExportHotSnapshots` atomically writes `<tenant>/hot/current.parquet` from `hot_current ORDER BY ts` (temp + rename). Reads see in-flight rows; a background ticker exports every `HOT_SNAPSHOT_SECONDS` (default 15s).
 
 ### Legacy `metrics-raw` import
 
@@ -143,6 +152,42 @@ Open DuckDB handles are cached in a bounded LRU (default 32 tenants, `MaxOpenTen
 ### On-disk permissions
 
 Directories `0750`, files `0640`.
+
+---
+
+## Lifecycle (`internal/store/lifecycle`, `merge`, `rollup`, `stats`)
+
+Background work runs in one goroutine with four independent tickers started from `cmd/prism-store serve` and stopped on shutdown. Tick errors are logged (`slog`) and never fatal.
+
+| Ticker | Default | Action |
+|---|---|---|
+| Hot snapshot | 15s | `ExportHotSnapshots` |
+| Flush | 30s | `FlushDue` (hot→L0) |
+| Merge | 60s | One bounded merge per tenant (lowest tier first) |
+| Retention | 1h | Delete expired tier segments and rollup files |
+
+### Tiered compaction (`internal/store/merge`)
+
+Lucene **TieredMergePolicy** analogue over immutable Parquet tiers:
+
+- **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs.
+- **Trigger:** when a tier has ≥ `SEGMENTS_PER_TIER` (default 6) live segments, the planner groups by size level (floor-rounded log scale), picks the first time-adjacent contiguous run (gap ≤ one segment span), and shrinks the candidate set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`.
+- **One action per tick:** no cascade — at most one merge per tenant per merge tick, lowest tier first.
+- **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are deleted only after the output is atomically renamed.
+
+Path helpers live in `internal/store/layout` (`TierDir`, `RollupDir`, `ToSlash`).
+
+### Rollups (`internal/store/rollup`)
+
+After a merge promotes to **L1 or above**, the store materializes downsampled Parquet under `rollups/{step}/` for each step in `ROLLUP_STEPS` (default `1m,5m,1h`). Schema: `bucket`, `"__name__"`, `avg`, `min`, `max`, `count`, `sum` from `time_bucket(step, ts)` grouped by bucket and name. L0 merges do not build rollups (avoids rework on volatile data).
+
+### Retention
+
+Tier segments with `MaxTs` **strictly before** `now − RETENTION_DAYS` are deleted (default 15 days kept, 16 days deleted at the boundary). Rollup files whose max `bucket` is before the same cutoff are removed on the retention tick.
+
+### Metering (`internal/store/stats`)
+
+Per-tenant `.metering.json` tracks cumulative `compactionCpuSeconds` (JSON field name preserved for billing). Each merge tick adds the **wall-clock elapsed seconds** of the DuckDB COPY merge (single-threaded burst ≈ CPU for billing purposes). `TenantOnDiskBytes` sums `tiers/`, `rollups/`, `hot/`, and `engine.duckdb` (+ `.wal`); legacy `metrics-raw/` and dotfiles are excluded.
 
 ---
 
