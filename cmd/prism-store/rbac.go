@@ -124,11 +124,29 @@ func (s *rbacStack) wrapStats(h http.Handler) http.Handler {
 	return s.middleware.WrapStats(h)
 }
 
-func ingestAuthMode(cfg *serverConfig, rbac *rbacStack) (storeingest.AuthMode, error) {
+func httpIngestAuthMode(cfg *serverConfig, rbac *rbacStack) (storeingest.AuthMode, error) {
 	if rbac != nil {
 		return storeingest.AuthNone, nil
 	}
 	return storeingest.ParseAuthMode(cfg.authMode)
+}
+
+func flightIngestAuthMode(cfg *serverConfig) (storeingest.AuthMode, error) {
+	return storeingest.ParseAuthMode(cfg.authMode)
+}
+
+func validateRBACFlight(cfg *serverConfig, rbac *rbacStack) error {
+	if rbac == nil || cfg.flightAddr == "" {
+		return nil
+	}
+	mode, err := storeingest.ParseAuthMode(cfg.authMode)
+	if err != nil {
+		return fmt.Errorf("rbac flight: %w", err)
+	}
+	if mode == storeingest.AuthNone {
+		return fmt.Errorf("rbac: AUTHZ_POLICY_FILE is set and FLIGHT_ADDR is enabled but AUTH_MODE=none; RBAC covers HTTP only — set AUTH_MODE to bearer, mtls, or trusted-header for Flight, or disable FLIGHT_ADDR")
+	}
+	return nil
 }
 
 func protectAdminRoute(rbac *rbacStack, token string, wrap func(http.Handler) http.Handler, h http.Handler) http.Handler {

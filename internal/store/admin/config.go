@@ -6,4 +6,5 @@ type Config struct {
 	AllowedArtifacts []string
 	AdminToken       string
 	RoutePrefix      string
+	RBACEnabled      bool
 }

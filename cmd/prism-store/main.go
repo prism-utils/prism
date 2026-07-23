@@ -232,6 +232,7 @@ func (c *serverConfig) adminConfig() *admin.Config {
 		AllowedArtifacts: c.allowedArtifacts,
 		AdminToken:       c.adminToken,
 		RoutePrefix:      c.routePrefix,
+		RBACEnabled:      c.rbac != nil,
 	}
 }
 
@@ -266,7 +267,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		return mux
 	}
 
-	mode, err := ingestAuthMode(cfg, rbac)
+	mode, err := httpIngestAuthMode(cfg, rbac)
 	if err != nil {
 		logger.Error("invalid auth mode", "auth_mode", cfg.authMode, "err", err)
 		return mux
@@ -435,7 +436,11 @@ func runCluster(ctx context.Context, cfg *serverConfig, clients map[string]*url.
 }
 
 func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, ownedTenants map[string]struct{}, rbac *rbacStack) error {
-	mode, err := ingestAuthMode(cfg, rbac)
+	if err := validateRBACFlight(cfg, rbac); err != nil {
+		return err
+	}
+
+	flightMode, err := flightIngestAuthMode(cfg)
 	if err != nil {
 		return fmt.Errorf("auth mode: %w", err)
 	}
@@ -465,11 +470,11 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		logger.Info("prism-store background jobs disabled")
 	}
 
-	ingestCfg := cfg.ingestConfig(mode)
+	flightIngestCfg := cfg.ingestConfig(flightMode)
 
 	var flightDone chan error
 	if cfg.flightAddr != "" {
-		flightSrv, err := storeingest.NewFlightServer(&ingestCfg, eng, logger)
+		flightSrv, err := storeingest.NewFlightServer(&flightIngestCfg, eng, logger)
 		if err != nil {
 			return fmt.Errorf("flight server: %w", err)
 		}

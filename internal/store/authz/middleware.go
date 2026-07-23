@@ -12,8 +12,6 @@ import (
 
 type ctxKeyPrincipal struct{}
 
-const unknownTenantBody = "unknown tenant\n"
-
 // Middleware wraps HTTP handlers with JWT authentication and RBAC authorization.
 type Middleware struct {
 	verifier   auth.Verifier
@@ -51,7 +49,7 @@ func (m *Middleware) WrapStats(next http.Handler) http.Handler {
 		ns := strings.TrimSpace(r.URL.Query().Get("ns"))
 		if ns != "" {
 			if !storetenant.TenantAllowed(ns) {
-				http.Error(w, strings.TrimSpace(unknownTenantBody), http.StatusNotFound)
+				http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 				return
 			}
 			switch m.authorizer.Authorize(principal, ActionStats, ns) {
@@ -63,7 +61,7 @@ func (m *Middleware) WrapStats(next http.Handler) http.Handler {
 				http.Error(w, "forbidden", http.StatusForbidden)
 			default:
 				m.logDeny(principal, ActionStats, ns, "not_found")
-				http.Error(w, strings.TrimSpace(unknownTenantBody), http.StatusNotFound)
+				http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			}
 			return
 		}
@@ -87,7 +85,7 @@ func (m *Middleware) wrapTenantAction(action Action, next http.Handler) http.Han
 		}
 		ns := strings.TrimSpace(r.PathValue("ns"))
 		if !storetenant.TenantAllowed(ns) {
-			http.Error(w, strings.TrimSpace(unknownTenantBody), http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
 		switch m.authorizer.Authorize(principal, action, ns) {
@@ -99,7 +97,7 @@ func (m *Middleware) wrapTenantAction(action Action, next http.Handler) http.Han
 			http.Error(w, "forbidden", http.StatusForbidden)
 		default:
 			m.logDeny(principal, action, ns, "not_found")
-			http.Error(w, strings.TrimSpace(unknownTenantBody), http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 		}
 	})
 }

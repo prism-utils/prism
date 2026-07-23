@@ -1,11 +1,7 @@
 package ingest_test
 
 import (
-	"context"
-	"io"
-	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/elk-utilities/prism/internal/store/ingest"

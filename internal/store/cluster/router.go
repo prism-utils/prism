@@ -10,6 +10,7 @@ import (
 
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/query"
+	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
 
 const (
@@ -60,12 +61,12 @@ func handleReadyz(w http.ResponseWriter, _ *http.Request) {
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ns := req.PathValue("ns")
 	if !storeingest.ValidateTenant(ns) {
-		http.Error(w, "unknown tenant", http.StatusNotFound)
+		http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 		return
 	}
 	target, ok := r.clients[ns]
 	if !ok {
-		http.Error(w, "unknown tenant", http.StatusNotFound)
+		http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 		return
 	}
 	r.proxyFor(target).ServeHTTP(w, req)

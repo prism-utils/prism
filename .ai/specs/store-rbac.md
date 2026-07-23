@@ -1,6 +1,6 @@
 # Spec: prism-store — RBAC (JWT/OIDC identity + per-tenant roles, deny-by-default)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-rbac`
 - **Owner phase:** orchestrator → developer
@@ -112,13 +112,15 @@ hot-reloaded. Enforced in **all modes**, including the cluster coordinator (edge
 
 ## 6. Mandatory review gates  (reviewer owns)  — SECURITY-CRITICAL
 
-- [ ] **Gate 1 — Guidelines:** cohesive `auth`/`authz` packages, `Verifier`/`Authorizer` interfaces, no globals, ctx-aware, wrapped errors; policy reload atomic under RWMutex; comments self-contained.
-- [ ] **Gate 2 — Edge cases:** missing/expired/wrong-aud/wrong-iss/tampered token; clock-skew leeway; empty/`*` tenant lists; unknown tenant vs unauthorized tenant are indistinguishable (404); reload race + invalid reload (fail-closed to last good, never fail-open, never crash); JWKS endpoint unreachable at startup (fail-fast) vs transient refresh failure (serve with cached keys); coordinator with a down client still authorizes first (no upstream on deny).
-- [ ] **Gate 3 — Docs/comments match code:** env names/defaults, policy schema, status-code semantics, precedence, and k8s/Vault wiring match the code.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] **SECURITY AUDIT (must pass):** deny-by-default proven; **no cross-tenant read/ingest/metadata path** (BOLA) exists; **no privilege escalation** (policy immutable via API, no lower role reaching a higher action, `sub`/`aud`/`iss` strictly enforced, no trust of client identity headers); no fail-open on policy/JWKS errors; tokens/secrets never logged; 404-hide leaks no existence; cluster edge+client both enforce. Confirm the agent static build excludes the new deps.
-- [ ] Full `docs/REVIEW.md` checklist; TESTING.md layering; TDD verified via `git log` (security tests written first).
+- [x] **Gate 1 — Guidelines:** cohesive `auth`/`authz` packages, `Verifier`/`Authorizer` interfaces, no globals, ctx-aware, wrapped errors; policy reload atomic under RWMutex; comments self-contained.
+- [x] **Gate 2 — Edge cases:** missing/expired/wrong-aud/wrong-iss/tampered token; clock-skew leeway; empty/`*` tenant lists; unknown tenant vs unauthorized tenant are indistinguishable (404); reload race + invalid reload (fail-closed to last good, never fail-open, never crash); JWKS endpoint unreachable at startup (fail-fast) vs transient refresh failure (serve with cached keys); coordinator with a down client still authorizes first (no upstream on deny).
+- [x] **Gate 3 — Docs/comments match code:** env names/defaults, policy schema, status-code semantics, precedence, and k8s/Vault wiring match the code.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] **SECURITY AUDIT (must pass):** deny-by-default proven; **no cross-tenant read/ingest/metadata path** (BOLA) exists; **no privilege escalation** (policy immutable via API, no lower role reaching a higher action, `sub`/`aud`/`iss` strictly enforced, no trust of client identity headers); no fail-open on policy/JWKS errors; tokens/secrets never logged; 404-hide leaks no existence; cluster edge+client both enforce. Confirm the agent static build excludes the new deps.
+- [x] Full `docs/REVIEW.md` checklist; TESTING.md layering; TDD verified via `git log` (security tests written first).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**2026-07-23 — APPROVE (prism-reviewer).** All four gates + SECURITY AUDIT pass. TDD: `33b8609 test:` precedes `724023d feat:`. Commands: `make lint` 0 issues; `make test -race` green; `CGO_ENABLED=0 go build ./cmd/prism` ok; `go build ./cmd/prism-store` ok; `go list -deps ./cmd/prism` excludes `go-oidc`/`go-jose`/`gopkg.in/yaml.v3`; `make tidy` + clean tree. Security enforcement: deny-by-default `Authorizer.Authorize` (unbound → `DecisionDenyNotFound`); anti-enumeration `Middleware.wrapTenantAction`/`WrapStats` 404 via `unknown tenant` body; JWT-only identity (`authenticate` discards X-User/X-Tenant); fail-closed policy reload (`tryReload` keeps prior on parse error); cluster `NewServeMux` wraps router before proxy (`TestRouterRBACDenyBeforeProxy`). Minor note (non-blocking): clock-skew tolerance is go-oidc library default, not an explicit env knob.
+
+**2026-07-23 — Security fix round (developer).** Independent review found Flight fail-open when RBAC forced `AuthNone` on shared ingest config; fixed with separate HTTP/Flight auth modes + startup fail-fast when RBAC+Flight+`AUTH_MODE=none`. Also: stats handler fail-closed without RBAC scope, shared `tenant.UnknownTenantBody` for byte-identical 404 bodies, JWT alg=none/HMAC-confusion regression tests. TDD: `5b6ea66 test:` precedes fix commit.

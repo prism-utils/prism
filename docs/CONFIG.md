@@ -731,7 +731,10 @@ via environment variables (no YAML config file).
 | `AUTHZ_RELOAD_SECONDS` | `15` | Policy file reload poll interval. |
 
 When **`AUTHZ_POLICY_FILE`** is set, RBAC supersedes `ADMIN_TOKEN` / `INGEST_TOKEN`
-on HTTP data/admin routes; `AUTH_MODE` remains for RBAC-off and for Flight.
+on HTTP data/admin routes. **`AUTH_MODE` still governs Arrow Flight** — RBAC does
+not cover Flight. If RBAC is on and `FLIGHT_ADDR` is set, `AUTH_MODE=none` is
+rejected at startup; use `bearer`/`mtls`/`trusted-header` for Flight or disable
+`FLIGHT_ADDR`.
 
 See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, admin provisioning, the `/stats` billing contract, RBAC policy format, and the view-SQL helper.
 

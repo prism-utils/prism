@@ -7,11 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/authz"
 	"github.com/elk-utilities/prism/internal/store/authtest"
+	"github.com/elk-utilities/prism/internal/store/authz"
 	"github.com/elk-utilities/prism/internal/store/cluster"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/query"
@@ -81,7 +82,7 @@ func reqWithNS(method, target, ns string) *http.Request {
 func writePolicyFile(t *testing.T, body string) string {
 	t.Helper()
 	path := t.TempDir() + "/policy.yaml"
-	if err := osWritePolicy(path, body); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path

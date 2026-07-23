@@ -26,7 +26,7 @@ func EnsureHandler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Ha
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.PathValue("ns")
 		if !storetenant.TenantAllowed(ns) {
-			http.Error(w, "unknown tenant", http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
 		if _, err := eng.DB(ns); err != nil {
@@ -53,11 +53,16 @@ func StatsHandler(cfg *Config, eng *engine.Engine) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.URL.Query().Get("ns")
 		if ns != "" && !storetenant.TenantAllowed(ns) {
-			http.Error(w, "unknown tenant", http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
 		var resp StatsResponse
-		if scope, ok := authz.StatsScopeFromContext(r.Context()); ok {
+		if cfg.RBACEnabled {
+			scope, ok := authz.StatsScopeFromContext(r.Context())
+			if !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
 			if ns != "" {
 				resp = BuildStatsResponse(cfg, eng, ns)
 			} else {

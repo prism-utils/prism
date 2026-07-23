@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"

@@ -48,8 +48,7 @@ leaves). See [RBAC](#rbac-jwtoidc--per-tenant-roles) below.
 
 **Future / out of scope:** routing ingest, admin, `/stats`, or `/ensure`
 through the coordinator; scatter-gather across clients; dynamic service
-discovery; per-client mTLS; health-aware routing and failover; Flight RBAC
-(`AUTH_MODE` still governs Flight when RBAC is on).
+discovery; per-client mTLS; health-aware routing and failover.
 
 ---
 
@@ -64,8 +63,13 @@ YAML policy** with fixed roles, hot-reloaded from a mounted file.
 When **`AUTHZ_POLICY_FILE`** is set, RBAC is **authoritative** on HTTP query,
 ingest, ensure, and stats routes — static `ADMIN_TOKEN` / `INGEST_TOKEN` gates
 are not used for those routes. When the policy file is unset, behavior is
-unchanged (legacy `AUTH_MODE` + tokens). Arrow Flight continues to use
-`AUTH_MODE` even when RBAC is enabled.
+unchanged (legacy `AUTH_MODE` + tokens).
+
+**Arrow Flight is HTTP-only for RBAC.** JWT/RBAC middleware does not protect
+Flight `DoPut`. When RBAC is enabled and `FLIGHT_ADDR` is set, startup **fails**
+if `AUTH_MODE=none` — operators must configure a non-`none` Flight auth mode
+(`bearer`, `mtls`, or `trusted-header`) or disable Flight. HTTP ingest under
+RBAC uses JWT; Flight keeps the operator-configured `AUTH_MODE` independently.
 
 ### Identity (`internal/store/auth`)
 
@@ -159,6 +163,11 @@ validation chain and land via `engine.Ingest`.
 When `FLIGHT_ADDR` is set, a Flight server accepts `DoPut` streams. Incoming
 Arrow IPC record batches are encoded to Parquet and ingested the same way as
 HTTP. The `FlightDescriptor` path is `[tenant, artifact, startUnixNano, endUnixNano]`.
+
+Flight is **not** covered by JWT/RBAC. When RBAC is enabled (`AUTHZ_POLICY_FILE`
+set) and Flight is enabled, startup fails if `AUTH_MODE=none` — configure
+`bearer`, `mtls`, or `trusted-header` for Flight, or disable `FLIGHT_ADDR`.
+HTTP ingest under RBAC uses JWT; Flight keeps the operator `AUTH_MODE` unchanged.
 
 ### Validation chain (order → status)
 
