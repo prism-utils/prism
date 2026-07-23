@@ -6,12 +6,14 @@
 //
 //	prism-store          start the HTTP server (default)
 //	prism-store serve    start the HTTP server
+//	prism-store print-view-sql --tenant <ns> [--data-dir <dir>]
 //	prism-store version  print version
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,6 +27,7 @@ import (
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/lifecycle"
+	"github.com/elk-utilities/prism/internal/store/query"
 	"github.com/elk-utilities/prism/internal/version"
 )
 
@@ -182,6 +185,12 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger) *ht
 		} else {
 			ingestCfg := cfg.ingestConfig(mode)
 			mux.Handle(storeingest.IngestRoutePattern(cfg.routePrefix), storeingest.Handler(&ingestCfg, eng, logger))
+			queryCfg := &query.Config{
+				DataDir:     cfg.dataDir,
+				RoutePrefix: cfg.routePrefix,
+				ExposeSQL:   query.ExposeSQLFromEnv(),
+			}
+			mux.Handle(query.QueryRoutePattern(cfg.routePrefix), query.Handler(queryCfg, eng, logger))
 		}
 	}
 	return mux
@@ -315,10 +324,39 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 	return nil
 }
 
+func runPrintViewSQL(args []string) error {
+	fs := flag.NewFlagSet("print-view-sql", flag.ContinueOnError)
+	tenant := fs.String("tenant", "", "tenant namespace")
+	dataDir := fs.String("data-dir", envOr("DATA_DIR", defaultDataDir), "shared data root")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *tenant == "" {
+		return fmt.Errorf("--tenant is required")
+	}
+	sqlText, err := query.ViewSQL(*dataDir, *tenant)
+	if err != nil {
+		return err
+	}
+	fmt.Println(sqlText)
+	return nil
+}
+
 func main() {
-	if len(os.Args) >= 2 && os.Args[1] == "version" {
-		fmt.Println(versionLine())
-		return
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "version":
+			fmt.Println(versionLine())
+			return
+		case "print-view-sql":
+			if err := runPrintViewSQL(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "print-view-sql: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "serve":
+			// default server path below
+		}
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
