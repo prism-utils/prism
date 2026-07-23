@@ -2,6 +2,8 @@ package authgen_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,6 +11,17 @@ import (
 	"github.com/elk-utilities/prism/internal/store/auth"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNewCreatesMissingWorkDir(t *testing.T) {
+	// New must materialize a non-existent nested work dir before writing files.
+	dir := filepath.Join(t.TempDir(), "auth")
+	env, err := authgen.New(dir, "bench-tenant")
+	require.NoError(t, err)
+	for _, p := range []string{env.JWKSPath(), env.PolicyPath()} {
+		_, statErr := os.Stat(p)
+		require.NoError(t, statErr, "expected %s to exist", p)
+	}
+}
 
 func TestMintedJWTVerifiesAgainstJWKS(t *testing.T) {
 	ctx := context.Background()

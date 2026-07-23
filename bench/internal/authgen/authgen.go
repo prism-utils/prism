@@ -52,6 +52,9 @@ func New(workDir, tenant string) (*Env, error) {
 	if strings.TrimSpace(tenant) == "" {
 		return nil, fmt.Errorf("authgen: empty tenant")
 	}
+	if err := os.MkdirAll(workDir, 0o750); err != nil {
+		return nil, fmt.Errorf("authgen: create work dir: %w", err)
+	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("authgen: rsa keygen: %w", err)

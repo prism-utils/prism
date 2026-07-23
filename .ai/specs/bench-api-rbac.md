@@ -1,6 +1,6 @@
 # Spec: benchmark over the HTTP SQL API with RBAC on (attached profile)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `chore/rbac-docs-bench` (docs already committed on this branch)
 - **Owner phase:** orchestrator → developer (harness) → orchestrator runs the actual benchmark
@@ -77,14 +77,14 @@ The developer builds + unit/integration-tests the harness (NO Docker run). The o
 - [x] `make lint` + `make test` (`-race`) green (new tests included); `go build ./bench/... ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` unaffected; `make tidy` clean; `git status` clean. **Do not run the full Docker benchmark** (orchestrator does that).
 
 ## 6. Mandatory review gates (reviewer)
-- [ ] **Gate 1:** harness code cohesive; no duplicated renderer; wrapped errors; no globals; token/JWKS handling clean; atomic comments (§3.8).
-- [ ] **Gate 2 — edge cases:** baseline run still works unchanged (flag absent); server restart releases DuckDB locks (no "database is locked"); expired/again-minted token; API count mismatch fails the gate loudly; charts-api dir created; profile suffix never collides with baseline files.
-- [ ] **Gate 3:** `bench/README.md` + Makefile + rendered caveat match code (which workloads go over the API, the ClickHouse asymmetry, logs engine-level).
-- [ ] **Gate 4:** atomic comments.
-- [ ] TDD via `git log` (authgen + driver API tests first); full `docs/REVIEW.md` + TESTING layering.
+- [x] **Gate 1:** harness code cohesive; no duplicated renderer; wrapped errors; no globals; token/JWKS handling clean; atomic comments (§3.8).
+- [x] **Gate 2 — edge cases:** baseline run still works unchanged (flag absent); server restart releases DuckDB locks (no "database is locked"); expired/again-minted token; API count mismatch fails the gate loudly; charts-api dir created; profile suffix never collides with baseline files.
+- [x] **Gate 3:** `bench/README.md` + Makefile + rendered caveat match code (which workloads go over the API, the ClickHouse asymmetry, logs engine-level).
+- [x] **Gate 4:** atomic comments.
+- [x] TDD via `git log` (authgen + driver API tests first); full `docs/REVIEW.md` + TESTING layering.
 
 ## 7. Reviewer notes
-_(empty until first review)_
+**2026-07-23 — ALL_OK (prism-reviewer).** Re-ran `make lint`, `make test` (-race), `go test -tags cgo -run TestDriverAPIRBACIntegration ./bench/internal/store/` (PASS, 1.20s), builds, `make tidy` (clean), `git status` clean. TDD order: `test(bench)` → `feat(bench)`. Baseline (`--api` absent): query order and `serverEnv` unchanged; outputs via `ArtifactPaths("","")` match prior paths; mid-phase `ForceSample` triplets between store/CH alternation removed (phase-boundary sampling via `setPhase` retained — minor usage-series drift only, not latency). API profile: `StopServer`/`StartServer` + `closeEngine` release DuckDB locks; integration test covers reader→200, writer→403, other-tenant→404, no-token→401; expired JWT covered in `authgen_test`; COUNT mismatch returns `fmt.Errorf`. Security: RS256 + kid in JWKS; policy grants only `bench-admin=admin` on bench tenant; keys under ephemeral work dir. Accepted: RBAC integration skips under `-race`; `BENCH_FLAGS` unused (mirrors existing `bench`/`BENCH_SCALE`).
 
 ## 8. Orchestrator post-merge-of-harness step (not a dev task)
 - Run `make bench-api`; verify correctness gates pass; commit `bench/results-api.json`, `bench/RESULTS-api.md`, `bench/results-timeseries-api.json`, `bench/charts-api/*.svg`; add a **new** README benchmark subsection embedding the API/RBAC results **beside** the existing baseline (attach, not replace).
