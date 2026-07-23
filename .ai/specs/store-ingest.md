@@ -1,6 +1,6 @@
 # Spec: prism-store — ingest receiver (HTTP + Flight) + tenant isolation + pluggable auth
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-ingest`
 - **Owner phase:** orchestrator → developer
@@ -56,16 +56,16 @@ removed and made configurable. Ported/generalized from `homelab-apps`
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] HTTP ingest accepts a real agent-produced `metrics-raw` window → `204`; rows land in the tenant's `hot_current` (assert via engine `HotRowCount`).
-- [ ] Validation/status codes: unknown tenant `404`; unknown/malformed artifact `404`; body over limit `413` (`MaxBytesReader`); empty body `204` no-op; happy path `204`.
-- [ ] Auth modes covered by tests: `none` (open), `bearer` (missing/wrong `401`, correct `204`, constant-time compare), `trusted-header` (`X-Tenant` mismatch rejected, match ok), `mtls` (no/wrong client cert rejected, CN==tenant ok) — the last using an httptest TLS server with a client cert.
-- [ ] `ROUTE_PREFIX` respected (empty and e.g. `/prism-proxy` both route correctly); no hardcoded prefix.
-- [ ] `/healthz`=`ok`; `/readyz` writability → `200 ready`/`503`.
-- [ ] Flight `DoPut` (when `FLIGHT_ADDR` set) round-trips a window into `hot_current`; unauthenticated Flight rejected when a token is configured; tenant from descriptor validated.
-- [ ] All new config env parsed with the documented defaults; documented in `docs/CONFIG.md` + `docs/STORE.md`.
-- [ ] No homelab-specific string constants in core (grep clean for `prism-proxy`, `traefik`, homelab namespaces).
-- [ ] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
-- [ ] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` still passes; `go build ./cmd/prism-store` passes.
+- [x] HTTP ingest accepts a real agent-produced `metrics-raw` window → `204`; rows land in the tenant's `hot_current` (assert via engine `HotRowCount`).
+- [x] Validation/status codes: unknown tenant `404`; unknown/malformed artifact `404`; body over limit `413` (`MaxBytesReader`); empty body `204` no-op; happy path `204`.
+- [x] Auth modes covered by tests: `none` (open), `bearer` (missing/wrong `401`, correct `204`, constant-time compare), `trusted-header` (`X-Tenant` mismatch rejected, match ok), `mtls` (no/wrong client cert rejected, CN==tenant ok) — the last using an httptest TLS server with a client cert.
+- [x] `ROUTE_PREFIX` respected (empty and e.g. `/prism-proxy` both route correctly); no hardcoded prefix.
+- [x] `/healthz`=`ok`; `/readyz` writability → `200 ready`/`503`.
+- [x] Flight `DoPut` (when `FLIGHT_ADDR` set) round-trips a window into `hot_current`; unauthenticated Flight rejected when a token is configured; tenant from descriptor validated.
+- [x] All new config env parsed with the documented defaults; documented in `docs/CONFIG.md` + `docs/STORE.md`.
+- [x] No homelab-specific string constants in core (grep clean for `prism-proxy`, `traefik`, homelab namespaces).
+- [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
+- [x] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` still passes; `go build ./cmd/prism-store` passes.
 
 ## 6. Mandatory review gates  (reviewer owns)
 

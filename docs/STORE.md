@@ -13,15 +13,77 @@ lands sub-issue by sub-issue; this page describes the target shape.
 
 ## Role
 
-`prism-store` receives HTTP-parquet windows from edge agents, lands them under
-per-tenant partitions, maintains a DuckDB hot catalog plus tiered Parquet
-segments, materializes rollups, and exposes read-only query endpoints. The
-skeleton slice (`#22`) exposes health/readiness only; ingest, engine, and query
-wire in #23–#28.
+`prism-store` receives HTTP-parquet and optional Arrow Flight windows from edge
+agents, lands them into per-tenant DuckDB hot catalogs, maintains tiered Parquet
+segments, materializes rollups, and exposes read-only query endpoints (query
+lands in a later sub-issue).
 
 ---
 
-## On-disk layout (per tenant)
+## Ingest (`internal/store/ingest`)
+
+Write entry point for contract-v1 Parquet windows. Two transports share one
+validation chain and land via `engine.Ingest`.
+
+### HTTP
+
+`POST <ROUTE_PREFIX>/{tenant}/ingest/{artifact}` — raw Parquet body
+(`application/octet-stream`). Empty body → `204` no-op.
+
+### Arrow Flight
+
+When `FLIGHT_ADDR` is set, a Flight server accepts `DoPut` streams. Incoming
+Arrow IPC record batches are encoded to Parquet and ingested the same way as
+HTTP. The `FlightDescriptor` path is `[tenant, artifact, startUnixNano, endUnixNano]`.
+
+### Validation chain (order → status)
+
+1. Auth (see below) → `401` / tenant mismatch → `403`
+2. Unknown/malformed tenant → `404 unknown tenant`
+3. Unknown/malformed artifact → `404 unknown artifact type`
+4. HTTP body over `MAX_BODY_BYTES` → `413 window too large`
+5. Success → `204 No Content` (rows in `hot_current`)
+
+### Auth modes (`AUTH_MODE`)
+
+| Mode | Check | Tenant match |
+|---|---|---|
+| `none` | open | path tenant authoritative |
+| `bearer` | `Authorization: Bearer <INGEST_TOKEN>` | path authoritative |
+| `mtls` | verified TLS client cert | cert CN == path tenant |
+| `trusted-header` | `X-Tenant` header | header == path tenant |
+
+Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
+
+---
+
+## Configuration (environment)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LISTEN_ADDR` | `:8080` | HTTP bind address |
+| `FLIGHT_ADDR` | _(empty)_ | Flight `DoPut` bind address; empty disables Flight |
+| `DATA_DIR` | `/data` | Shared data root for all tenants |
+| `ALLOWED_ARTIFACTS` | `metrics-raw` | Comma-separated ingest artifact types |
+| `MAX_BODY_BYTES` | `268435456` | Max HTTP ingest body (256 MiB) |
+| `INGEST_TOKEN` | _(empty)_ | Static bearer token for `AUTH_MODE=bearer` |
+| `AUTH_MODE` | `none` | `none` \| `bearer` \| `mtls` \| `trusted-header` |
+| `ROUTE_PREFIX` | _(empty)_ | Optional ingest path prefix |
+| `HOT_WINDOW_SECONDS` | _(unset)_ | Hot-window duration in seconds (overrides minutes when set) |
+| `HOT_WINDOW_MINUTES` | `10` | Hot-window duration in minutes when seconds unset |
+| `MaxOpenTenants` | `32` | Bounded LRU of open per-tenant DuckDB handles |
+| `RowGroupSize` | `1000000` | Parquet row-group size for flush, snapshot, and legacy COPY |
+
+Retention, rollup steps, and background tickers are documented when their
+sub-issues merge.
+
+---
+
+## Storage engine (`internal/store/engine`)
+
+Per-tenant embedded DuckDB at `<DATA_DIR>/<tenant>/engine.duckdb`. The engine owns the hot ingest path, hot→L0 flush, near-real-time hot snapshots, a bounded tenant LRU, and a one-time legacy `metrics-raw` importer. Compaction, rollups, and tickers land in #25.
+
+### On-disk layout (per tenant)
 
 All paths are relative to `DATA_DIR` (default `/data`):
 
@@ -41,27 +103,6 @@ Each tenant namespace must satisfy the validators in `internal/store/tenant`
 (`^[a-z0-9][a-z0-9._-]{0,62}$`). Artifact types follow the output-contract
 taxonomy (`metrics-raw` first).
 
----
-
-## Configuration (environment)
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `LISTEN_ADDR` | `:8080` | HTTP bind address |
-| `DATA_DIR` | `/data` | Shared data root for all tenants |
-| `HOT_WINDOW_SECONDS` | _(unset)_ | Hot-window duration in seconds (overrides minutes when set) |
-| `HOT_WINDOW_MINUTES` | `10` | Hot-window duration in minutes when seconds unset |
-| `MaxOpenTenants` | `32` | Bounded LRU of open per-tenant DuckDB handles (config struct; wired in #23) |
-| `RowGroupSize` | `1000000` | Parquet row-group size for flush, snapshot, and legacy COPY (config struct; wired in #23) |
-
-Additional variables (`INGEST_TOKEN`, retention, rollup steps, etc.) are documented when their sub-issues merge.
-
----
-
-## Storage engine (`internal/store/engine`)
-
-Per-tenant embedded DuckDB at `<DATA_DIR>/<tenant>/engine.duckdb`. The engine owns the hot ingest path, hot→L0 flush, near-real-time hot snapshots, a bounded tenant LRU, and a one-time legacy `metrics-raw` importer. HTTP/Flight ingest wiring lands in #23; compaction, rollups, and tickers in #25.
-
 ### Hot catalog
 
 Two tables, created idempotently on first open:
@@ -71,7 +112,7 @@ Two tables, created idempotently on first open:
 
 Schema: `("__name__" VARCHAR, labels VARCHAR, value DOUBLE, timestamp_ms BIGINT, ts TIMESTAMP)`.
 
-**Ingest** streams a contract-v1 parquet window into `hot_current`. Empty bodies are a no-op `(0, nil)`. Non-empty inserts use `ts = clock().UTC()` (proxy ingest time, bound as a SQL parameter — not `timestamp_ms`). The first insert into an empty schedule sets flush at `now + HotWindow` (default 10 minutes).
+**Ingest** streams a contract-v1 parquet window into `hot_current`. Empty bodies are a no-op `(0, nil)`. Non-empty inserts use `ts = clock().UTC()` (ingest time, bound as a SQL parameter — not `timestamp_ms`). The first insert into an empty schedule sets flush at `now + HotWindow` (default 10 minutes).
 
 ### Hot → L0 flush
 
