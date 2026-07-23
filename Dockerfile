@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+RUN go build -trimpath -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${VERSION}" \
     -o /out/prism ./cmd/prism
 
 # --- runtime stage ---------------------------------------------------------

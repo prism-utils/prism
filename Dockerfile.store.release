@@ -1,0 +1,11 @@
+# Release image for prism-store: copies the GoReleaser-built CGO binary onto
+# debian:bookworm-slim. DuckDB links against libstdc++ at runtime; the process
+# runs as uid 472 with /data as the writable data root.
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+ && rm -rf /var/lib/apt/lists/*
+COPY prism-store /usr/local/bin/prism-store
+RUN mkdir -p /data && chown 472:472 /data
+USER 472:472
+ENTRYPOINT ["/usr/local/bin/prism-store"]

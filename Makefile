@@ -7,10 +7,12 @@ BIN_DIR     := bin
 PKG         := github.com/elk-utilities/prism
 CMD         := ./cmd/prism
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS     := -s -w -X main.version=$(VERSION)
+LDFLAGS     := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 GOFLAGS     :=
 FUZZTIME    ?= 30s
 COMPOSE     := docker compose -f deploy/docker-compose.integration.yml
+# Store integration tests link DuckDB (CGO); override the global CGO_ENABLED=0 export.
+INTEGRATION_GO_TEST := CGO_ENABLED=1 go test $(GOFLAGS) -tags integration ./test/integration/...
 
 # Static, CGO-free build so the artifact runs on bare metal and in scratch/distroless.
 export CGO_ENABLED := 0
@@ -61,15 +63,19 @@ fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it 
 		done; \
 	done
 
+.PHONY: store-integration
+store-integration: ## Integration tests without compose (store DuckDB smoke; same packages as integration)
+	$(INTEGRATION_GO_TEST)
+
 .PHONY: integration
-integration: ## Integration layer only: compose up -> tagged tests -> down
+integration: ## Integration layer: compose up -> tagged tests -> down
 	@if [ -z "$$(find test/integration -name '*.go' 2>/dev/null)" ]; then \
 		echo "integration: no tests under test/integration yet — skipping"; \
 	else \
 		command -v docker >/dev/null 2>&1 || { echo "docker required for integration tests"; exit 1; }; \
 		$(COMPOSE) up -d --wait; \
 		trap '$(COMPOSE) down -v' EXIT; \
-		go test $(GOFLAGS) -tags integration ./test/integration/...; \
+		$(INTEGRATION_GO_TEST); \
 	fi
 
 .PHONY: e2e
@@ -91,6 +97,16 @@ golden-update: ## Regenerate golden fixtures (REVIEW the diff before committing)
 .PHONY: docker
 docker: ## Build the container image (tag: prism:$(VERSION))
 	docker build -t prism:$(VERSION) --build-arg VERSION=$(VERSION) .
+
+STORE_DOCKER_CTX := .docker-store-ctx
+
+.PHONY: docker-store
+docker-store: ## Build the store release image (tag: prism-store:$(VERSION))
+	@rm -rf $(STORE_DOCKER_CTX)
+	@mkdir -p $(STORE_DOCKER_CTX)
+	CGO_ENABLED=1 go build $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(STORE_DOCKER_CTX)/prism-store ./cmd/prism-store
+	docker build -f Dockerfile.store.release -t prism-store:$(VERSION) $(STORE_DOCKER_CTX)
+	@rm -rf $(STORE_DOCKER_CTX)
 
 .PHONY: release-check
 release-check: ## Validate .goreleaser.yaml

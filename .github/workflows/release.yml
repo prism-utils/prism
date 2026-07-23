@@ -23,18 +23,37 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
-      - name: build binary for scanning
+      - name: build agent binary for scanning
         run: |
           mkdir -p scanctx
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
-            -o scanctx/prism ./cmd/prism
-      - name: build image for scanning
+            go build -trimpath \
+              -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
+              -o scanctx/prism ./cmd/prism
+      - name: build agent image for scanning
         run: docker build -f Dockerfile.release -t prism:scan scanctx
-      - name: trivy image scan (gate)
+      - name: trivy agent image scan (gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: prism:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+      - name: build store binary for scanning
+        run: |
+          mkdir -p scanctx-store
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+            go build -trimpath \
+              -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
+              -o scanctx-store/prism-store ./cmd/prism-store
+      - name: build store image for scanning
+        run: docker build -f Dockerfile.store.release -t prism-store:scan scanctx-store
+      - name: trivy store image scan (gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: prism-store:scan
           format: table
           exit-code: "1"
           ignore-unfixed: true
@@ -54,6 +73,8 @@ jobs:
           cache: true
       - uses: docker/setup-qemu-action@v3 # arm64 emulation on the amd64 runner
       - uses: docker/setup-buildx-action@v3
+      - name: install arm64 cross toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
       - name: log in to GHCR
         uses: docker/login-action@v3
         with:
