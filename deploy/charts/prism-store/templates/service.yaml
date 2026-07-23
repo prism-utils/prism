@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism-store.fullname" . }}
+  labels:
+    {{- include "prism-store.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "prism-store.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ include "prism-store.publicPort" . }}
+      targetPort: http
+      protocol: TCP
+    {{- if .Values.env.adminListenAddr }}
+    - name: admin
+      port: {{ include "prism-store.adminPort" . }}
+      targetPort: admin
+      protocol: TCP
+    {{- end }}

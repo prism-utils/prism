@@ -1,0 +1,31 @@
+# Example overlay — NOT installed by the base chart.
+# Apply consumer-specific manifests from this directory alongside the chart:
+#
+#   helm upgrade --install prism-store deploy/charts/prism-store \
+#     -f deploy/charts/prism-store/examples/values-overlay.yaml
+#
+#   kubectl apply -f deploy/charts/prism-store/examples/secret.yaml
+#   kubectl apply -f deploy/charts/prism-store/examples/gateway-ingressroute.yaml
+#   kubectl apply -f deploy/charts/prism-store/examples/grafana-datasource.yaml
+
+# Wire tokens from a Secret the chart does not manage.
+secrets:
+  existingSecret: prism-store-credentials
+
+env:
+  authMode: bearer
+  adminListenAddr: ":9090"
+
+# Split-plane: public ingest on 8080, admin/stats/query on 9090.
+# Pair with gateway-ingressroute.yaml (ingest only) and networkPolicy.admin.
+
+networkPolicy:
+  enabled: true
+  ingest:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: prism-edge
+  admin:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring

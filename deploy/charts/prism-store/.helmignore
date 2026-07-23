@@ -1,0 +1,5 @@
+# Patterns to ignore when packaging the chart.
+examples/
+testdata/
+scripts/
+*.md

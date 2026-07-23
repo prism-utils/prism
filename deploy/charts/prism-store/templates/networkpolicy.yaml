@@ -1,0 +1,33 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "prism-store.fullname" . }}
+  labels:
+    {{- include "prism-store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "prism-store.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ include "prism-store.publicPort" . }}
+      from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingest.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.ingest.podSelector | nindent 12 }}
+    {{- if .Values.env.adminListenAddr }}
+    - ports:
+        - protocol: TCP
+          port: {{ include "prism-store.adminPort" . }}
+      from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.admin.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.admin.podSelector | nindent 12 }}
+    {{- end }}
+{{- end }}

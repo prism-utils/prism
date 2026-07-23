@@ -337,6 +337,48 @@ Graceful shutdown: `SIGINT` / `SIGTERM` → `Shutdown` with a 10s timeout.
 
 ---
 
+## Sizing
+
+Measured on prod node `sunset` (`metrics-raw`, zstd Parquet). Use these ratios — not
+a flat “10 MB per 5k/s” rule (that understates DuckDB hot-window memory by ~100×).
+
+| Signal | Measurement |
+|--------|-------------|
+| Idle | ~0.0004 cores, ~8 MiB RSS |
+| Ingest @ 2,000 samples/s (1-min hot window) | ~0.026 cores, ~341 MiB RSS |
+| Compaction (per L-merge) | ~3.5 CPU-seconds burst |
+| Compacted size | ~95 bytes/sample |
+
+**CPU (ingest):** ≈ **0.013 cores per 1,000 samples/s** sustained. Merges are bursty
+(≤ ~1 core for a few seconds) — size the *limit*, not the request, for merge headroom.
+
+**Memory:** dominated by the hot window + DuckDB arena:
+
+`mem ≈ 128 MiB + (ingest_rate × HOT_WINDOW_seconds × ~0.4 KiB/row) × ~1.5`
+
+Example: 5,000 samples/s @ 5-min hot window ≈ 128 MiB + 5000×300×0.4 KiB×1.5 ≈ **~1 GiB**.
+
+**Storage:** ≈ `95 bytes/sample × rate × retention_days × 86,400 × ~1.3` (rollups +
+overhead). Example: 1,000 samples/s × 15 d ≈ **~160 GiB**.
+
+**Levers:** shrink `HOT_WINDOW` at high ingest rates; cap `MAX_SEGMENT_BYTES` (512 MiB–1 GiB
+recommended at scale, down from the 2 GiB code default) to bound transient merge RAM.
+
+**Recommended Helm defaults** (central pod aggregate rate; chart default = ≤1k/s row):
+
+| Aggregate ingest | cpu req | cpu limit | mem req | mem limit | HOT_WINDOW | MAX_SEGMENT_BYTES | PVC (15d) |
+|------------------|---------|-----------|---------|-----------|------------|-------------------|-----------|
+| ≤ 1k samples/s | 250m | 2 | 512Mi | 2Gi | 10m | 1Gi | 32Gi |
+| 1–5k/s | 500m | 3 | 1Gi | 3Gi | 5m | 1Gi | 128Gi |
+| 5–15k/s | 1 | 4 | 2Gi | 6Gi | 3m | 512Mi | 512Gi |
+| 15–40k/s | 2 | 6 | 4Gi | 10Gi | 2m | 512Mi | 1Ti+ |
+
+Chart: `deploy/charts/prism-store/` (`values.yaml` comments mirror this table). Consumer
+gateway/secret/Grafana overlays live under `deploy/charts/prism-store/examples/` — not
+installed by the base chart.
+
+---
+
 ## Related docs
 
 - [`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md) — artifact taxonomy and Parquet schemas.

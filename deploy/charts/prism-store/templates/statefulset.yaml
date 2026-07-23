@@ -1,0 +1,156 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "prism-store.fullname" . }}
+  labels:
+    {{- include "prism-store.labels" . | nindent 4 }}
+spec:
+  # DuckDB allows one writer per engine file. Keep replicas at 1 so a rollout never
+  # schedules two pods against the same ReadWriteOnce /data volume.
+  replicas: {{ .Values.replicaCount }}
+  serviceName: {{ include "prism-store.fullname" . }}
+  selector:
+    matchLabels:
+      {{- include "prism-store.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "prism-store.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "prism-store.serviceAccountName" . }}
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: prism-store
+          image: {{ include "prism-store.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 472
+            runAsGroup: 472
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: {{ include "prism-store.publicPort" . }}
+              protocol: TCP
+            {{- if .Values.env.adminListenAddr }}
+            - name: admin
+              containerPort: {{ include "prism-store.adminPort" . }}
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: LISTEN_ADDR
+              value: {{ .Values.env.listenAddr | quote }}
+            {{- if .Values.env.adminListenAddr }}
+            - name: ADMIN_LISTEN_ADDR
+              value: {{ .Values.env.adminListenAddr | quote }}
+            {{- end }}
+            {{- if .Values.env.flightAddr }}
+            - name: FLIGHT_ADDR
+              value: {{ .Values.env.flightAddr | quote }}
+            {{- end }}
+            - name: DATA_DIR
+              value: {{ .Values.env.dataDir | quote }}
+            - name: ALLOWED_ARTIFACTS
+              value: {{ .Values.env.allowedArtifacts | quote }}
+            - name: MAX_BODY_BYTES
+              value: {{ .Values.env.maxBodyBytes | quote }}
+            - name: AUTH_MODE
+              value: {{ .Values.env.authMode | quote }}
+            {{- if .Values.env.routePrefix }}
+            - name: ROUTE_PREFIX
+              value: {{ .Values.env.routePrefix | quote }}
+            {{- end }}
+            {{- if .Values.env.hotWindowSeconds }}
+            - name: HOT_WINDOW_SECONDS
+              value: {{ .Values.env.hotWindowSeconds | quote }}
+            {{- else }}
+            - name: HOT_WINDOW_MINUTES
+              value: {{ .Values.env.hotWindowMinutes | quote }}
+            {{- end }}
+            - name: SEGMENTS_PER_TIER
+              value: {{ .Values.env.segmentsPerTier | quote }}
+            - name: MAX_SEGMENT_BYTES
+              value: {{ .Values.env.maxSegmentBytes | quote }}
+            - name: RETENTION_DAYS
+              value: {{ .Values.env.retentionDays | quote }}
+            - name: ROLLUP_STEPS
+              value: {{ .Values.env.rollupSteps | quote }}
+            - name: MAX_TIER
+              value: {{ .Values.env.maxTier | quote }}
+            - name: HOT_SNAPSHOT_SECONDS
+              value: {{ .Values.env.hotSnapshotSeconds | quote }}
+            - name: FLUSH_TICK_SECONDS
+              value: {{ .Values.env.flushTickSeconds | quote }}
+            - name: MERGE_TICK_SECONDS
+              value: {{ .Values.env.mergeTickSeconds | quote }}
+            {{- if .Values.env.retentionTickSeconds }}
+            - name: RETENTION_TICK_SECONDS
+              value: {{ .Values.env.retentionTickSeconds | quote }}
+            {{- else }}
+            - name: RETENTION_TICK_HOURS
+              value: {{ .Values.env.retentionTickHours | quote }}
+            {{- end }}
+            {{- if .Values.secrets.existingSecret }}
+            - name: INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | quote }}
+                  key: {{ .Values.secrets.ingestTokenKey | quote }}
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | quote }}
+                  key: {{ .Values.secrets.adminTokenKey | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.env.dataDir }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if not .Values.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "prism-store.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}
+  {{- end }}
