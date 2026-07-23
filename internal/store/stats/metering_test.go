@@ -45,6 +45,43 @@ func TestCompactionCpuSecondsAccumulatesWithoutDoubleCount(t *testing.T) {
 	}
 }
 
+func TestAddCompactionCPUSecondsNonPositiveNoWrite(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, testTenant, ".metering.json")
+	for _, sec := range []float64{0, -1, -0.5} {
+		if err := AddCompactionCPUSeconds(root, testTenant, sec); err != nil {
+			t.Fatalf("add %v: %v", sec, err)
+		}
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf(".metering.json must stay absent when adds are non-positive")
+	}
+	got, err := CompactionCPUSeconds(root, testTenant)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("non-positive adds must not increment counter, got %v", got)
+	}
+}
+
+func TestAddCompactionCPUSecondsZeroAfterPositiveUnchanged(t *testing.T) {
+	root := t.TempDir()
+	if err := AddCompactionCPUSeconds(root, testTenant, 1.25); err != nil {
+		t.Fatalf("add positive: %v", err)
+	}
+	if err := AddCompactionCPUSeconds(root, testTenant, 0); err != nil {
+		t.Fatalf("add zero: %v", err)
+	}
+	got, err := CompactionCPUSeconds(root, testTenant)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got != 1.25 {
+		t.Fatalf("zero add must not change cumulative counter, got %v", got)
+	}
+}
+
 func TestTenantOnDiskBytesIgnoresLegacyMetricsRaw(t *testing.T) {
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, testTenant)
