@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/elk-utilities/prism/internal/store/engine"
+	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
 
 // IngestRoutePattern returns the ServeMux pattern for the ingest POST route.
@@ -37,7 +38,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		}
 
 		if !ValidateTenant(ns) {
-			http.Error(w, "unknown tenant", http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
 		if !ValidateArtifact(artifact, cfg.AllowedArtifacts) {

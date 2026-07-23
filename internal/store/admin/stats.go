@@ -3,6 +3,7 @@ package admin
 import (
 	"os"
 
+	"github.com/elk-utilities/prism/internal/store/authz"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	"github.com/elk-utilities/prism/internal/store/stats"
 )
@@ -84,4 +85,39 @@ func BuildStatsResponse(cfg *Config, eng *engine.Engine, ns string) StatsRespons
 		}
 	}
 	return resp
+}
+
+// BuildStatsResponseScoped assembles /stats over an explicit tenant scope.
+func BuildStatsResponseScoped(cfg *Config, eng *engine.Engine, scope authz.TenantScope) StatsResponse {
+	if scope.All {
+		return BuildStatsResponse(cfg, eng, "")
+	}
+	resp := StatsResponse{Artifacts: make(map[string]ArtifactStats, len(cfg.AllowedArtifacts))}
+	for _, artifact := range cfg.AllowedArtifacts {
+		var st ArtifactStats
+		for _, ns := range scope.Tenants {
+			t := CollectEngineStats(cfg.DataDir, ns, eng)
+			st.Windows += t.Windows
+			if t.LatestUnixNanos > st.LatestUnixNanos {
+				st.LatestUnixNanos = t.LatestUnixNanos
+			}
+		}
+		_ = artifact
+		resp.Artifacts[artifact] = st
+		resp.TotalWindows += st.Windows
+	}
+	return resp
+}
+
+// CollectEngineStatsForTenants aggregates window counts for the given tenant names.
+func CollectEngineStatsForTenants(dataDir string, eng *engine.Engine, tenants []string) ArtifactStats {
+	var agg ArtifactStats
+	for _, ns := range tenants {
+		st := CollectEngineStats(dataDir, ns, eng)
+		agg.Windows += st.Windows
+		if st.LatestUnixNanos > agg.LatestUnixNanos {
+			agg.LatestUnixNanos = st.LatestUnixNanos
+		}
+	}
+	return agg
 }

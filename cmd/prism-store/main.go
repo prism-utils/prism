@@ -22,6 +22,11 @@
 //     Queries for other tenants return 404 before the engine runs.
 //   - cluster — stateless query coordinator; CLUSTER_CLIENTS maps tenant=url pairs.
 //     Forwards GET /{ns}/query to the owning client; no engine, ingest, or jobs.
+//
+// RBAC (optional): set AUTHZ_POLICY_FILE to a deny-by-default YAML policy path.
+// When set, JWT/OIDC auth (OIDC_ISSUER, OIDC_AUDIENCE, OIDC_JWKS_*) is required
+// and supersedes ADMIN_TOKEN/INGEST_TOKEN on HTTP query/ingest/admin routes.
+// AUTH_MODE remains for RBAC-off and for Arrow Flight. See docs/STORE.md.
 package main
 
 import (
@@ -104,6 +109,7 @@ type serverConfig struct {
 	mode              string
 	clientTenants     string
 	clusterClients    string
+	rbac              *rbacConfig
 }
 
 func loadConfig() serverConfig {
@@ -135,6 +141,7 @@ func loadConfig() serverConfig {
 		clientTenants:     os.Getenv("CLIENT_TENANTS"),
 		clusterClients:    os.Getenv("CLUSTER_CLIENTS"),
 	}
+	c.rbac = loadRBACConfig()
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			c.maxBodyBytes = n
@@ -225,6 +232,7 @@ func (c *serverConfig) adminConfig() *admin.Config {
 		AllowedArtifacts: c.allowedArtifacts,
 		AdminToken:       c.adminToken,
 		RoutePrefix:      c.routePrefix,
+		RBACEnabled:      c.rbac != nil,
 	}
 }
 
@@ -251,7 +259,7 @@ func handleReadyz(dataDir string) http.HandlerFunc {
 	}
 }
 
-func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane, ownedTenants map[string]struct{}) *http.ServeMux {
+func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane, ownedTenants map[string]struct{}, rbac *rbacStack) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(cfg.dataDir))
@@ -259,7 +267,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		return mux
 	}
 
-	mode, err := storeingest.ParseAuthMode(cfg.authMode)
+	mode, err := httpIngestAuthMode(cfg, rbac)
 	if err != nil {
 		logger.Error("invalid auth mode", "auth_mode", cfg.authMode, "err", err)
 		return mux
@@ -281,16 +289,24 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 
 	if serveIngest {
 		ingestCfg := cfg.ingestConfig(mode)
-		mux.Handle(storeingest.IngestRoutePattern(cfg.routePrefix), storeingest.Handler(&ingestCfg, eng, logger))
+		ingestHandler := storeingest.Handler(&ingestCfg, eng, logger)
+		if rbac != nil {
+			ingestHandler = rbac.wrapIngest(ingestHandler)
+		}
+		mux.Handle(storeingest.IngestRoutePattern(cfg.routePrefix), ingestHandler)
 	}
 	if serveAdmin {
-		mux.Handle(admin.EnsureRoutePattern(), admin.WithBearerAuth(adminCfg.AdminToken, admin.EnsureHandler(adminCfg, eng, logger)))
-		mux.Handle(admin.StatsRoutePattern(), admin.WithBearerAuth(adminCfg.AdminToken, admin.StatsHandler(adminCfg, eng)))
+		ensureHandler := admin.EnsureHandler(adminCfg, eng, logger)
+		mux.Handle(admin.EnsureRoutePattern(), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapEnsure, ensureHandler))
+
+		statsHandler := admin.StatsHandler(adminCfg, eng)
+		mux.Handle(admin.StatsRoutePattern(), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapStats, statsHandler))
+
 		queryHandler := query.Handler(queryCfg, eng, logger)
 		if ownedTenants != nil {
 			queryHandler = cluster.OwnedTenantGuard(ownedTenants, queryHandler)
 		}
-		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), admin.WithBearerAuth(adminCfg.AdminToken, queryHandler))
+		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, queryHandler))
 	}
 	return mux
 }
@@ -343,33 +359,44 @@ func defaultBackgroundLoopStart(ctx context.Context, runner *lifecycle.Runner, c
 var startBackgroundLoop backgroundLoopStartFunc = defaultBackgroundLoopStart
 
 func runStore(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
+	rbac, err := buildRBACStack(ctx, cfg.rbac, logger)
+	if err != nil {
+		return err
+	}
+	if rbac != nil {
+		defer rbac.close()
+	}
 	mode, err := cluster.ParseMode(cfg.mode)
 	if err != nil {
 		return fmt.Errorf("mode: %w", err)
 	}
 	switch mode {
 	case cluster.ModeStandalone:
-		return runServe(ctx, cfg, logger, nil)
+		return runServe(ctx, cfg, logger, nil, rbac)
 	case cluster.ModeClient:
 		owned, parseErr := cluster.ParseOwnedTenants(cfg.clientTenants)
 		if parseErr != nil {
 			return parseErr
 		}
 		logger.Info("prism-store client mode", "owned_tenant_count", len(owned))
-		return runServe(ctx, cfg, logger, owned)
+		return runServe(ctx, cfg, logger, owned, rbac)
 	case cluster.ModeCluster:
 		clients, parseErr := cluster.ParseClients(cfg.clusterClients)
 		if parseErr != nil {
 			return parseErr
 		}
-		return runCluster(ctx, cfg, clients, logger)
+		return runCluster(ctx, cfg, clients, logger, rbac)
 	default:
 		return fmt.Errorf("mode: %w", cluster.ErrInvalidMode)
 	}
 }
 
-func runCluster(ctx context.Context, cfg *serverConfig, clients map[string]*url.URL, logger *slog.Logger) error {
-	mux := cluster.NewServeMux(clients, cfg.routePrefix)
+func runCluster(ctx context.Context, cfg *serverConfig, clients map[string]*url.URL, logger *slog.Logger, rbac *rbacStack) error {
+	var wrapQuery func(http.Handler) http.Handler
+	if rbac != nil {
+		wrapQuery = rbac.wrapQuery
+	}
+	mux := cluster.NewServeMux(clients, cfg.routePrefix, wrapQuery)
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
 		Handler:           mux,
@@ -408,8 +435,12 @@ func runCluster(ctx context.Context, cfg *serverConfig, clients map[string]*url.
 	return nil
 }
 
-func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, ownedTenants map[string]struct{}) error {
-	mode, err := storeingest.ParseAuthMode(cfg.authMode)
+func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, ownedTenants map[string]struct{}, rbac *rbacStack) error {
+	if err := validateRBACFlight(cfg, rbac); err != nil {
+		return err
+	}
+
+	flightMode, err := flightIngestAuthMode(cfg)
 	if err != nil {
 		return fmt.Errorf("auth mode: %w", err)
 	}
@@ -439,11 +470,11 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		logger.Info("prism-store background jobs disabled")
 	}
 
-	ingestCfg := cfg.ingestConfig(mode)
+	flightIngestCfg := cfg.ingestConfig(flightMode)
 
 	var flightDone chan error
 	if cfg.flightAddr != "" {
-		flightSrv, err := storeingest.NewFlightServer(&ingestCfg, eng, logger)
+		flightSrv, err := storeingest.NewFlightServer(&flightIngestCfg, eng, logger)
 		if err != nil {
 			return fmt.Errorf("flight server: %w", err)
 		}
@@ -457,7 +488,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
-		Handler:           newServeMux(cfg, eng, logger, publicPlane(cfg), ownedTenants),
+		Handler:           newServeMux(cfg, eng, logger, publicPlane(cfg), ownedTenants, rbac),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
@@ -465,7 +496,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	if cfg.adminListenAddr != "" {
 		adminSrv = &http.Server{
 			Addr:              cfg.adminListenAddr,
-			Handler:           newServeMux(cfg, eng, logger, planeAdmin, ownedTenants),
+			Handler:           newServeMux(cfg, eng, logger, planeAdmin, ownedTenants, rbac),
 			ReadHeaderTimeout: readHeaderTimeout,
 		}
 	}

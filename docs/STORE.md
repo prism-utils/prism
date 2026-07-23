@@ -42,9 +42,109 @@ Cluster mode serves `/healthz`, `/readyz`, and query routing only on
 `LISTEN_ADDR`. It forwards the inbound `Authorization` header and preserves
 the full path + query string via `httputil.ReverseProxy`.
 
-**Future / out of scope:** RBAC; routing ingest, admin, `/stats`, or `/ensure`
+When **`AUTHZ_POLICY_FILE`** is set, RBAC is enforced on HTTP data and admin
+routes in **all** modes (standalone, client, cluster coordinator, and client
+leaves). See [RBAC](#rbac-jwtoidc--per-tenant-roles) below.
+
+**Future / out of scope:** routing ingest, admin, `/stats`, or `/ensure`
 through the coordinator; scatter-gather across clients; dynamic service
 discovery; per-client mTLS; health-aware routing and failover.
+
+---
+
+## RBAC (JWT/OIDC + per-tenant roles)
+
+Threat model: **OWASP BOLA** (cross-tenant access) and privilege escalation.
+Identity is a verified **JWT** (OIDC/JWKS); authorization is a **deny-by-default
+YAML policy** with fixed roles, hot-reloaded from a mounted file.
+
+### Precedence vs `AUTH_MODE`
+
+When **`AUTHZ_POLICY_FILE`** is set, RBAC is **authoritative** on HTTP query,
+ingest, ensure, and stats routes — static `ADMIN_TOKEN` / `INGEST_TOKEN` gates
+are not used for those routes. When the policy file is unset, behavior is
+unchanged (legacy `AUTH_MODE` + tokens).
+
+**Arrow Flight is HTTP-only for RBAC.** JWT/RBAC middleware does not protect
+Flight `DoPut`. When RBAC is enabled and `FLIGHT_ADDR` is set, startup **fails**
+if `AUTH_MODE=none` — operators must configure a non-`none` Flight auth mode
+(`bearer`, `mtls`, or `trusted-header`) or disable Flight. HTTP ingest under
+RBAC uses JWT; Flight keeps the operator-configured `AUTH_MODE` independently.
+
+### Identity (`internal/store/auth`)
+
+- Bearer JWT in `Authorization: Bearer <token>`.
+- Signature verified against JWKS from OIDC discovery (`OIDC_ISSUER`), static
+  file (`OIDC_JWKS_FILE`), or URL (`OIDC_JWKS_URL`).
+- Validates `iss`, `aud` (`OIDC_AUDIENCE`, comma-separated), `exp`/`nbf`/`iat`.
+- Principal = non-empty `sub`. Client identity headers (`X-Tenant`, `X-User`, …)
+  are **ignored**.
+
+### Authorization (`internal/store/authz`)
+
+Fixed roles:
+
+| Role | Actions |
+|---|---|
+| `reader` | `query` |
+| `writer` | `ingest` |
+| `admin` | `query`, `ingest`, `ensure`, `stats` |
+
+Policy file (YAML):
+
+```yaml
+bindings:
+  - subject: "system:serviceaccount:teamA:ingest"
+    role: writer
+    tenants: ["team-a"]
+  - subject: "alice@corp"
+    role: reader
+    tenants: ["team-a", "team-b"]
+  - subject: "platform-admin"
+    role: admin
+    tenants: ["*"]
+```
+
+- `tenants: ["*"]` grants the role on all tenants (operator blast radius).
+- Invalid policy at **startup** → process exit. Invalid policy on **reload** →
+  keep last-good policy and log (never fail-open).
+- Hot reload: poll file mtime every `AUTHZ_RELOAD_SECONDS` (default 15s).
+
+### HTTP status semantics (anti-enumeration)
+
+| Condition | Status |
+|---|---|
+| Missing / invalid JWT | `401 unauthorized` |
+| Authenticated but not authorized for tenant | `404 unknown tenant` (same body as unknown tenant) |
+| Authorized for tenant but role lacks action | `403 forbidden` |
+
+### `/stats` scoping
+
+When RBAC is on: `GET /stats?ns=X` requires `stats` on `X` (else `404`).
+`GET /stats` without `ns` aggregates only tenants the principal has `stats`
+on (`*`-admin sees all; scoped admin sees its tenants; non-admin → `403`).
+
+### Cluster defense-in-depth
+
+- **Coordinator:** authenticate + authorize **before** routing; denied tenants
+  return `401`/`403`/`404` with **no upstream contact**; forward the original JWT.
+- **Client:** re-verify JWT and re-authorize in addition to `OwnedTenantGuard`.
+
+### Kubernetes wiring
+
+1. Mount a **ConfigMap** (or Vault Agent-rendered file) at e.g.
+   `/etc/prism/rbac/policy.yaml` and set `AUTHZ_POLICY_FILE`.
+2. Use a **projected ServiceAccount token** with audience bound to
+   `OIDC_AUDIENCE` (matches your IdP / API server issuer config).
+3. Set `OIDC_ISSUER` (or `OIDC_JWKS_URL` / `OIDC_JWKS_FILE`) and
+   `OIDC_AUDIENCE`. The chart exposes optional values (default off).
+
+### Vault wiring
+
+1. Vault Agent renders the policy YAML and a short-lived JWT into a shared
+   `emptyDir` mount.
+2. Point `AUTHZ_POLICY_FILE` and configure OIDC env to trust Vault's JWKS /
+   issuer for the rendered token.
 
 ---
 
@@ -63,6 +163,11 @@ validation chain and land via `engine.Ingest`.
 When `FLIGHT_ADDR` is set, a Flight server accepts `DoPut` streams. Incoming
 Arrow IPC record batches are encoded to Parquet and ingested the same way as
 HTTP. The `FlightDescriptor` path is `[tenant, artifact, startUnixNano, endUnixNano]`.
+
+Flight is **not** covered by JWT/RBAC. When RBAC is enabled (`AUTHZ_POLICY_FILE`
+set) and Flight is enabled, startup fails if `AUTH_MODE=none` — configure
+`bearer`, `mtls`, or `trusted-header` for Flight, or disable `FLIGHT_ADDR`.
+HTTP ingest under RBAC uses JWT; Flight keeps the operator `AUTH_MODE` unchanged.
 
 ### Validation chain (order → status)
 

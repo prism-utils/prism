@@ -42,7 +42,7 @@ func TestRouterRoutesTenantToOwningClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mux := cluster.NewServeMux(clients, "")
+	mux := cluster.NewServeMux(clients, "", nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -103,7 +103,7 @@ func TestRouterTenantBIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mux := cluster.NewServeMux(clients, "")
+	mux := cluster.NewServeMux(clients, "", nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -135,7 +135,7 @@ func TestRouterUnknownTenant404NoUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mux := cluster.NewServeMux(clients, "")
+	mux := cluster.NewServeMux(clients, "", nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -167,7 +167,7 @@ func TestRouterInvalidTenant404NoUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mux := cluster.NewServeMux(clients, "")
+	mux := cluster.NewServeMux(clients, "", nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -191,7 +191,7 @@ func TestRouterUpstreamFailure502(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mux := cluster.NewServeMux(clients, "")
+	mux := cluster.NewServeMux(clients, "", nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -221,7 +221,7 @@ func TestRouterRoutePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mux := cluster.NewServeMux(clients, "/api")
+	mux := cluster.NewServeMux(clients, "/api", nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -258,7 +258,7 @@ func TestRouterHealthEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mux := cluster.NewServeMux(clients, "")
+	mux := cluster.NewServeMux(clients, "", nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 

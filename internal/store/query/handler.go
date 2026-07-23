@@ -12,6 +12,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
 
 // Config holds query HTTP settings.
@@ -37,7 +38,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.PathValue("ns")
 		if !storeingest.ValidateTenant(ns) {
-			http.Error(w, "unknown tenant", http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
 

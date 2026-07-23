@@ -10,6 +10,7 @@ import (
 
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/query"
+	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
 
 const (
@@ -34,11 +35,15 @@ func NewRouter(clients map[string]*url.URL) *Router {
 }
 
 // NewServeMux registers health endpoints and the query route for cluster mode.
-func NewServeMux(clients map[string]*url.URL, routePrefix string) *http.ServeMux {
+func NewServeMux(clients map[string]*url.URL, routePrefix string, wrapQuery func(http.Handler) http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz)
-	mux.Handle(query.QueryRoutePattern(routePrefix), NewRouter(clients))
+	q := http.Handler(NewRouter(clients))
+	if wrapQuery != nil {
+		q = wrapQuery(q)
+	}
+	mux.Handle(query.QueryRoutePattern(routePrefix), q)
 	return mux
 }
 
@@ -56,12 +61,12 @@ func handleReadyz(w http.ResponseWriter, _ *http.Request) {
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ns := req.PathValue("ns")
 	if !storeingest.ValidateTenant(ns) {
-		http.Error(w, "unknown tenant", http.StatusNotFound)
+		http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 		return
 	}
 	target, ok := r.clients[ns]
 	if !ok {
-		http.Error(w, "unknown tenant", http.StatusNotFound)
+		http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 		return
 	}
 	r.proxyFor(target).ServeHTTP(w, req)

@@ -631,3 +631,22 @@ forwarding (Decision Protocol in `store-mode-cluster` spec).
 **Consequences:** `internal/store/cluster` is a leaf package with no engine
 import; cluster-mode `prism-store` opens no `DATA_DIR` catalog. Ingest and
 admin remain on client/standalone nodes only until a later federation slice.
+
+### RBAC — JWT/OIDC identity + per-tenant roles (2026-07)
+
+**Decision:** optional HTTP RBAC enabled by `AUTHZ_POLICY_FILE`: JWT verified
+against OIDC/JWKS (`internal/store/auth`); deny-by-default YAML policy with
+fixed reader/writer/admin roles and per-tenant bindings (`internal/store/authz`);
+404 for unauthorized tenants (anti-enumeration); enforce at cluster coordinator
+**and** client (defense-in-depth); forward the original JWT, trust no identity
+header.
+
+**References:** Kubernetes RBAC deny-by-default model —
+https://kubernetes.io/docs/reference/access-authn-authz/rbac/ ; OWASP API1:2023
+BOLA — https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/ ;
+Kubernetes projected SA tokens (OIDC JWT, audience-bound) —
+https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/ .
+
+**Consequences:** RBAC deps (`go-oidc`, YAML) live only under `internal/store`
+and `cmd/prism-store`; `cmd/prism` import graph stays free of them. Flight ingest
+keeps `AUTH_MODE`. Policy is read-only (mounted file); no API mutates bindings.

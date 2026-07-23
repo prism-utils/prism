@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/elk-utilities/prism/internal/store/authz"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	"github.com/elk-utilities/prism/internal/store/seed"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
@@ -25,7 +26,7 @@ func EnsureHandler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Ha
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.PathValue("ns")
 		if !storetenant.TenantAllowed(ns) {
-			http.Error(w, "unknown tenant", http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
 		if _, err := eng.DB(ns); err != nil {
@@ -52,10 +53,24 @@ func StatsHandler(cfg *Config, eng *engine.Engine) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.URL.Query().Get("ns")
 		if ns != "" && !storetenant.TenantAllowed(ns) {
-			http.Error(w, "unknown tenant", http.StatusNotFound)
+			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
-		resp := BuildStatsResponse(cfg, eng, ns)
+		var resp StatsResponse
+		if cfg.RBACEnabled {
+			scope, ok := authz.StatsScopeFromContext(r.Context())
+			if !ok {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if ns != "" {
+				resp = BuildStatsResponse(cfg, eng, ns)
+			} else {
+				resp = BuildStatsResponseScoped(cfg, eng, scope)
+			}
+		} else {
+			resp = BuildStatsResponse(cfg, eng, ns)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(resp)
