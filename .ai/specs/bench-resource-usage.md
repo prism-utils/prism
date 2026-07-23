@@ -1,6 +1,6 @@
 # Spec: benchmark — resource-usage measurement (CPU / memory / disk I/O)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/bench-resource-usage`
 - **Owner phase:** orchestrator → developer
@@ -81,6 +81,10 @@ sampling for the embedded engine).
 **2026-07-23 — READY (changes requested on Gates 2 & 3).** Implementation is sound and CI-green; attribution wiring is correct. Blockers are missing edge-case unit tests and incomplete Docker Desktop I/O caveat docs.
 
 **2026-07-23 — developer fix pass:** Added Docker CLI fallback + `aggregateProcSamples` edge-case tests; Docker Desktop blkio-zero caveat in `bench/README.md` and root README; re-ran `make bench` at HEAD for fresh `git_commit` metadata.
+
+**2026-07-23 — re-review (Gate 2 pass, Gate 3 open):** Edge-case tests verified (`docker_fallback_test.go`, `proc_aggregate_test.go`); `make lint`/`make test -race` green; gopsutil still bench-only. Blocker: `ac85088` updated `bench/results.json` + `bench/RESULTS.md` but left root `README.md` resource rows stale; working tree has the sync but `git status` is dirty. Commit README sync (+ fix logs-LIKE interpretation p50 prose) for ALL_OK.
+
+**2026-07-23 — ALL_OK.** Gate 3 re-verified after `a984160`: root `README.md` resource table matches `results.json`/`RESULTS.md` (spot-checked ingest/count/aggregation/logs-LIKE CPU+RSS rows); interpretation prose in README and `RESULTS.md` matches latency tables (aggregation p50 6.2 vs 8.2; logs LIKE 16.1 vs 18.7); `make lint` green; `git status` clean except this spec file. All §6 gates pass — ready for orchestrator merge.
 
 ### Commands (reviewer re-ran)
 
