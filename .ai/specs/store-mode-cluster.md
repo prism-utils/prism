@@ -1,6 +1,6 @@
 # Spec: prism-store — deployment `MODE` (standalone / client / cluster) with tenant-routed query federation
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-mode-cluster`
 - **Owner phase:** orchestrator → developer
@@ -84,13 +84,13 @@ build on.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** new package cohesive, handlers behind interfaces, no globals, ctx-bound server lifecycle, wrapped errors; `ReverseProxy` uses `Rewrite` (not deprecated `Director`) with a bounded `Transport`; comments self-contained.
-- [ ] **Gate 2 — Edge cases:** unknown tenant (404, no upstream hit); client map with one vs many tenants; two tenants → same client URL; malformed `CLUSTER_CLIENTS`/empty in cluster mode → clear startup error; upstream down → 502 (not a hang/panic); `ROUTE_PREFIX` respected in the router path; client-mode guard rejects non-owned ns before engine; invalid `MODE` → startup error; cluster-mode server has no data dir/engine and still shuts down cleanly.
-- [ ] **Gate 3 — Docs/comments match code:** env names/defaults, the three roles, and the isolation guarantee match the code; the future/out-of-scope list is accurate.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] **Isolation audit (critical):** prove by test that a tenant's query can never be routed to, or return data from, another tenant's client; unknown/unmapped tenants are refused, not defaulted; the client-side guard is a genuine second layer.
-- [ ] Full `docs/REVIEW.md` checklist; TESTING.md layering (parser unit tests + httptest router/guard tests; no external network in tests); TDD verified via `git log` (test-first).
+- [x] **Gate 1 — Guidelines:** new package cohesive, handlers behind interfaces, no globals, ctx-bound server lifecycle, wrapped errors; `ReverseProxy` uses `Rewrite` (not deprecated `Director`) with a bounded `Transport`; comments self-contained.
+- [x] **Gate 2 — Edge cases:** unknown tenant (404, no upstream hit); client map with one vs many tenants; two tenants → same client URL; malformed `CLUSTER_CLIENTS`/empty in cluster mode → clear startup error; upstream down → 502 (not a hang/panic); `ROUTE_PREFIX` respected in the router path; client-mode guard rejects non-owned ns before engine; invalid `MODE` → startup error; cluster-mode server has no data dir/engine and still shuts down cleanly.
+- [x] **Gate 3 — Docs/comments match code:** env names/defaults, the three roles, and the isolation guarantee match the code; the future/out-of-scope list is accurate.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] **Isolation audit (critical):** prove by test that a tenant's query can never be routed to, or return data from, another tenant's client; unknown/unmapped tenants are refused, not defaulted; the client-side guard is a genuine second layer.
+- [x] Full `docs/REVIEW.md` checklist; TESTING.md layering (parser unit tests + httptest router/guard tests; no external network in tests); TDD verified via `git log` (test-first).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**2026-07-23 — APPROVE.** Re-ran `make lint` (0 issues), `make test -race` (all green), builds, and `go mod tidy` (clean). TDD order confirmed (`3c04a1a` test → `964cb2b` feat). Isolation proven by router/guard/integration tests; cluster mode has no data plane; docs match code.
