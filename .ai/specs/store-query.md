@@ -1,6 +1,6 @@
 # Spec: prism-store — query API + Grafana DuckDB view SQL
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-query`
 - **Owner phase:** orchestrator → developer
@@ -75,11 +75,28 @@ that emits the Grafana DuckDB datasource view SQL so any consumer can wire
 ## 6. Mandatory review gates  (reviewer owns)
 
 - [x] **Gate 1 — Guidelines:** builder is leaf/pure (glob + string build); handler thin, slog at edge; query executes via `WithRead` (no raw unsynchronized `DB()` read in the concurrent path); errors wrapped; bound params for ts; no globals.
-- [ ] **Gate 2 — Edge cases:** empty tenant (no tiers) → hot-only; absent rollup dir; range with no data → empty rows (not error); invalid RFC3339; step override vs auto; tenant-path traversal rejected; concurrent query+flush under `-race`.
-- [ ] **Gate 3 — Docs/comments match code:** STORE.md query section + CONFIG.md flag match; view-SQL helper documented; no forward references.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol; the path-formatting comment is self-contained.
+- [x] **Gate 2 — Edge cases:** empty tenant (no tiers) → hot-only; absent rollup dir; range with no data → empty rows (not error); invalid RFC3339; step override vs auto; tenant-path traversal rejected; concurrent query+flush under `-race`.
+- [x] **Gate 3 — Docs/comments match code:** STORE.md query section + CONFIG.md flag match; view-SQL helper documented; no forward references.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol; the path-formatting comment is self-contained.
 - [x] Full docs/REVIEW.md checklist; TESTING.md layering (unit builder tests + DuckDB integration for cross-tier/freshness/isolation).
 
 ## 7. Reviewer notes
 
-_(empty — prior CHANGES_REQUESTED items addressed in fix commit)_
+**Re-review (pass):** all four prior CHANGES_REQUESTED items verified fixed on
+`5238f79` + `d77027c`.
+
+1. **500 test** — `TestHandlerExecError500` drops `hot_current` then GETs the
+   handler; asserts `500` and body contains `query failed` (passes with `-race`).
+2. **Benchmark** — `AggregateSQL()` strips the outer `ORDER BY`, wraps the union
+   inner query as `SELECT COUNT(*), COALESCE(SUM(value), 0) FROM (…) AS agg`;
+   `TestAggregateSQLRunsOverUnionWithRollup` executes over a rollup-inclusive
+   union; benchmark PASS (~13.6 ms/op on reviewer machine, well under 300 ms target).
+3. **ToJSON godoc** — documents `rows` always and optional `sql` when
+   `exposeSQL` is true; self-contained.
+4. **Atomic comment** — nolint in `handler.go` no longer names a cross-package
+   symbol.
+
+Full gate re-run: `make lint` 0 issues; `make test` green with `-race`;
+`CGO_ENABLED=0 go build ./cmd/prism` OK; `go build ./cmd/prism-store` OK.
+No regression on SQL shape guards, tenant isolation, `WithRead` path, or the
+five behavior integration tests. **Verdict: merge-ready.**
