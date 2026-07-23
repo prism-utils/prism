@@ -7,7 +7,7 @@ BIN_DIR     := bin
 PKG         := github.com/elk-utilities/prism
 CMD         := ./cmd/prism
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS     := -s -w -X main.version=$(VERSION)
+LDFLAGS     := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 GOFLAGS     :=
 FUZZTIME    ?= 30s
 COMPOSE     := docker compose -f deploy/docker-compose.integration.yml
@@ -61,6 +61,10 @@ fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it 
 		done; \
 	done
 
+.PHONY: store-integration
+store-integration: ## Store DuckDB smoke: ingest -> flush -> query -> stats (tag: integration)
+	CGO_ENABLED=1 go test $(GOFLAGS) -tags integration ./test/integration/...
+
 .PHONY: integration
 integration: ## Integration layer only: compose up -> tagged tests -> down
 	@if [ -z "$$(find test/integration -name '*.go' 2>/dev/null)" ]; then \
@@ -81,7 +85,7 @@ e2e: ## End-to-end pipeline tests (build tag: e2e)
 	fi
 
 .PHONY: full-tests
-full-tests: lint test integration e2e ## The phase-completion gate: everything
+full-tests: lint test store-integration integration e2e ## The phase-completion gate: everything
 	@echo "full-tests: OK"
 
 .PHONY: golden-update
@@ -91,6 +95,16 @@ golden-update: ## Regenerate golden fixtures (REVIEW the diff before committing)
 .PHONY: docker
 docker: ## Build the container image (tag: prism:$(VERSION))
 	docker build -t prism:$(VERSION) --build-arg VERSION=$(VERSION) .
+
+STORE_DOCKER_CTX := .docker-store-ctx
+
+.PHONY: docker-store
+docker-store: ## Build the store release image (tag: prism-store:$(VERSION))
+	@rm -rf $(STORE_DOCKER_CTX)
+	@mkdir -p $(STORE_DOCKER_CTX)
+	CGO_ENABLED=1 go build $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(STORE_DOCKER_CTX)/prism-store ./cmd/prism-store
+	docker build -f Dockerfile.store.release -t prism-store:$(VERSION) $(STORE_DOCKER_CTX)
+	@rm -rf $(STORE_DOCKER_CTX)
 
 .PHONY: release-check
 release-check: ## Validate .goreleaser.yaml

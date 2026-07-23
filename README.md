@@ -83,7 +83,39 @@ make test                       # fast unit tests
 make full-tests                 # unit + integration (docker-compose) + e2e
 ```
 
+## Releases
+
+A `v*` git tag triggers
+[`.github/workflows/release.yml`](.github/workflows/release.yml) (never
+merge-to-main). One pipeline publishes **two artifacts**:
+
+| Artifact | Image | Binary build | Runtime base | UID |
+|---|---|---|---|---|
+| **`prism`** (agent) | `ghcr.io/elk-utilities/prism` | static, `CGO_ENABLED=0` | distroless static | 65532 |
+| **`prism-store`** (store) | `ghcr.io/elk-utilities/prism-store` | CGO + DuckDB, linux amd64/arm64 | debian:bookworm-slim + `libstdc++6` | 472 |
+
+Per-arch tags: `:<version>-amd64`, `:<version>-arm64`, plus combined manifests
+`:<version>`, `:sha-<short>`, and `:latest`. GitHub Release assets include
+`prism_*` and `prism-store_*` tarballs, `checksums.txt`, SBOMs, and cosign
+signatures.
+
+Verify a published store manifest (keyless OIDC signature from the release
+workflow):
+
+```bash
+cosign verify ghcr.io/elk-utilities/prism-store:v1.0.0 \
+  --certificate-identity-regexp='https://github.com/elk-utilities/prism/.github/workflows/release.yml@refs/tags/v*' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+```
+
+Replace `v1.0.0` with the pinned tag. Agent images verify the same way against
+`ghcr.io/elk-utilities/prism:<tag>`.
+
+Local dry run: `make release-check` (validate config) and `make snapshot`
+(build everything, push nothing). Store image: `make docker-store`.
+
 ## Requirements
 
-- Go 1.25+ (build/test only; the shipped artifact is a single static binary).
-- Docker + docker-compose (for `make full-tests` integration layer only).
+- Go 1.25+ (build/test only; the shipped agent artifact is a static binary).
+- Docker + docker-compose (for `make full-tests` agent integration layer only).
+- CGO toolchain for `prism-store` builds (`go build ./cmd/prism-store`).

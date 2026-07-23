@@ -26,3 +26,4 @@ coverage.html
 /prism
 /prism-store
 /prism-bench
+.docker-store-ctx/

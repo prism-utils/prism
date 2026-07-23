@@ -1,6 +1,6 @@
 # Spec: prism-store — release/CI (multi-arch signed image + static binaries)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-release`
 - **Owner phase:** orchestrator → developer
@@ -48,16 +48,16 @@ build and runtime image diverge from the CGO-free agent.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `goreleaser check` passes with both `prism` and `prism-store` builds/archives/dockers/manifests.
-- [ ] Ldflags target `…/internal/version.Version` everywhere (Makefile, goreleaser both builds, release.yml scan); `prism version` and `prism-store version` print the injected value (verify via a `-X` build, not `dev`).
-- [ ] `prism-store` build: CGO_ENABLED=1, linux amd64+arm64, per-arch `CC`/`CXX` overrides; archive `prism-store_<ver>_<os>_<arch>.tar.gz`.
-- [ ] `Dockerfile.store.release` builds locally for amd64 (`docker build`/buildx) on `debian:bookworm-slim` + `libstdc++6`, runs as user 472, and `docker run … version` prints the injected version.
-- [ ] Store images + manifests defined (`:<ver>-amd64/-arm64`, `:sha-…`, `:<ver>`, `:latest`); covered by `docker_signs`; SBOM covers the store archive.
-- [ ] `release.yml` adds a store Trivy scan gate + installs the arm64 cross toolchain before goreleaser; agent scan unchanged.
-- [ ] `ci.yml` runs a real store integration/e2e job (DuckDB path) — at minimum an ingest→flush→query→stats smoke.
-- [ ] `README`/docs document the two-artifact release + `cosign verify` for `prism-store`.
-- [ ] Agent artifacts unchanged in shape (still CGO-free distroless static); no regression to the `prism` release.
-- [ ] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
+- [x] `goreleaser check` passes with both `prism` and `prism-store` builds/archives/dockers/manifests.
+- [x] Ldflags target `…/internal/version.Version` everywhere (Makefile, goreleaser both builds, release.yml scan); `prism version` and `prism-store version` print the injected value (verify via a `-X` build, not `dev`).
+- [x] `prism-store` build: CGO_ENABLED=1, linux amd64+arm64, per-arch `CC`/`CXX` overrides; archive `prism-store_<ver>_<os>_<arch>.tar.gz`.
+- [x] `Dockerfile.store.release` builds locally for amd64 (`docker build`/buildx) on `debian:bookworm-slim` + `libstdc++6`, runs as user 472, and `docker run … version` prints the injected version.
+- [x] Store images + manifests defined (`:<ver>-amd64/-arm64`, `:sha-…`, `:<ver>`, `:latest`); covered by `docker_signs`; SBOM covers the store archive.
+- [x] `release.yml` adds a store Trivy scan gate + installs the arm64 cross toolchain before goreleaser; agent scan unchanged.
+- [x] `ci.yml` runs a real store integration/e2e job (DuckDB path) — at minimum an ingest→flush→query→stats smoke.
+- [x] `README`/docs document the two-artifact release + `cosign verify` for `prism-store`.
+- [x] Agent artifacts unchanged in shape (still CGO-free distroless static); no regression to the `prism` release.
+- [x] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
