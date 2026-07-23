@@ -383,3 +383,4 @@ installed by the base chart.
 
 - [`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md) — artifact taxonomy and Parquet schemas.
 - [`DESIGN.md`](DESIGN.md) §15 — ADR (naming, monorepo layout, CGO decision).
+- [`MIGRATION.md`](MIGRATION.md) — `prism-proxy` → `prism-store` cutover plan + env map (#30).
