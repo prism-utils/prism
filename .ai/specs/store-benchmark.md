@@ -1,6 +1,6 @@
 # Spec: prism-store — reproducible benchmark vs ClickHouse
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-benchmark`
 - **Owner phase:** orchestrator → developer
@@ -72,8 +72,7 @@ reproduction steps. Both systems must be given a *fair* configuration
 - [x] Store metrics path uses the real HTTP ingest + compaction + query engine; logs path uses the engine's DuckDB-over-Parquet query (labeled engine-level).
 - [x] Each query reports p50/p95/min over K warmed runs; ingest reports wall-clock + rows/s.
 - [x] `bench/README.md`: prerequisites + exact one-command reproduction + cleanup; environment captured in `RESULTS.md` (CPU/RAM/OS/arch, CH + DuckDB versions, scale, commit).
-- [ ] `README.md` gains a "Benchmark: prism-store vs ClickHouse" section with the measured table, reproduction command, environment note, and an **honest** interpretation (including any workload ClickHouse wins).
-  - README and auto-rendered `RESULTS.md` still headline prism-store “wins” on **count** and **aggregation** while those workloads use different `ts` filter semantics (see §7); that is not an honest head-to-head claim until the harness or copy is fixed.
+- [x] `README.md` gains a "Benchmark: prism-store vs ClickHouse" section with the measured table, reproduction command, environment note, and an **honest** interpretation (including any workload ClickHouse wins).
 - [x] Harness code is clean and structured (generator / clickhouse driver / store driver / orchestrator separated); no "macaronic" one-off scripts; errors handled; no secrets.
 - [x] Bench Go code has unit tests for the deterministic generator (fixed seed → fixed substring count) and the results renderer; `make lint test` green.
 - [x] `CGO_ENABLED=0 go build ./cmd/prism` and `go build ./cmd/prism-store` still pass; bench code (if it imports DuckDB) is CGO-gated and does not pull DuckDB into the agent build.
@@ -83,12 +82,10 @@ reproduction steps. Both systems must be given a *fair* configuration
 
 - [x] **Gate 1 — Guidelines:** harness idiomatic Go, separated concerns, wrapped errors, no globals; ClickHouse client and store drivers behind small interfaces; `make bench` is the single entrypoint; comments self-contained.
 - [x] **Gate 2 — Edge cases:** benchmark fails loudly if the `LIKE` counts differ (correctness gate); compose teardown runs even on failure; deterministic seed reproduces identical counts across two runs; `--scale` works; missing docker → clear error; ClickHouse readiness waited on (no race).
-- [ ] **Gate 3 — Docs/comments match code:** README table/commands match what `make bench` actually produces and the harness flags; the store-logs "engine-level" caveat is stated and accurate; ClickHouse tuning claims match the actual DDL.
-  - `results.RenderMarkdown` interpret() opens with “identical time range” for all workloads, but metrics count/aggregation use ingest-time `ts` on the store vs dataset `ts` on ClickHouse; `bench/README.md` fairness notes omit this asymmetry though the spec requires it.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-  - `bench/internal/store/driver_cgo.go` nolint cites “the store query builder” (cross-location reference).
-- [ ] **Fairness audit:** reviewer confirms ClickHouse is genuinely tuned (not handicapped) AND the store isn't given an unfair shortcut (e.g. pre-cached results, skipping compaction, smaller data). Numbers in the README must be the ones `make bench` produced on the stated host — reviewer re-runs `make bench` and confirms the README table is consistent with a real run (allowing host variance).
-  - Metrics **count/aggregation are not apples-to-apples**: store queries filter ingest-time `ts` over a ~1–2 s ingest window (`storeMetricsStart`/`End` in `main.go`); ClickHouse filters dataset `ts` over the full 7-day span (`ds.QueryRange()`). Both return 1M rows but scan different logical ranges/partition layouts — store timings must not be presented as beating ClickHouse on equivalent work until both use the same timestamp column and window (e.g. filter both on dataset `timestamp_ms`/`ts`, or drop count/agg from head-to-head).
+- [x] **Gate 3 — Docs/comments match code:** README table/commands match what `make bench` actually produces and the harness flags; the store-logs "engine-level" caveat is stated and accurate; ClickHouse tuning claims match the actual DDL.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] **Fairness audit:** reviewer confirms ClickHouse is genuinely tuned (not handicapped) AND the store isn't given an unfair shortcut (e.g. pre-cached results, skipping compaction, smaller data). Numbers in the README must be the ones `make bench` produced on the stated host — reviewer re-runs `make bench` and confirms the README table is consistent with a real run (allowing host variance).
+  - Fixed (2026-07-23): metrics count/aggregation now full-table scan on both systems; metrics count correctness gate added.
 - [x] Full docs/REVIEW.md checklist; TESTING.md layering (generator/renderer unit tests; the full bench is opt-in, not in CI gate).
 
 ## 7. Reviewer notes

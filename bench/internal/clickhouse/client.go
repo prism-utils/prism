@@ -164,27 +164,23 @@ func (c *Client) IngestLogs(ctx context.Context, rows []gen.LogRow) error {
 	return nil
 }
 
-// CountMetrics returns row count in the ts range.
-func (c *Client) CountMetrics(ctx context.Context, start, end time.Time) (int64, error) {
+// CountMetrics returns the full-table row count (no time predicate).
+func (c *Client) CountMetrics(ctx context.Context) (int64, error) {
 	var n uint64
-	err := c.conn.QueryRow(ctx,
-		"SELECT count() FROM bench_metrics WHERE ts >= ? AND ts < ?",
-		start, end,
-	).Scan(&n)
+	err := c.conn.QueryRow(ctx, "SELECT count() FROM bench_metrics").Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("clickhouse: count metrics: %w", err)
 	}
 	return int64(n), nil
 }
 
-// AggregateMetrics runs per-series avg/min/max/count over the range.
-func (c *Client) AggregateMetrics(ctx context.Context, start, end time.Time) error {
+// AggregateMetrics runs per-series avg/min/max/count over every ingested row.
+func (c *Client) AggregateMetrics(ctx context.Context) error {
 	rows, err := c.conn.Query(ctx, `
 		SELECT __name__, avg(value), min(value), max(value), count()
 		FROM bench_metrics
-		WHERE ts >= ? AND ts < ?
 		GROUP BY __name__
-	`, start, end)
+	`)
 	if err != nil {
 		return fmt.Errorf("clickhouse: aggregate metrics: %w", err)
 	}

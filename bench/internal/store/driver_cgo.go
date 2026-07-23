@@ -20,7 +20,6 @@ import (
 	"github.com/elk-utilities/prism/internal/store/engine"
 	"github.com/elk-utilities/prism/internal/store/layout"
 	"github.com/elk-utilities/prism/internal/store/lifecycle"
-	"github.com/elk-utilities/prism/internal/store/query"
 	"github.com/elk-utilities/prism/internal/store/seed"
 )
 
@@ -240,29 +239,35 @@ func (d *cgoDriver) WriteLogsTier(_ context.Context, path string, rows []gen.Log
 	return gen.WriteLogsTier(path, rows)
 }
 
-func (d *cgoDriver) CountMetrics(ctx context.Context, start, end time.Time) (int64, error) {
+func (d *cgoDriver) CountMetrics(ctx context.Context) (int64, error) {
 	if err := d.openEngine(); err != nil {
 		return 0, err
 	}
 	var count int64
-	err := d.withQuery(ctx, start, end, "", func(db *sql.DB, sqlText string, args []any) error {
-		inner := extractUnion(sqlText)
+	err := d.eng.WithRead(d.cfg.Tenant, func(db *sql.DB) error { //nolint:contextcheck // WithRead opens tenant DB without request ctx.
+		inner, err := d.buildFullMetricsUnionInner(ctx, db)
+		if err != nil {
+			return err
+		}
 		q := "SELECT COUNT(*) FROM (" + inner + ")"
-		return db.QueryRowContext(ctx, q, args...).Scan(&count)
+		return db.QueryRowContext(ctx, q).Scan(&count)
 	})
 	return count, err
 }
 
-func (d *cgoDriver) AggregateMetrics(ctx context.Context, start, end time.Time) error {
+func (d *cgoDriver) AggregateMetrics(ctx context.Context) error {
 	if err := d.openEngine(); err != nil {
 		return err
 	}
-	return d.withQuery(ctx, start, end, "", func(db *sql.DB, sqlText string, args []any) error {
-		inner := extractUnion(sqlText)
-		//nolint:gosec // G202: inner SQL comes from the store query builder, not user text.
+	return d.eng.WithRead(d.cfg.Tenant, func(db *sql.DB) error { //nolint:contextcheck // WithRead opens tenant DB without request ctx.
+		inner, err := d.buildFullMetricsUnionInner(ctx, db)
+		if err != nil {
+			return err
+		}
+		//nolint:gosec // G202: inner SQL unions hot and tier parquet sources built by this driver, not user text.
 		q := `SELECT "__name__", avg(value), min(value), max(value), count(*)
 		      FROM (` + inner + `) GROUP BY "__name__"`
-		rows, err := db.QueryContext(ctx, q, args...)
+		rows, err := db.QueryContext(ctx, q)
 		if err != nil {
 			return err
 		}
@@ -277,6 +282,33 @@ func (d *cgoDriver) AggregateMetrics(ctx context.Context, start, end time.Time) 
 		}
 		return rows.Err()
 	})
+}
+
+func (d *cgoDriver) buildFullMetricsUnionInner(ctx context.Context, db *sql.DB) (string, error) {
+	tenantRoot := filepath.Join(d.cfg.DataDir, d.cfg.Tenant)
+	parts := []string{"SELECT * FROM hot_current"}
+	if hotTableExists(ctx, db, "hot_prev") {
+		parts = append(parts, "SELECT * FROM hot_prev")
+	}
+	for tier := 0; tier < 8; tier++ {
+		glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
+		if matches, _ := filepath.Glob(glob); len(matches) > 0 {
+			parts = append(parts, fmt.Sprintf(
+				"SELECT * FROM read_parquet('%s')",
+				layout.ToSlash(glob),
+			))
+		}
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("store: no metrics sources for union")
+	}
+	return strings.Join(parts, " UNION ALL "), nil
+}
+
+func hotTableExists(ctx context.Context, db *sql.DB, table string) bool {
+	//nolint:gosec // G201: table name is a fixed hot-catalog identifier, not user input.
+	_, err := db.ExecContext(ctx, fmt.Sprintf("SELECT 1 FROM %s LIMIT 0", table))
+	return err == nil
 }
 
 // CountLogsLike runs an engine-level DuckDB read_parquet scan over a logs-shaped
@@ -312,27 +344,6 @@ func (d *cgoDriver) DuckDBVersion(ctx context.Context) (string, error) {
 		return db.QueryRowContext(ctx, "SELECT version()").Scan(&v)
 	})
 	return v, err
-}
-
-func (d *cgoDriver) withQuery(ctx context.Context, start, end time.Time, step string, fn func(*sql.DB, string, []any) error) error {
-	req := &query.Request{Tenant: d.cfg.Tenant, Start: start.UTC(), End: end.UTC(), Step: step}
-	b := query.Builder{DataDir: d.cfg.DataDir}
-	return d.eng.WithRead(d.cfg.Tenant, func(db *sql.DB) error { //nolint:contextcheck // WithRead opens tenant DB without request ctx.
-		sqlText, args, err := b.BuildSQLWithDB(ctx, req, db)
-		if err != nil {
-			return err
-		}
-		return fn(db, sqlText, args)
-	})
-}
-
-func extractUnion(sqlText string) string {
-	const open = "SELECT * FROM ("
-	const close = ") ORDER BY ts"
-	if strings.HasPrefix(sqlText, open) && strings.HasSuffix(sqlText, close) {
-		return sqlText[len(open) : len(sqlText)-len(close)]
-	}
-	return sqlText
 }
 
 func duckTS(t time.Time) string {

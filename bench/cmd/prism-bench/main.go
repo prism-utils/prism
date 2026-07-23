@@ -71,7 +71,6 @@ func runMain() error {
 	if err != nil {
 		return fmt.Errorf("generate: %w", err)
 	}
-	start, end := ds.QueryRange()
 	logsStart, logsEnd := ds.LogsQueryRange()
 
 	metricsDir := filepath.Join(absWork, "metrics-windows")
@@ -179,19 +178,15 @@ func runMain() error {
 	logsPath := filepath.Join(dataDir, tenant, "bench-logs", "segment.parquet")
 	logsGlob := logsPath
 
-	storeIngestStart := time.Now().UTC()
 	storeIngestSec, err := timing.WallRun(func() error {
 		if err := sd.IngestMetricsHTTP(ctx, windows); err != nil {
 			return err
 		}
 		return sd.WriteLogsTier(ctx, logsPath, ds.Logs)
 	})
-	storeIngestEnd := time.Now().UTC()
 	if err != nil {
 		return fmt.Errorf("store ingest: %w", err)
 	}
-	storeMetricsStart := storeIngestStart.Add(-time.Second)
-	storeMetricsEnd := storeIngestEnd.Add(time.Second)
 	if err := sd.Compact(ctx); err != nil {
 		return fmt.Errorf("store compact: %w", err)
 	}
@@ -237,8 +232,25 @@ func runMain() error {
 	rep.LikeCountStore = storeLike
 	rep.LikeCountClickHouse = chLike
 
+	storeMetricsCount, err := sd.CountMetrics(ctx)
+	if err != nil {
+		return fmt.Errorf("store metrics count gate: %w", err)
+	}
+	chMetricsCount, err := ch.CountMetrics(ctx)
+	if err != nil {
+		return fmt.Errorf("clickhouse metrics count gate: %w", err)
+	}
+	if storeMetricsCount != chMetricsCount {
+		return fmt.Errorf("metrics count mismatch: store=%d clickhouse=%d", storeMetricsCount, chMetricsCount)
+	}
+	if storeMetricsCount != cfg.MetricsRows {
+		return fmt.Errorf("metrics count wrong: got %d want %d", storeMetricsCount, cfg.MetricsRows)
+	}
+	rep.MetricsCountStore = storeMetricsCount
+	rep.MetricsCountClickHouse = chMetricsCount
+
 	storeCountStats, err := timing.RunQuery(queryRuns, func() error {
-		n, err := sd.CountMetrics(ctx, storeMetricsStart, storeMetricsEnd)
+		n, err := sd.CountMetrics(ctx)
 		if err != nil {
 			return err
 		}
@@ -251,7 +263,7 @@ func runMain() error {
 		return fmt.Errorf("store count: %w", err)
 	}
 	chCountStats, err := timing.RunQuery(queryRuns, func() error {
-		n, err := ch.CountMetrics(ctx, start, end)
+		n, err := ch.CountMetrics(ctx)
 		if err != nil {
 			return err
 		}
@@ -269,13 +281,13 @@ func runMain() error {
 	)
 
 	storeAggStats, err := timing.RunQuery(queryRuns, func() error {
-		return sd.AggregateMetrics(ctx, storeMetricsStart, storeMetricsEnd)
+		return sd.AggregateMetrics(ctx)
 	})
 	if err != nil {
 		return fmt.Errorf("store aggregate: %w", err)
 	}
 	chAggStats, err := timing.RunQuery(queryRuns, func() error {
-		return ch.AggregateMetrics(ctx, start, end)
+		return ch.AggregateMetrics(ctx)
 	})
 	if err != nil {
 		return fmt.Errorf("clickhouse aggregate: %w", err)

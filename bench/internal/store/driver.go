@@ -24,8 +24,8 @@ type Driver interface {
 	IngestMetricsHTTP(ctx context.Context, windows []string) error
 	Compact(ctx context.Context) error
 	WriteLogsTier(ctx context.Context, path string, rows []gen.LogRow) error
-	CountMetrics(ctx context.Context, start, end time.Time) (int64, error)
-	AggregateMetrics(ctx context.Context, start, end time.Time) error
+	CountMetrics(ctx context.Context) (int64, error)
+	AggregateMetrics(ctx context.Context) error
 	CountLogsLike(ctx context.Context, logsGlob string, start, end time.Time) (int64, error)
 	DuckDBVersion(ctx context.Context) (string, error)
 }

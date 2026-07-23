@@ -38,10 +38,12 @@ type Workload struct {
 
 // Report is the machine-readable benchmark output written to results.json.
 type Report struct {
-	Environment         Environment `json:"environment"`
-	LikeCountStore      int64       `json:"like_count_store"`
-	LikeCountClickHouse int64       `json:"like_count_clickhouse"`
-	Workloads           []Workload  `json:"workloads"`
+	Environment            Environment `json:"environment"`
+	LikeCountStore         int64       `json:"like_count_store"`
+	LikeCountClickHouse    int64       `json:"like_count_clickhouse"`
+	MetricsCountStore      int64       `json:"metrics_count_store"`
+	MetricsCountClickHouse int64       `json:"metrics_count_clickhouse"`
+	Workloads              []Workload  `json:"workloads"`
 }
 
 // WriteJSON persists rep to path with mode 0644.
@@ -82,7 +84,9 @@ func RenderMarkdown(rep *Report) string {
 	if !env.MeasuredAt.IsZero() {
 		fmt.Fprintf(&b, "| Measured | %s |\n", env.MeasuredAt.UTC().Format(time.RFC3339))
 	}
-	b.WriteString("\n## Correctness gate\n\n")
+	b.WriteString("\n## Correctness gates\n\n")
+	fmt.Fprintf(&b, "Metrics `COUNT(*)` over the full ingested table: store **%s**, ClickHouse **%s** (must match; equals dataset metrics row count).\n\n",
+		formatInt(rep.MetricsCountStore), formatInt(rep.MetricsCountClickHouse))
 	fmt.Fprintf(&b, "Logs `LIKE '%%deadline exceeded%%'` count: store **%s**, ClickHouse **%s** (must match).\n\n",
 		formatInt(rep.LikeCountStore), formatInt(rep.LikeCountClickHouse))
 
@@ -105,9 +109,13 @@ func RenderMarkdown(rep *Report) string {
 
 func interpret(rep *Report) string {
 	lines := []string{
-		"Both systems ingested the same seeded dataset over an identical time range with warmed caches (one throwaway query before timing).",
+		"Both systems ingested the same seeded dataset. Each query workload is warmed once before K=5 timed runs.",
 		"",
-		"The store metrics path uses real HTTP Parquet ingest, hot→L0 flush, tier compaction, and the fixed-schema union query engine. The logs LIKE path is **engine-level**: DuckDB `read_parquet` over a zstd logs-shaped tier in the store on-disk layout — the shipping store has no logs ingest API yet.",
+		"**Metrics count and aggregation** scan the **full ingested metrics table** on both sides — no `ts` range predicate — so both systems read the same N rows (`SELECT count(*)` and `GROUP BY __name__` over every row). Rollup tiers are excluded on the store path to avoid double-counting.",
+		"",
+		"**Logs LIKE** uses the same dataset-`ts` window on both systems (`ds.LogsQueryRange()`). The store path is **engine-level**: DuckDB `read_parquet` over a logs-shaped zstd Parquet tier in the store on-disk layout — the shipping store has no logs ingest API yet.",
+		"",
+		"The store metrics path uses real HTTP Parquet ingest, hot→L0 flush, tier compaction, and a fixed-schema union over hot + tier Parquet (no rollups for these workloads).",
 		"",
 		"ClickHouse uses MergeTree with `LowCardinality` dimensions, day partitioning, batched inserts (50k rows), and a `tokenbf_v1` skip index on `message`.",
 		"",
@@ -133,9 +141,6 @@ func interpret(rep *Report) string {
 				lines = append(lines, fmt.Sprintf("- **%s**: prism-store p50 %.1f ms vs ClickHouse %.1f ms.", name, store.P50Ms, ch.P50Ms))
 			} else {
 				lines = append(lines, fmt.Sprintf("- **%s**: ClickHouse p50 %.1f ms beats prism-store %.1f ms on this host.", name, ch.P50Ms, store.P50Ms))
-			}
-			if name == "count" {
-				lines = append(lines, "  Store metrics queries filter on ingest-time `ts`; ClickHouse uses embedded sample timestamps.")
 			}
 		}
 	}
