@@ -21,6 +21,11 @@ const (
 
 var legacyIngestNanosRe = regexp.MustCompile(`^metrics-raw-(\d+)-`)
 
+// ExportHotSnapshot writes hot/current.parquet for one tenant.
+func (e *Engine) ExportHotSnapshot(tenant string) error {
+	return e.exportHotSnapshot(tenant)
+}
+
 // ExportHotSnapshots writes hot/current.parquet for every tenant with data on disk.
 func (e *Engine) ExportHotSnapshots() error {
 	tenants, err := listDataTenants(e.cfg.DataDir)

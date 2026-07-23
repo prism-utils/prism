@@ -25,7 +25,7 @@ Bootstrap **`MODE`** selects one of three roles (default **`standalone`**):
 |---|---|---|---|
 | `standalone` | Self-contained node | Engine + ingest + jobs on `DATA_DIR` | Local engine |
 | `client` | Data-holding leaf fronted by a coordinator | Same as standalone | Local engine, but only for tenants listed in `CLIENT_TENANTS`; other tenants → `404` before the engine runs |
-| `cluster` | Stateless coordinator/router | **None** — no engine, ingest, or background jobs | Forwards `GET <prefix>/{ns}/query` to the owning client URL from `CLUSTER_CLIENTS` |
+| `cluster` | Stateless coordinator/router | **None** — no engine, ingest, or background jobs | Forwards `GET` and `POST` `<prefix>/{ns}/query` / `{ns}/sql` to the owning client URL from `CLUSTER_CLIENTS` |
 
 **Isolation guarantee:** identifier == tenant/namespace (`ns`). The coordinator routes
 each query to **exactly one** owning client; unknown/unmapped tenants get `404`
@@ -218,6 +218,11 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 | `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset |
 | `E2E_EXPOSE_QUERY_SQL` | _(empty)_ | When `1`, query JSON includes generated SQL (e2e/regression only) |
 | `QUERY_HOT_ONLY` | `false` | When `true`, HTTP query unions only `hot_current`/`hot_prev` (no tier or rollup Parquet reads). Grafana `print-view-sql` is unchanged. |
+| `SQL_API_ENABLED` | `true` | When `false`, `POST /{ns}/sql` is not registered. |
+| `SQL_API_MAX_ROWS` | `100000` | Maximum rows returned per SQL request (truncates with `"truncated": true`). |
+| `SQL_API_TIMEOUT_SECONDS` | `30` | Per-query timeout for arbitrary SQL. |
+| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum POST `/sql` JSON body size (1 MiB). |
+| `DUCKDB_MEMORY_LIMIT` | _(empty)_ | DuckDB `memory_limit` for engine and SQL sandbox when set. |
 | `RUN_JOBS` | `true` | When `false`, disables all background maintenance (hot snapshot, flush, merge, rollups, retention). Ingest and query still run; hot data will not flush or compact and retention will not delete. |
 | `ADMIN_LISTEN_ADDR` | _(empty)_ | When set, binds admin/stats/query on a second HTTP server (see below) |
 | `ADMIN_TOKEN` | _(empty)_ | Static bearer token for admin-plane routes when set |
@@ -396,6 +401,82 @@ path-scoped, same row projection, no `union_by_name`/`filename`.
 
 CLI: `prism-store print-view-sql --tenant <ns> [--data-dir <dir>]` prints the
 statement for DuckDB datasource `initSQL` wiring.
+
+---
+
+## Arbitrary SQL API (`internal/store/query`, `sql.go`)
+
+Read-only **arbitrary SQL** over a single tenant's metrics, RBAC-guarded
+(action **`query`**, same plane as structured query). Each request runs in a
+**fresh in-memory DuckDB sandbox** (never shared across tenants or requests).
+
+### HTTP
+
+`POST <ROUTE_PREFIX>/{tenant}/sql`
+
+Request JSON: `{"sql": "<single SELECT or WITH>", "max_rows": <optional int>}`.
+
+Success `200 application/json`:
+
+```json
+{"columns":["…"],"rows":[[…],…],"row_count":N,"truncated":false}
+```
+
+| Condition | Status |
+|---|---|
+| malformed JSON / empty SQL / non-SELECT / multi-statement / exec error | `400 bad query` |
+| unknown/malformed tenant / missing tenant root | `404 unknown tenant` |
+| internal failure (snapshot, sandbox) | `500 query failed` |
+
+When **`SQL_API_ENABLED=false`** (default `true`), the route is not registered
+(`404`).
+
+### Relation and schema
+
+| Relation | Schema |
+|---|---|
+| `metrics` | `"__name__"`, `labels`, `value`, `timestamp_ms`, `ts` |
+
+Built from the tenant's **`hot/current.parquet`** snapshot (exported per request)
+plus present **`tiers/L*/*.parquet`** globs — same union shape as structured
+query / Grafana view SQL. Visibility: committed hot (as of snapshot) + all tiers.
+
+### Sandbox guarantees
+
+Per request, on a dedicated `:memory:` DuckDB connection (settings applied in
+order; **`lock_configuration=true` last**):
+
+1. `SET memory_limit` — from `DUCKDB_MEMORY_LIMIT` when set
+2. `SET max_temp_directory_size='0B'`
+3. `LOAD parquet` (when needed)
+4. `SET allowed_directories=['<abs tenantRoot>']` — best-effort (DuckDB ≥1.2)
+5. Materialize `metrics` from tenant parquet under `tenantRoot`
+6. `SET enable_external_access=false` + extension hardening knobs
+7. `SET lock_configuration=true`
+
+User SQL cannot re-enable external access or reach paths outside the tenant.
+Cross-tenant `read_parquet`, `ATTACH`, `COPY`, host reads, and writes fail.
+Defense-in-depth: only `SELECT`/`WITH` accepted upfront.
+
+References: [DuckDB — Securing DuckDB](https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview);
+OWASP API1 BOLA.
+
+### Limits
+
+| Env | Default | Effect |
+|---|---|---|
+| `SQL_API_MAX_ROWS` | `100000` | Server cap; `min(request.max_rows, cap)` |
+| `SQL_API_TIMEOUT_SECONDS` | `30` | Query timeout (context cancel) |
+| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum JSON request body (1 MiB) |
+| `SQL_API_ENABLED` | `true` | Register route when `true` |
+| `DUCKDB_MEMORY_LIMIT` | _(empty)_ | Sandbox memory cap when set |
+| `DUCKDB_THREADS` | _(empty)_ | Sandbox thread cap when set |
+
+### Auth
+
+Same as structured query: RBAC **`query`** when `AUTHZ_POLICY_FILE` is set; else
+`ADMIN_TOKEN` on the admin plane. Cluster coordinators forward `POST /{ns}/sql`
+to the owning client (authorize-before-proxy; client re-enforces).
 
 ---
 

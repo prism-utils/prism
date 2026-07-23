@@ -102,6 +102,14 @@ spec:
             - name: RETENTION_TICK_HOURS
               value: {{ .Values.env.retentionTickHours | quote }}
             {{- end }}
+            - name: SQL_API_ENABLED
+              value: {{ .Values.env.sqlAPIEnabled | quote }}
+            - name: SQL_API_MAX_ROWS
+              value: {{ .Values.env.sqlAPIMaxRows | quote }}
+            - name: SQL_API_TIMEOUT_SECONDS
+              value: {{ .Values.env.sqlAPITimeoutSeconds | quote }}
+            - name: SQL_API_MAX_BODY_BYTES
+              value: {{ .Values.env.sqlAPIMaxBodyBytes | quote }}
             {{- if .Values.secrets.existingSecret }}
             - name: INGEST_TOKEN
               valueFrom:

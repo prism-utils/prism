@@ -721,6 +721,11 @@ via environment variables (no YAML config file).
 | `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies. |
 | `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset. |
 | `E2E_EXPOSE_QUERY_SQL` | _(empty — off)_ | When `1`, query JSON responses include the generated SQL (e2e/regression only). |
+| `SQL_API_ENABLED` | `true` | When `false`, arbitrary SQL route `POST /{ns}/sql` is not registered. |
+| `SQL_API_MAX_ROWS` | `100000` | Maximum rows per SQL response (`truncated` when exceeded). |
+| `SQL_API_TIMEOUT_SECONDS` | `30` | Per-query timeout for `POST /{ns}/sql`. |
+| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum POST `/sql` JSON body size (1 MiB). |
+| `DUCKDB_MEMORY_LIMIT` | _(empty)_ | DuckDB memory cap for engine and SQL sandbox when set. |
 | `ADMIN_LISTEN_ADDR` | _(empty — off)_ | When set, binds `/admin/*`, `/stats`, and query on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
 | `ADMIN_TOKEN` | _(empty — off)_ | Static bearer token for admin-plane routes (`/admin/*`, `/stats`, query on admin bind). Constant-time compare; unset = open (use network isolation). Superseded when `AUTHZ_POLICY_FILE` is set. |
 | `AUTHZ_POLICY_FILE` | _(empty — off)_ | Path to deny-by-default RBAC policy YAML. When set, enables JWT/OIDC auth + RBAC on HTTP query/ingest/admin routes. |
@@ -745,6 +750,7 @@ See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, adm
 | `GET` | `/healthz` | `200` body `ok\n` | — |
 | `GET` | `/readyz` | `200` body `ready\n` | `503` when `DATA_DIR` is not writable |
 | `GET` | `<ROUTE_PREFIX>/{tenant}/query?start=&end=&step=` | `200 application/json` | see query validation in [`STORE.md`](STORE.md) |
+| `POST` | `<ROUTE_PREFIX>/{tenant}/sql` | `200 application/json` | arbitrary read-only SQL; see [`STORE.md`](STORE.md) § Arbitrary SQL API |
 | `POST` | `<ROUTE_PREFIX>/{tenant}/ingest/{artifact}` | `204 No Content` | see validation chain below |
 | `POST` | `/admin/tenants/{tenant}/ensure` | `204 No Content` | admin plane; see [`STORE.md`](STORE.md) |
 | `GET` | `/stats?ns=` | `200 application/json` | admin plane; billing contract in [`STORE.md`](STORE.md) |

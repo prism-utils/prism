@@ -650,3 +650,21 @@ https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-accou
 **Consequences:** RBAC deps (`go-oidc`, YAML) live only under `internal/store`
 and `cmd/prism-store`; `cmd/prism` import graph stays free of them. Flight ingest
 keeps `AUTH_MODE`. Policy is read-only (mounted file); no API mutates bindings.
+
+### Arbitrary read-only SQL API — tenant sandbox (2026-07)
+
+**Decision:** `POST /{ns}/sql` executes untrusted read-only SQL in a per-request
+in-memory DuckDB sandbox: export fresh hot snapshot, materialize a `metrics`
+relation from tenant parquet only, then apply DuckDB hardening
+(`enable_external_access=false`, extension knobs, `lock_configuration=true`;
+`allowed_directories=[tenantRoot]` when supported). RBAC action `query`; same
+admin plane and cluster routing as structured query.
+
+**References:** DuckDB Securing guide —
+https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview ;
+OWASP API1 BOLA —
+https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/ .
+
+**Consequences:** Store-only surface (`internal/store/query`, `cmd/prism-store`);
+agent binary unchanged. One snapshot + sandbox per SQL request; bounded by
+`SQL_API_MAX_ROWS`, `SQL_API_TIMEOUT_SECONDS`, and `DUCKDB_MEMORY_LIMIT`.
