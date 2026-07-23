@@ -143,6 +143,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.queryHotOnly {
 		t.Fatalf("queryHotOnly = true, want false by default")
 	}
+	if !cfg.runJobs {
+		t.Fatalf("runJobs = false, want true by default")
+	}
 }
 
 func TestLoadConfigQueryHotOnlyFromEnv(t *testing.T) {
@@ -196,7 +199,7 @@ func clearStoreEnv(t *testing.T) {
 	for _, k := range []string{
 		"LISTEN_ADDR", "DATA_DIR", "FLIGHT_ADDR", "ALLOWED_ARTIFACTS",
 		"MAX_BODY_BYTES", "INGEST_TOKEN", "AUTH_MODE", "ROUTE_PREFIX",
-		"QUERY_HOT_ONLY",
+		"QUERY_HOT_ONLY", "RUN_JOBS",
 	} {
 		t.Setenv(k, "")
 	}

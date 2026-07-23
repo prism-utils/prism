@@ -84,6 +84,7 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 | `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset |
 | `E2E_EXPOSE_QUERY_SQL` | _(empty)_ | When `1`, query JSON includes generated SQL (e2e/regression only) |
 | `QUERY_HOT_ONLY` | `false` | When `true`, HTTP query unions only `hot_current`/`hot_prev` (no tier or rollup Parquet reads). Grafana `print-view-sql` is unchanged. |
+| `RUN_JOBS` | `true` | When `false`, disables all background maintenance (hot snapshot, flush, merge, rollups, retention). Ingest and query still run; hot data will not flush or compact and retention will not delete. |
 | `ADMIN_LISTEN_ADDR` | _(empty)_ | When set, binds admin/stats/query on a second HTTP server (see below) |
 | `ADMIN_TOKEN` | _(empty)_ | Static bearer token for admin-plane routes when set |
 

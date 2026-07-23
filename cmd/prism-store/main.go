@@ -11,6 +11,9 @@
 //
 // Query hot-only mode: set QUERY_HOT_ONLY=true to serve HTTP queries from the
 // in-memory hot cache only (no tier or rollup Parquet reads). Default false.
+// Background jobs: set RUN_JOBS=false to skip all lifecycle maintenance
+// (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
+// still run; hot data will not flush or compact and retention will not delete.
 // Grafana print-view-sql is unaffected.
 package main
 
@@ -88,6 +91,7 @@ type serverConfig struct {
 	duckdbThreads     int
 	duckdbMemoryLimit string
 	queryHotOnly      bool
+	runJobs           bool
 }
 
 func loadConfig() serverConfig {
@@ -114,6 +118,7 @@ func loadConfig() serverConfig {
 		duckdbThreads:     envIntZero("DUCKDB_THREADS"),
 		duckdbMemoryLimit: os.Getenv("DUCKDB_MEMORY_LIMIT"),
 		queryHotOnly:      envBool("QUERY_HOT_ONLY", false),
+		runJobs:           envBool("RUN_JOBS", true),
 	}
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
@@ -310,6 +315,14 @@ func RunBackgroundLoop(ctx context.Context, runner *lifecycle.Runner, cfg *serve
 	}
 }
 
+type backgroundLoopStartFunc func(context.Context, *lifecycle.Runner, *serverConfig, *slog.Logger)
+
+func defaultBackgroundLoopStart(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
+	go RunBackgroundLoop(ctx, runner, cfg, logger)
+}
+
+var startBackgroundLoop backgroundLoopStartFunc = defaultBackgroundLoopStart
+
 func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
 	mode, err := storeingest.ParseAuthMode(cfg.authMode)
 	if err != nil {
@@ -335,7 +348,11 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 		MaxTier:         cfg.maxTier,
 	}, eng, now)
 
-	go RunBackgroundLoop(ctx, runner, cfg, logger)
+	if cfg.runJobs {
+		startBackgroundLoop(ctx, runner, cfg, logger)
+	} else {
+		logger.Info("prism-store background jobs disabled")
+	}
 
 	ingestCfg := cfg.ingestConfig(mode)
 
@@ -377,6 +394,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 			"hot_window", cfg.hotWindow.String(),
 			"segments_per_tier", cfg.segmentsPerTier,
 			"query_hot_only", cfg.queryHotOnly,
+			"run_jobs", cfg.runJobs,
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("public listen: %w", err)

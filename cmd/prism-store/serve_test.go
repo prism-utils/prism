@@ -30,6 +30,7 @@ func testServeConfig(dataDir, publicAddr, adminAddr string) *serverConfig {
 		flushTick:        time.Hour,
 		mergeTick:        time.Hour,
 		retentionTick:    time.Hour,
+		runJobs:          true,
 	}
 }
 
