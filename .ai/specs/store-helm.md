@@ -1,6 +1,6 @@
 # Spec: prism-store — project-agnostic Helm chart + capacity model
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-helm`
 - **Owner phase:** orchestrator → developer
@@ -66,12 +66,24 @@ Traefik/ESO/Grafana hard dependency — consumers layer those in their own repo.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** chart idiomatic (helpers `_helpers.tpl`, labels, `.Values` with sane defaults); no hard-coded consumer specifics; secrets never defaulted to literals; single-writer constraint enforced by the workload choice.
-- [ ] **Gate 2 — Edge cases:** `helm template` with defaults AND with `networkPolicy.enabled=true`, `adminListenAddr` set (separate port + service), custom storageClass/size, auth modes (`none`/`bearer`/mTLS/trusted-header) — all render valid manifests; readOnlyRootFilesystem doesn't break `/data` or `/tmp`; probes hit the right port when split-plane is on.
-- [ ] **Gate 3 — Docs/comments match code:** every value maps to a real env in `cmd/prism-store` (no dead values like `MaxOpenTenants`); defaults match the code constants; STORE.md sizing math matches the values comments; image tag/name matches #29's `ghcr.io/elk-utilities/prism-store`.
-- [ ] **Gate 4 — Atomic comments** (§3.8): template/doc comments self-contained.
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (the CI `chart` job is real: lint + template + golden snapshot, not a stub).
+- [x] **Gate 1 — Guidelines:** chart idiomatic (helpers `_helpers.tpl`, labels, `.Values` with sane defaults); no hard-coded consumer specifics; secrets never defaulted to literals; single-writer constraint enforced by the workload choice.
+- [x] **Gate 2 — Edge cases:** `helm template` with defaults AND with `networkPolicy.enabled=true`, `adminListenAddr` set (separate port + service), custom storageClass/size, auth modes (`none`/`bearer`/mTLS/trusted-header) — all render valid manifests; readOnlyRootFilesystem doesn't break `/data` or `/tmp`; probes hit the right port when split-plane is on.
+- [x] **Gate 3 — Docs/comments match code:** every value maps to a real env in `cmd/prism-store` (no dead values like `MaxOpenTenants`); defaults match the code constants; STORE.md sizing math matches the values comments; image tag/name matches #29's `ghcr.io/elk-utilities/prism-store`.
+- [x] **Gate 4 — Atomic comments** (§3.8): template/doc comments self-contained.
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (the CI `chart` job is real: lint + template + golden snapshot, not a stub).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: ALL_OK** (2026-07-23). Independent verification:
+
+- `helm lint deploy/charts/prism-store` — pass (icon recommendation only).
+- `helm template` defaults / `--set networkPolicy.enabled=true` / `--set env.adminListenAddr=":9090"` — valid YAML; `kubectl apply --dry-run=client` accepted all three.
+- Auth modes `none`/`bearer`/`mtls`/`trusted-header` — all dry-run clean.
+- Base template: no IngressRoute/ExternalSecret/Grafana; `examples/` excluded via `.helmignore` (confirmed `helm package` tarball contents).
+- StatefulSet `replicas:1`, RWO `volumeClaimTemplates`, securityContext uid/gid/fsGroup 472, `readOnlyRootFilesystem`, `/tmp` emptyDir, `/data` PVC; probes `/healthz`(15s)/`/readyz`(10s) on `http` port (correct for split-plane — health lives on public listener).
+- All env values map to real vars in `cmd/prism-store/main.go`; defaults match code constants; tokens via `secretKeyRef` only when `secrets.existingSecret` set (empty by default).
+- `check-golden.sh` — pass; CI `chart` job runs lint + template variants + golden.
+- `release.yml` chart job added (tag-gated OCI push); existing `scan`/`release` jobs unchanged.
+- `make lint` (0 issues), `make test` (race, all green), `go build ./cmd/prism-store` — pass; zero Go source diff vs `origin/main`.
+- TDD: `test(store-helm): add golden snapshot check script` precedes feat commit.
+- No committed `.tgz`; templates pass §3.8 (examples/ overlay runbook comments reference sibling files but are excluded from the packaged chart).
