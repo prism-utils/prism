@@ -11,6 +11,8 @@ LDFLAGS     := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 GOFLAGS     :=
 FUZZTIME    ?= 30s
 COMPOSE     := docker compose -f deploy/docker-compose.integration.yml
+# Store integration tests link DuckDB (CGO); override the global CGO_ENABLED=0 export.
+INTEGRATION_GO_TEST := CGO_ENABLED=1 go test $(GOFLAGS) -tags integration ./test/integration/...
 
 # Static, CGO-free build so the artifact runs on bare metal and in scratch/distroless.
 export CGO_ENABLED := 0
@@ -62,18 +64,18 @@ fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it 
 	done
 
 .PHONY: store-integration
-store-integration: ## Store DuckDB smoke: ingest -> flush -> query -> stats (tag: integration)
-	CGO_ENABLED=1 go test $(GOFLAGS) -tags integration ./test/integration/...
+store-integration: ## Integration tests without compose (store DuckDB smoke; same packages as integration)
+	$(INTEGRATION_GO_TEST)
 
 .PHONY: integration
-integration: ## Integration layer only: compose up -> tagged tests -> down
+integration: ## Integration layer: compose up -> tagged tests -> down
 	@if [ -z "$$(find test/integration -name '*.go' 2>/dev/null)" ]; then \
 		echo "integration: no tests under test/integration yet — skipping"; \
 	else \
 		command -v docker >/dev/null 2>&1 || { echo "docker required for integration tests"; exit 1; }; \
 		$(COMPOSE) up -d --wait; \
 		trap '$(COMPOSE) down -v' EXIT; \
-		go test $(GOFLAGS) -tags integration ./test/integration/...; \
+		$(INTEGRATION_GO_TEST); \
 	fi
 
 .PHONY: e2e
@@ -85,7 +87,7 @@ e2e: ## End-to-end pipeline tests (build tag: e2e)
 	fi
 
 .PHONY: full-tests
-full-tests: lint test store-integration integration e2e ## The phase-completion gate: everything
+full-tests: lint test integration e2e ## The phase-completion gate: everything
 	@echo "full-tests: OK"
 
 .PHONY: golden-update
