@@ -91,3 +91,28 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  chart:
+    needs: scan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.1.4
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: package and push chart
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version: .*/version: ${VERSION}/" deploy/charts/prism-store/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: ${GITHUB_REF_NAME}/" deploy/charts/prism-store/Chart.yaml
+          helm package deploy/charts/prism-store --destination /tmp
+          helm push "/tmp/prism-store-${VERSION}.tgz" oci://ghcr.io/elk-utilities/charts

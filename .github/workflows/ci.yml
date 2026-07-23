@@ -40,6 +40,24 @@ jobs:
       - name: store integration smoke
         run: make store-integration
 
+  # Helm chart: lint, template variants, and golden manifest stability.
+  chart:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.1.4
+      - name: helm lint
+        run: helm lint deploy/charts/prism-store
+      - name: helm template variants
+        run: |
+          helm template test deploy/charts/prism-store >/dev/null
+          helm template test deploy/charts/prism-store --set networkPolicy.enabled=true >/dev/null
+          helm template test deploy/charts/prism-store --set env.adminListenAddr=":9090" >/dev/null
+      - name: golden snapshot
+        run: deploy/charts/prism-store/scripts/check-golden.sh
+
   # Merge-blocking gate: brings up docker-compose deps and runs integration+e2e.
   full:
     runs-on: ubuntu-24.04
