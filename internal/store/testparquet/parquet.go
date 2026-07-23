@@ -22,7 +22,7 @@ type Row struct {
 }
 
 // WriteFile writes rows to path as parquet. Empty rows is a no-op.
-func WriteFile(t *testing.T, path string, rows []Row) {
+func WriteFile(t testing.TB, path string, rows []Row) {
 	t.Helper()
 	if len(rows) == 0 {
 		return
@@ -64,7 +64,7 @@ func valuesClause(rows []Row) string {
 }
 
 // WriteRollupBucket writes a single-bucket rollup parquet for retention tests.
-func WriteRollupBucket(t *testing.T, path string, bucket time.Time, name string, value float64) {
+func WriteRollupBucket(t testing.TB, path string, bucket time.Time, name string, value float64) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -94,7 +94,7 @@ func WriteRollupBucket(t *testing.T, path string, bucket time.Time, name string,
 }
 
 // WriteSegmentWithTs writes a single-row metrics parquet including proxy ingest ts.
-func WriteSegmentWithTs(t *testing.T, path string, ts time.Time, metric string, value float64) {
+func WriteSegmentWithTs(t testing.TB, path string, ts time.Time, metric string, value float64) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -136,7 +136,7 @@ func escape(s string) string {
 }
 
 // WriteWindow returns a reader-sized parquet blob in dir for ingest tests.
-func WriteWindow(t *testing.T, dir, name string, rows []Row) string {
+func WriteWindow(t testing.TB, dir, name string, rows []Row) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	WriteFile(t, path, rows)
