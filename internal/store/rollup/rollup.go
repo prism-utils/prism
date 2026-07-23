@@ -113,7 +113,7 @@ func (b *Builder) BuildFromMerge(sourcePaths []string, now time.Time) error {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return err
 		}
-		final := filepath.Join(dir, fmt.Sprintf("%d.parquet", now.UnixNano()))
+		final := filepath.Join(dir, layout.SegmentName(now))
 		tmp := final + ".tmp"
 		//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
 		q := fmt.Sprintf(`

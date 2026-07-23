@@ -64,7 +64,7 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		return Segment{}, err
 	}
-	final := filepath.Join(destDir, fmt.Sprintf("%d.parquet", now.UnixNano()))
+	final := filepath.Join(destDir, layout.SegmentName(now))
 	tmp := final + ".tmp"
 
 	fromParts := make([]string, len(action.Sources))
