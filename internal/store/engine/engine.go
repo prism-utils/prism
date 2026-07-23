@@ -422,7 +422,12 @@ func errString(err error) string {
 
 // atomicCopyTo runs COPY (selectSQL) TO finalPath via a temp file and atomic rename.
 func atomicCopyTo(db *sql.DB, selectSQL, finalPath string, rowGroupSize int, args ...any) error {
-	tmp := finalPath + ".tmp"
+	// A per-call random suffix keeps concurrent writers to the same finalPath
+	// (e.g. simultaneous hot-snapshot exports for one tenant) from clobbering a
+	// shared temp file; the atomic rename then publishes a complete file.
+	var suffix [4]byte
+	_, _ = rand.Read(suffix[:])
+	tmp := fmt.Sprintf("%s.%s.tmp", finalPath, hex.EncodeToString(suffix[:]))
 	copySQL := fmt.Sprintf(
 		`COPY (%s) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)`,
 		selectSQL, escapePath(tmp), rowGroupSize,

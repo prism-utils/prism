@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -160,8 +161,45 @@ func TestHotSnapshotNoPartialTmpLeft(t *testing.T) {
 	if err := e.ExportHotSnapshots(); err != nil {
 		t.Fatalf("export: %v", err)
 	}
-	tmpPath := filepath.Join(e.cfg.DataDir, testTenant, "hot", "current.parquet.tmp")
-	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
-		t.Fatalf("partial tmp file should not remain after export")
+	leftovers, _ := filepath.Glob(filepath.Join(e.cfg.DataDir, testTenant, "hot", "*.tmp"))
+	if len(leftovers) != 0 {
+		t.Fatalf("partial tmp file(s) should not remain after export: %v", leftovers)
+	}
+}
+
+func TestConcurrentHotSnapshotSameTenant(t *testing.T) {
+	// Concurrent exports for one tenant must not clobber a shared temp file.
+	start := time.Unix(1700000000, 0).UTC()
+	e, _ := testEngine(t, start, time.Hour)
+	dir := t.TempDir()
+	path := testparquet.WriteWindow(t, dir, "w.parquet", []testparquet.Row{
+		{Name: "up", Labels: "{}", Value: 1, TimestampMs: 0},
+	})
+	if _, err := e.Ingest(testTenant, readFile(t, path)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- e.ExportHotSnapshot(testTenant)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent export: %v", err)
+		}
+	}
+	final := filepath.Join(e.cfg.DataDir, testTenant, "hot", "current.parquet")
+	if _, err := os.Stat(final); err != nil {
+		t.Fatalf("final snapshot missing: %v", err)
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(e.cfg.DataDir, testTenant, "hot", "*.tmp"))
+	if len(leftovers) != 0 {
+		t.Fatalf("temp files should not remain: %v", leftovers)
 	}
 }
