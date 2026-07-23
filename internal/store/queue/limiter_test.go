@@ -208,6 +208,49 @@ func TestMiddleware_slotReleasedAfterHandler(t *testing.T) {
 	}
 }
 
+func TestMiddleware_panicInHandlerDoesNotLeakWaiter(t *testing.T) {
+	t.Parallel()
+	lim := NewLimiter(LimiterConfig{
+		Enabled:     true,
+		MaxInFlight: 1,
+		MaxQueue:    1,
+		Wait:        time.Second,
+	})
+
+	block := make(chan struct{})
+	started := make(chan struct{}, 1)
+	h := Middleware(lim, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		started <- struct{}{}
+		<-block
+		panic("boom")
+	}))
+
+	// Occupy the single slot, then queue a waiter that acquires and panics.
+	go func() {
+		defer func() { _ = recover() }()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
+	}()
+	<-started
+	waiterDone := make(chan struct{})
+	go func() {
+		defer func() { _ = recover(); close(waiterDone) }()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	close(block) // first handler panics, releasing its slot to the waiter
+	<-waiterDone // waiter acquires slot, then panics
+
+	// After both panics the waiter count is back to zero (no leak, and the
+	// idempotent release never over-decrements) and the slot is free.
+	if got := lim.waiters.Load(); got != 0 {
+		t.Fatalf("waiters = %d after panics, want 0", got)
+	}
+	if got := len(lim.sem); got != 0 {
+		t.Fatalf("in-flight slots = %d after panics, want 0", got)
+	}
+}
+
 func TestMiddleware_clientCancelReturnsPromptly(t *testing.T) {
 	t.Parallel()
 	block := make(chan struct{})

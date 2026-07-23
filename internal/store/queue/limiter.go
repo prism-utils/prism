@@ -60,20 +60,24 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 			rejectTooMany(w)
 			return
 		}
+		// Guarantee the waiter count is decremented exactly once even if a later
+		// step panics; the explicit calls free the waiter slot before serving.
+		releaseWaiter := releaseOnce(l)
+		defer releaseWaiter()
 
 		timer := time.NewTimer(l.Wait)
 		defer timer.Stop()
 
 		select {
 		case l.sem <- struct{}{}:
-			l.leaveWaitQueue()
+			releaseWaiter()
 			defer func() { <-l.sem }()
 			next.ServeHTTP(w, r)
 		case <-timer.C:
-			l.leaveWaitQueue()
+			releaseWaiter()
 			rejectTooMany(w)
 		case <-r.Context().Done():
-			l.leaveWaitQueue()
+			releaseWaiter()
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -99,6 +103,19 @@ func (l *Limiter) enterWaitQueue() bool {
 
 func (l *Limiter) leaveWaitQueue() {
 	l.waiters.Add(-1)
+}
+
+// releaseOnce returns an idempotent decrement of the waiter count so both the
+// explicit call and the deferred safety net collapse to a single Add(-1).
+func releaseOnce(l *Limiter) func() {
+	released := false
+	return func() {
+		if released {
+			return
+		}
+		released = true
+		l.leaveWaitQueue()
+	}
 }
 
 func rejectTooMany(w http.ResponseWriter) {
