@@ -110,6 +110,28 @@ spec:
               value: {{ .Values.env.sqlAPITimeoutSeconds | quote }}
             - name: SQL_API_MAX_BODY_BYTES
               value: {{ .Values.env.sqlAPIMaxBodyBytes | quote }}
+            - name: QUERY_HOT_ONLY
+              value: {{ .Values.env.queryHotOnly | quote }}
+            - name: RUN_JOBS
+              value: {{ .Values.env.runJobs | quote }}
+            - name: MAX_OPEN_TENANTS
+              value: {{ .Values.env.maxOpenTenants | quote }}
+            {{- if .Values.env.duckdbThreads }}
+            - name: DUCKDB_THREADS
+              value: {{ .Values.env.duckdbThreads | quote }}
+            {{- end }}
+            {{- if .Values.env.duckdbMemoryLimit }}
+            - name: DUCKDB_MEMORY_LIMIT
+              value: {{ .Values.env.duckdbMemoryLimit | quote }}
+            {{- end }}
+            - name: SQL_API_QUEUE_ENABLED
+              value: {{ .Values.env.sqlAPIQueueEnabled | quote }}
+            - name: SQL_API_MAX_INFLIGHT
+              value: {{ .Values.env.sqlAPIMaxInFlight | quote }}
+            - name: SQL_API_MAX_QUEUE
+              value: {{ .Values.env.sqlAPIMaxQueue | quote }}
+            - name: SQL_API_QUEUE_TIMEOUT_MS
+              value: {{ .Values.env.sqlAPIQueueTimeoutMs | quote }}
             {{- if .Values.secrets.existingSecret }}
             - name: INGEST_TOKEN
               valueFrom:

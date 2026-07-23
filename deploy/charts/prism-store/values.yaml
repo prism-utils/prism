@@ -86,6 +86,17 @@ env:
   sqlAPITimeoutSeconds: "30"
   sqlAPIMaxBodyBytes: "1048576"
 
+  queryHotOnly: "false"
+  runJobs: "true"
+  maxOpenTenants: "32"
+  duckdbThreads: ""
+  duckdbMemoryLimit: ""
+
+  sqlAPIQueueEnabled: "false"
+  sqlAPIMaxInFlight: "4"
+  sqlAPIMaxQueue: "64"
+  sqlAPIQueueTimeoutMs: "5000"
+
 # Tokens are never inlined here. Point existingSecret at a pre-created Secret; the chart
 # does not create or rotate credentials (no ESO/SealedSecrets dependency).
 secrets:

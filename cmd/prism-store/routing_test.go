@@ -25,8 +25,8 @@ func TestServeMuxSplitPlanes(t *testing.T) {
 		adminToken:       "admin-tok",
 	}
 
-	public := newServeMux(cfg, eng, logger, planePublic, nil, nil)
-	adminPlane := newServeMux(cfg, eng, logger, planeAdmin, nil, nil)
+	public := newServeMux(cfg, eng, logger, planePublic, nil, nil, nil)
+	adminPlane := newServeMux(cfg, eng, logger, planeAdmin, nil, nil, nil)
 
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rec := httptest.NewRecorder()
@@ -92,7 +92,7 @@ func TestCombinedMuxServesAllRoutes(t *testing.T) {
 		allowedArtifacts: []string{"metrics-raw"},
 		authMode:         "none",
 	}
-	mux := newServeMux(cfg, eng, logger, planeCombined, nil, nil)
+	mux := newServeMux(cfg, eng, logger, planeCombined, nil, nil, nil)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/stats", nil))

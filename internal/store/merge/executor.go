@@ -17,6 +17,8 @@ type ExecutorConfig struct {
 	DataDir      string
 	Tenant       string
 	RowGroupSize int
+	Threads      int
+	MemoryLimit  string
 }
 
 // Executor runs planned merges via DuckDB COPY.
@@ -31,7 +33,7 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 	if cfg.RowGroupSize <= 0 {
 		cfg.RowGroupSize = 1_000_000
 	}
-	connector, err := duckdb.NewConnector("", nil)
+	connector, err := newInMemoryConnector(DuckDBCaps{Threads: cfg.Threads, MemoryLimit: cfg.MemoryLimit})
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +91,7 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 		return Segment{}, err
 	}
 
-	seg, err := StatSegment(final, destTier)
+	seg, err := StatSegment(final, destTier, DuckDBCaps{Threads: x.cfg.Threads, MemoryLimit: x.cfg.MemoryLimit})
 	if err != nil {
 		_ = os.Remove(final)
 		return Segment{}, err
@@ -103,12 +105,12 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 }
 
 // StatSegment reads parquet metadata for min/max ts and byte size.
-func StatSegment(path string, tier int) (Segment, error) {
+func StatSegment(path string, tier int, caps DuckDBCaps) (Segment, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return Segment{}, err
 	}
-	connector, err := duckdb.NewConnector("", nil)
+	connector, err := newInMemoryConnector(caps)
 	if err != nil {
 		return Segment{}, err
 	}
@@ -133,7 +135,7 @@ func StatSegment(path string, tier int) (Segment, error) {
 }
 
 // ScanTier lists segments in a tier directory with stats.
-func ScanTier(dataDir, tenant string, tier int) ([]Segment, error) {
+func ScanTier(dataDir, tenant string, tier int, caps DuckDBCaps) ([]Segment, error) {
 	dir := layout.TierDir(dataDir, tenant, tier)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -151,7 +153,7 @@ func ScanTier(dataDir, tenant string, tier int) ([]Segment, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		seg, err := StatSegment(path, tier)
+		seg, err := StatSegment(path, tier, caps)
 		if err != nil {
 			return nil, err
 		}
@@ -161,10 +163,10 @@ func ScanTier(dataDir, tenant string, tier int) ([]Segment, error) {
 }
 
 // ScanAllTiers returns segments from L0..Lmax present on disk.
-func ScanAllTiers(dataDir, tenant string, maxTier int) ([]Segment, error) {
+func ScanAllTiers(dataDir, tenant string, maxTier int, caps DuckDBCaps) ([]Segment, error) {
 	var all []Segment
 	for tier := 0; tier <= maxTier; tier++ {
-		segs, err := ScanTier(dataDir, tenant, tier)
+		segs, err := ScanTier(dataDir, tenant, tier, caps)
 		if err != nil {
 			return nil, err
 		}

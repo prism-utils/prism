@@ -53,27 +53,32 @@ import (
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/lifecycle"
 	"github.com/elk-utilities/prism/internal/store/query"
+	"github.com/elk-utilities/prism/internal/store/queue"
 	"github.com/elk-utilities/prism/internal/version"
 )
 
 const (
-	defaultListenAddr        = ":8080"
-	defaultDataDir           = "/data"
-	defaultMaxBodyBytes      = 268435456
-	defaultArtifacts         = "metrics-raw"
-	defaultAuthMode          = "none"
-	defaultHotWindowMinutes  = 10
-	defaultSegmentsPerTier   = 6
-	defaultMaxSegmentBytes   = 2147483648
-	defaultRetentionDays     = 15
-	defaultRollupSteps       = "1m,5m,1h"
-	defaultMaxTier           = 8
-	defaultHotSnapshotSec    = 15
-	defaultFlushTickSec      = 30
-	defaultMergeTickSec      = 60
-	defaultRetentionTickHour = 1
-	readHeaderTimeout        = 15 * time.Second
-	shutdownTimeout          = 10 * time.Second
+	defaultListenAddr         = ":8080"
+	defaultDataDir            = "/data"
+	defaultMaxBodyBytes       = 268435456
+	defaultArtifacts          = "metrics-raw"
+	defaultAuthMode           = "none"
+	defaultHotWindowMinutes   = 10
+	defaultSegmentsPerTier    = 6
+	defaultMaxSegmentBytes    = 2147483648
+	defaultRetentionDays      = 15
+	defaultRollupSteps        = "1m,5m,1h"
+	defaultMaxTier            = 8
+	defaultHotSnapshotSec     = 15
+	defaultFlushTickSec       = 30
+	defaultMergeTickSec       = 60
+	defaultRetentionTickHour  = 1
+	defaultSQLAPIMaxInFlight  = 4
+	defaultSQLAPIMaxQueue     = 64
+	defaultSQLAPIQueueTimeout = 5000
+	defaultMaxOpenTenants     = 32
+	readHeaderTimeout         = 15 * time.Second
+	shutdownTimeout           = 10 * time.Second
 )
 
 type servePlane int
@@ -116,6 +121,11 @@ type serverConfig struct {
 	mode               string
 	clientTenants      string
 	clusterClients     string
+	sqlAPIQueueEnabled bool
+	sqlAPIMaxInFlight  int
+	sqlAPIMaxQueue     int
+	sqlAPIQueueTimeout time.Duration
+	maxOpenTenants     int
 	rbac               *rbacConfig
 }
 
@@ -151,6 +161,11 @@ func loadConfig() serverConfig {
 		mode:               envOr("MODE", "standalone"),
 		clientTenants:      os.Getenv("CLIENT_TENANTS"),
 		clusterClients:     os.Getenv("CLUSTER_CLIENTS"),
+		sqlAPIQueueEnabled: envBool("SQL_API_QUEUE_ENABLED", false),
+		sqlAPIMaxInFlight:  envInt("SQL_API_MAX_INFLIGHT", defaultSQLAPIMaxInFlight),
+		sqlAPIMaxQueue:     envInt("SQL_API_MAX_QUEUE", defaultSQLAPIMaxQueue),
+		sqlAPIQueueTimeout: time.Duration(envInt("SQL_API_QUEUE_TIMEOUT_MS", defaultSQLAPIQueueTimeout)) * time.Millisecond,
+		maxOpenTenants:     envInt("MAX_OPEN_TENANTS", defaultMaxOpenTenants),
 	}
 	c.rbac = loadRBACConfig()
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
@@ -270,7 +285,7 @@ func handleReadyz(dataDir string) http.HandlerFunc {
 	}
 }
 
-func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane, ownedTenants map[string]struct{}, rbac *rbacStack) *http.ServeMux {
+func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane, ownedTenants map[string]struct{}, rbac *rbacStack, sqlLimiter *queue.Limiter) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(cfg.dataDir))
@@ -330,11 +345,12 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 				MaxBodyBytes: cfg.sqlAPIMaxBodyBytes,
 				HotOnly:      cfg.queryHotOnly,
 			}
-			sqlHandler := query.SQLHandler(sqlCfg, eng, logger)
+			h := query.SQLHandler(sqlCfg, eng, logger)
+			h = queue.Middleware(sqlLimiter, h)
 			if ownedTenants != nil {
-				sqlHandler = cluster.OwnedTenantGuard(ownedTenants, sqlHandler)
+				h = cluster.OwnedTenantGuard(ownedTenants, h)
 			}
-			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, sqlHandler))
+			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, h))
 		}
 	}
 	return mux
@@ -475,15 +491,22 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	}
 
 	now := time.Now
+	sqlLimiter := queue.NewLimiter(queue.LimiterConfig{
+		Enabled:     cfg.sqlAPIQueueEnabled,
+		MaxInFlight: cfg.sqlAPIMaxInFlight,
+		MaxQueue:    cfg.sqlAPIMaxQueue,
+		Wait:        cfg.sqlAPIQueueTimeout,
+	})
 	eng := engine.New(engine.Config{
-		DataDir:     cfg.dataDir,
-		HotWindow:   cfg.hotWindow,
-		Threads:     cfg.duckdbThreads,
-		MemoryLimit: cfg.duckdbMemoryLimit,
+		DataDir:        cfg.dataDir,
+		HotWindow:      cfg.hotWindow,
+		Threads:        cfg.duckdbThreads,
+		MemoryLimit:    cfg.duckdbMemoryLimit,
+		MaxOpenTenants: cfg.maxOpenTenants,
 	}, now)
 	defer func() { _ = eng.Close() }()
 
-	runner := lifecycle.NewRunner(lifecycle.Config{
+	runner := lifecycle.NewRunner(&lifecycle.Config{
 		DataDir:         cfg.dataDir,
 		SegmentsPerTier: cfg.segmentsPerTier,
 		MaxSegmentBytes: cfg.maxSegmentBytes,
@@ -491,6 +514,8 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		RetentionDays:   cfg.retentionDays,
 		RollupSteps:     cfg.rollupSteps,
 		MaxTier:         cfg.maxTier,
+		Threads:         cfg.duckdbThreads,
+		MemoryLimit:     cfg.duckdbMemoryLimit,
 	}, eng, now)
 
 	if cfg.runJobs {
@@ -517,7 +542,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
-		Handler:           newServeMux(cfg, eng, logger, publicPlane(cfg), ownedTenants, rbac),
+		Handler:           newServeMux(cfg, eng, logger, publicPlane(cfg), ownedTenants, rbac, sqlLimiter),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
@@ -525,7 +550,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	if cfg.adminListenAddr != "" {
 		adminSrv = &http.Server{
 			Addr:              cfg.adminListenAddr,
-			Handler:           newServeMux(cfg, eng, logger, planeAdmin, ownedTenants, rbac),
+			Handler:           newServeMux(cfg, eng, logger, planeAdmin, ownedTenants, rbac, sqlLimiter),
 			ReadHeaderTimeout: readHeaderTimeout,
 		}
 	}
@@ -541,6 +566,9 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 			"segments_per_tier", cfg.segmentsPerTier,
 			"query_hot_only", cfg.queryHotOnly,
 			"run_jobs", cfg.runJobs,
+			"sql_api_queue_enabled", cfg.sqlAPIQueueEnabled,
+			"sql_api_max_inflight", cfg.sqlAPIMaxInFlight,
+			"max_open_tenants", cfg.maxOpenTenants,
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("public listen: %w", err)

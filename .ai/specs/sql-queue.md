@@ -79,21 +79,21 @@ Status: READY
 ## 4. Acceptance checklist (developer)
 
 ### Code
-- [ ] `internal/store/queue` package: `Limiter` + `Middleware`; disabled→passthrough; `MaxInFlight` concurrency; `MaxQueue` waiter bound; `Wait` timeout; context-cancel; `429`+`Retry-After`; slot always released.
-- [ ] Env wired in `loadConfig()` + `serverConfig` (5 new fields) with the defaults in §1.B; single shared `*queue.Limiter` passed into `newServeMux` and applied to `/sql` in the documented order.
-- [ ] `MaxOpenTenants` wired into `engine.New`.
-- [ ] `DUCKDB_THREADS`/`DUCKDB_MEMORY_LIMIT` applied to merge (`NewExecutor` + `StatSegment`) and rollup (`NewBuilder`) connectors via init callback; plumbed through `lifecycle.Config`.
-- [ ] Startup log + `clearStoreEnv` updated.
+- [x] `internal/store/queue` package: `Limiter` + `Middleware`; disabled→passthrough; `MaxInFlight` concurrency; `MaxQueue` waiter bound; `Wait` timeout; context-cancel; `429`+`Retry-After`; slot always released.
+- [x] Env wired in `loadConfig()` + `serverConfig` (5 new fields) with the defaults in §1.B; single shared `*queue.Limiter` passed into `newServeMux` and applied to `/sql` in the documented order.
+- [x] `MaxOpenTenants` wired into `engine.New`.
+- [x] `DUCKDB_THREADS`/`DUCKDB_MEMORY_LIMIT` applied to merge (`NewExecutor` + `StatSegment`) and rollup (`NewBuilder`) connectors via init callback; plumbed through `lifecycle.Config`.
+- [x] Startup log + `clearStoreEnv` updated.
 
 ### Tests (TDD, tests-first)
-- [ ] Queue unit tests: (a) disabled = passthrough; (b) never more than `MaxInFlight` concurrent (blocking handler + barrier); (c) waiter beyond `MaxQueue` → immediate 429; (d) wait exceeds `Wait` → 429 with `Retry-After`; (e) slot released so later requests succeed; (f) client cancel returns promptly.
-- [ ] Config load test for new envs (incl. defaults) + `clearStoreEnv`.
-- [ ] Merge + rollup: assert `SELECT current_setting('memory_limit'|'threads')` reflects the configured value on their connections.
-- [ ] Existing `/sql` tests still green (limiter disabled by default).
+- [x] Queue unit tests: (a) disabled = passthrough; (b) never more than `MaxInFlight` concurrent (blocking handler + barrier); (c) waiter beyond `MaxQueue` → immediate 429; (d) wait exceeds `Wait` → 429 with `Retry-After`; (e) slot released so later requests succeed; (f) client cancel returns promptly.
+- [x] Config load test for new envs (incl. defaults) + `clearStoreEnv`.
+- [x] Merge + rollup: assert `SELECT current_setting('memory_limit'|'threads')` reflects the configured value on their connections.
+- [x] Existing `/sql` tests still green (limiter disabled by default).
 
 ### Helm + build
-- [ ] Chart env added; golden regenerated & committed; `helm lint`/golden check pass.
-- [ ] `make lint test` green with `-tags duckdb_arrow`; `go build -tags duckdb_arrow ./...`; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; `git status` clean.
+- [x] Chart env added; golden regenerated & committed; `helm lint`/golden check pass.
+- [x] `make lint test` green with `-tags duckdb_arrow`; `go build -tags duckdb_arrow ./...`; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; `git status` clean.
 
 ### Docs (§1.D) — all required
 - [ ] `docs/CONFIG.md` §14 complete & matches `loadConfig()`.

@@ -90,7 +90,7 @@ func TestRBACHTTPIngestViaJWT(t *testing.T) {
 	eng := engine.New(engine.Config{DataDir: dir, HotWindow: time.Hour}, time.Now)
 	t.Cleanup(func() { _ = eng.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mux := newServeMux(cfg, eng, logger, planeCombined, nil, stack)
+	mux := newServeMux(cfg, eng, logger, planeCombined, nil, stack, nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -134,7 +134,7 @@ func TestRBACOffRoutingUnchanged(t *testing.T) {
 	t.Cleanup(func() { _ = eng.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	mux := newServeMux(cfg, eng, logger, planeCombined, nil, nil)
+	mux := newServeMux(cfg, eng, logger, planeCombined, nil, nil, nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -262,7 +262,7 @@ func TestRBACClientReEnforcesUnauthorizedTenant(t *testing.T) {
 	t.Cleanup(func() { _ = eng.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	owned := map[string]struct{}{"user-6f3a9c2b-apps": {}}
-	mux := newServeMux(cfg, eng, logger, planeCombined, owned, stack)
+	mux := newServeMux(cfg, eng, logger, planeCombined, owned, stack, nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
