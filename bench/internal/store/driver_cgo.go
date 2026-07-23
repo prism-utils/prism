@@ -145,6 +145,9 @@ func (d *cgoDriver) serverEnv() []string {
 			"DUCKDB_MEMORY_LIMIT="+d.cfg.Budget.DuckDBMemoryLimit(),
 		)
 	}
+	if d.cfg.HotOnly {
+		env = append(env, "QUERY_HOT_ONLY=true")
+	}
 	return env
 }
 

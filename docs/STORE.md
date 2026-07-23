@@ -366,7 +366,9 @@ guards; not for production).
 
 When `QUERY_HOT_ONLY=true`, the union includes only parts (1)–(2) below; tier
 and rollup Parquet reads are skipped for lower latency on freshness-only
-queries. Default is the full union (hot + tiers + rollups).
+queries. The same flag also constrains the **SQL API sandbox** (`POST /{tenant}/sql`):
+the `metrics` view unions only `hot/current.parquet` and skips `tiers/L*/*.parquet`.
+Default is the full union (hot + tiers + rollups).
 
 ### Union SQL shape
 
@@ -453,8 +455,10 @@ When **`SQL_API_ENABLED=false`** (default `true`), the route is not registered
 | `metrics` | `"__name__"`, `labels`, `value`, `timestamp_ms`, `ts` |
 
 Built from the tenant's **`hot/current.parquet`** snapshot (exported per request)
-plus present **`tiers/L*/*.parquet`** globs — same union shape as structured
-query / Grafana view SQL. Visibility: committed hot (as of snapshot) + all tiers.
+plus present **`tiers/L*/*.parquet`** globs when `QUERY_HOT_ONLY` is off — same
+union shape as structured query / Grafana view SQL. With `QUERY_HOT_ONLY=true`,
+only the hot snapshot is included. Visibility: committed hot (as of snapshot) + all
+tiers (tiers omitted in hot-only mode).
 
 ### Sandbox guarantees
 

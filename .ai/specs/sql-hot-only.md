@@ -1,6 +1,6 @@
 # Spec: honor QUERY_HOT_ONLY in the /sql sandbox + api-arrow-hot benchmark
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/sql-hot-only`
 - **Owner phase:** orchestrator → developer → reviewer + security-review; then orchestrator RUNS the benchmark and commits results to a directory.
@@ -25,7 +25,7 @@ Status: READY
 - Driver: add `HotOnly bool` to `benchstore.Config`; when set, `serverEnv()` adds `QUERY_HOT_ONLY=true`.
 - Orchestrator: add `--hot-only` flag (requires `--api`; error otherwise). Profile suffix gains `-hot`: `--api --arrow --hot-only` → `api-arrow-hot`. Reuse the existing `api-arrow` query path (count/agg Arrow + scan_json/scan_arrow) and count gate (all bench data is resident in `hot_current`, so the hot snapshot holds the full ~1M rows → the count gate still equals `MetricsRows`).
 - Artifacts via `results.ArtifactPaths(repoRoot, "api-arrow-hot")` → `bench/results-api-arrow-hot.*`, `bench/RESULTS-api-arrow-hot.md`, `bench/charts-api-arrow-hot/`.
-- Render: treat `api-arrow-hot` like `api-arrow` with a title/notes suffix "(hot cache only — sandbox reads the hot snapshot, tiers skipped)".
+- Render: treat `api-arrow-hot` like `api-arrow` with a title/notes suffix "(hot cache only — sandbox reads the hot snapshot; parquet tiers skipped)".
 - `Makefile`: `bench-api-arrow-hot` target = `CGO_ENABLED=1 go run -tags duckdb_arrow ./bench/cmd/prism-bench --api --arrow --hot-only --scale $(BENCH_SCALE)`.
 - Docs: `bench/README.md` short section; `docs/STORE.md` note that `QUERY_HOT_ONLY` now also constrains the SQL API sandbox to the hot snapshot.
 
@@ -46,12 +46,12 @@ Status: READY
   - perf/product: hot-only serves purely from the recent hot snapshot (no tier parquet fan-out), the intended low-latency path; benchmarking the transport there shows its best-case latency with RBAC on. Security: strictly narrows the sandbox source set, so isolation is unaffected.
 
 ## 5. Acceptance checklist (developer)
-- [ ] `SQLConfig.HotOnly` added; wired from `QUERY_HOT_ONLY` in `main.go`; threaded to `collectSafeParquetPaths`.
-- [ ] Hot-only sandbox SQL includes ONLY `hot/current.parquet`; NO `tiers/L*` paths; non-hot-only unchanged (snapshot + tiers).
-- [ ] Tests: (a) hot-only union SQL omits tier paths / includes snapshot; (b) with data in BOTH hot snapshot and a tier, hot-only COUNT returns only hot rows while full returns all (proves tiers skipped); (c) isolation tests still pass under hot-only (cross-tenant/host-fs → 400); (d) Arrow + JSON both honor hot-only (shared path). TDD tests-first.
-- [ ] Bench: `--hot-only` requires `--api` (error path tested); `api-arrow-hot` profile + artifacts; `QUERY_HOT_ONLY=true` in `serverEnv`; count gate passes; render supports `api-arrow-hot`; `make bench-api-arrow-hot`; `bench/README.md` + `docs/STORE.md` notes.
-- [ ] `make lint test` green (with `duckdb_arrow`); `go build -tags duckdb_arrow ./bench/...` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; `git status` clean.
-- [ ] No `*-api-arrow-hot*` result artifacts committed (orchestrator generates them).
+- [x] `SQLConfig.HotOnly` added; wired from `QUERY_HOT_ONLY` in `main.go`; threaded to `collectSafeParquetPaths`.
+- [x] Hot-only sandbox SQL includes ONLY `hot/current.parquet`; NO `tiers/L*` paths; non-hot-only unchanged (snapshot + tiers).
+- [x] Tests: (a) hot-only union SQL omits tier paths / includes snapshot; (b) with data in BOTH hot snapshot and a tier, hot-only COUNT returns only hot rows while full returns all (proves tiers skipped); (c) isolation tests still pass under hot-only (cross-tenant/host-fs → 400); (d) Arrow + JSON both honor hot-only (shared path). TDD tests-first.
+- [x] Bench: `--hot-only` requires `--api` (error path tested); `api-arrow-hot` profile + artifacts; `QUERY_HOT_ONLY=true` in `serverEnv`; count gate passes; render supports `api-arrow-hot`; `make bench-api-arrow-hot`; `bench/README.md` + `docs/STORE.md` notes.
+- [x] `make lint test` green (with `duckdb_arrow`); `go build -tags duckdb_arrow ./bench/...` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; `git status` clean.
+- [x] No `*-api-arrow-hot*` result artifacts committed (orchestrator generates them).
 
 ## 6. Mandatory review gates (reviewer) — SECURITY-SENSITIVE
 - [ ] Gate 1 — Guidelines: minimal threading of HotOnly; shared sandbox path for JSON+Arrow; wrapped errors; atomic comments §3.8.
