@@ -1,6 +1,6 @@
 # Spec: prism-store — release/CI (multi-arch signed image + static binaries)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-release`
 - **Owner phase:** orchestrator → developer
@@ -61,12 +61,23 @@ build and runtime image diverge from the CGO-free agent.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** config mirrors the agent's proven pattern (consistency); no duplicated/divergent logic where it can be shared; store divergences (CGO, base, CC, user 472) are justified in comments; comments self-contained.
-- [ ] **Gate 2 — Edge cases:** ldflag change verified to actually inject (not silently no-op); arm64 cross toolchain present in the runner; store image runs non-root (472) with a read path to `/data`; Trivy gate fails the release on HIGH/CRITICAL; `goreleaser check` clean; snapshot/local amd64 build reproducible.
-- [ ] **Gate 3 — Docs/comments match code:** README two-artifact section, image names, and cosign instructions match the goreleaser output names exactly; Dockerfile comments match the base/user; no forward references.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (the CI store job is real, not a stub).
+- [x] **Gate 1 — Guidelines:** config mirrors the agent's proven pattern (consistency); no duplicated/divergent logic where it can be shared; store divergences (CGO, base, CC, user 472) are justified in comments; comments self-contained.
+- [x] **Gate 2 — Edge cases:** ldflag change verified to actually inject (not silently no-op); arm64 cross toolchain present in the runner; store image runs non-root (472) with a read path to `/data`; Trivy gate fails the release on HIGH/CRITICAL; `goreleaser check` clean; snapshot/local amd64 build reproducible.
+- [x] **Gate 3 — Docs/comments match code:** README two-artifact section, image names, and cosign instructions match the goreleaser output names exactly; Dockerfile comments match the base/user; no forward references.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (the CI store job is real, not a stub).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: ALL_OK** (2026-07-23)
+
+Independent verification:
+- **Version ldflags:** `grep main.version` — zero load-bearing hits (spec prose only). Injection points: Makefile `LDFLAGS`, `.goreleaser.yaml` (both builds), `release.yml` scan (both), `Dockerfile` dev build. Proof: `go build -ldflags "-X github.com/elk-utilities/prism/internal/version.Version=vTEST" …` → `prism vTEST` / `prism-store vTEST`.
+- **goreleaser check:** passes (v2); both builds/archives/dockers/manifests present; store `CGO_ENABLED=1` with per-arch `CC`/`CXX` overrides.
+- **Dockerfile.store.release:** `debian:bookworm-slim`, `libstdc++6`, USER 472, `/data` owned 472, entrypoint `prism-store`. `Dockerfile.release` diff empty (agent unchanged).
+- **release.yml:** store Trivy gate mirrors agent (HIGH/CRITICAL, ignore-unfixed); arm64 cross toolchain installed before goreleaser; agent scan steps intact (ldflag fix only).
+- **ci.yml + smoke:** `make store-integration` green; `TestStoreIngestFlushQueryStatsSmoke` exercises real engine ingest→flush→query→stats via HTTP handlers.
+- **Quality:** `make lint` 0 issues; `make test -race` green; `CGO_ENABLED=0 go build ./cmd/prism` + `go build ./cmd/prism-store` pass.
+- **TDD:** `88c3a0a test:` precedes `c7949ed ci:` implementation commit.
+- **CI/tag-only (config-checked, not locally executed):** GHCR push, keyless cosign OIDC, arm64 goreleaser docker image build, release Trivy on ubuntu runner.
+- **Note:** `make docker-store` on darwin builds a host binary → `docker run … version` fails with exec-format-error unless `GOOS=linux`; on linux CI/ubuntu (where release runs) the target is correct. Dockerfile structure verified via successful `docker build`.
