@@ -14,7 +14,7 @@ coverage.html
 *.parquet
 /tmp/
 /testdata/tmp/
-/bench-out/
+/bench/.work/
 /cluster-out/
 
 # Editor / OS

@@ -13,7 +13,7 @@
 | **Unit** | one function/component in isolation, fakes for deps | ms | ✅ | ✅ |
 | **Golden** | encoders/parsers vs checked-in fixtures | ms | ✅ | ✅ |
 | **Fuzz** | parsers/scripts never panic on hostile input | short seed / long soak | seed only | seed only |
-| **Bench** | hot-path `allocs/op`, `bytes/op`, throughput | — | on demand (`make bench`) | — |
+| **Microbench** | hot-path `allocs/op`, `bytes/op`, throughput | — | on demand (`make microbench`) | — |
 | **Integration** | real component ↔ real dependency (docker-compose) | seconds | ❌ | ✅ |
 | **E2E** | full pipeline from a real config, in→out asserted | seconds | ❌ | ✅ |
 
@@ -70,7 +70,8 @@ Slow layers are behind **build tags** (`//go:build integration` / `e2e`) so
 make build          # static binary -> ./bin/prism (CGO_ENABLED=0)
 make test           # fast: unit + golden + fuzz seeds + race detector
 make lint           # golangci-lint
-make bench          # hot-path benchmarks (parser/encoder), prints allocs/op
+make microbench    # hot-path Go benchmarks (parser/encoder), prints allocs/op
+make bench         # reproducible prism-store vs ClickHouse harness (docker required)
 make cover          # coverage.txt + html; prints total
 make tidy           # go mod tidy + verify no diff
 make full-tests     # test + lint + integration + e2e (spins docker-compose)
