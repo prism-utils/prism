@@ -63,6 +63,36 @@ func valuesClause(rows []Row) string {
 	return out
 }
 
+// WriteRollupBucket writes a single-bucket rollup parquet for retention tests.
+func WriteRollupBucket(t *testing.T, path string, bucket time.Time, name string, value float64) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatalf("connector: %v", err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	bucketStr := bucket.UTC().Format("2006-01-02 15:04:05.999999")
+	tmp := path + ".tmp"
+	//nolint:gosec // G201: test fixture SQL with controlled literals only.
+	q := fmt.Sprintf(`
+		COPY (
+			SELECT CAST('%s' AS TIMESTAMP) AS bucket, '%s' AS "__name__",
+			       %f AS avg, %f AS min, %f AS max, 1::BIGINT AS count, %f AS sum
+		) TO '%s' (FORMAT parquet)
+	`, bucketStr, escape(name), value, value, value, value, filepath.ToSlash(tmp))
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("copy rollup: %v", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+}
+
 // WriteSegmentWithTs writes a single-row metrics parquet including proxy ingest ts.
 func WriteSegmentWithTs(t *testing.T, path string, ts time.Time, metric string, value float64) {
 	t.Helper()
