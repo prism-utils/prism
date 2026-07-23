@@ -114,6 +114,28 @@ spec:
                   name: {{ .Values.secrets.existingSecret | quote }}
                   key: {{ .Values.secrets.adminTokenKey | quote }}
             {{- end }}
+            {{- if .Values.rbac.enabled }}
+            - name: AUTHZ_POLICY_FILE
+              value: {{ printf "%s/policy.yaml" .Values.rbac.policyMountPath | quote }}
+            - name: AUTHZ_RELOAD_SECONDS
+              value: {{ .Values.rbac.reloadSeconds | quote }}
+            {{- if .Values.rbac.oidc.issuer }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.rbac.oidc.issuer | quote }}
+            {{- end }}
+            {{- if .Values.rbac.oidc.audience }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.rbac.oidc.audience | quote }}
+            {{- end }}
+            {{- if .Values.rbac.oidc.jwksURL }}
+            - name: OIDC_JWKS_URL
+              value: {{ .Values.rbac.oidc.jwksURL | quote }}
+            {{- end }}
+            {{- if .Values.rbac.oidc.jwksFile }}
+            - name: OIDC_JWKS_FILE
+              value: {{ .Values.rbac.oidc.jwksFile | quote }}
+            {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -131,9 +153,19 @@ spec:
               mountPath: {{ .Values.env.dataDir }}
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.rbac.enabled }}
+            - name: rbac-policy
+              mountPath: {{ .Values.rbac.policyMountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.rbac.enabled }}
+        - name: rbac-policy
+          configMap:
+            name: {{ include "prism-store.fullname" . }}-rbac
+        {{- end }}
         {{- if not .Values.persistence.enabled }}
         - name: data
           emptyDir: {}

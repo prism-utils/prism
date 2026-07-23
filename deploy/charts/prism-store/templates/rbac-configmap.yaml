@@ -1,0 +1,11 @@
+{{- if .Values.rbac.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "prism-store.fullname" . }}-rbac
+  labels:
+    {{- include "prism-store.labels" . | nindent 4 }}
+data:
+  policy.yaml: |
+{{ .Values.rbac.policy | indent 4 }}
+{{- end }}

@@ -100,3 +100,16 @@ networkPolicy:
   admin:
     namespaceSelector: {}
     podSelector: {}
+
+# RBAC (JWT/OIDC + mounted policy). Default off — enable for multi-tenant isolation.
+rbac:
+  enabled: false
+  policy: |
+    bindings: []
+  policyMountPath: /etc/prism/rbac
+  oidc:
+    issuer: ""
+    audience: ""
+    jwksURL: ""
+    jwksFile: ""
+  reloadSeconds: "15"

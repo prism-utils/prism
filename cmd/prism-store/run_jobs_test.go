@@ -50,7 +50,7 @@ func TestRunServeJobsDisabledNoBackgroundLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(ctx, cfg, logger, nil)
+		done <- runServe(ctx, cfg, logger, nil, nil)
 	}()
 
 	waitHTTPReady(t, "http://"+publicAddr)
@@ -108,7 +108,7 @@ func TestRunServeJobsEnabledStartsBackgroundLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(ctx, cfg, logger, nil)
+		done <- runServe(ctx, cfg, logger, nil, nil)
 	}()
 
 	waitHTTPReady(t, "http://"+publicAddr)

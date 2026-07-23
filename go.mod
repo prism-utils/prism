@@ -12,6 +12,8 @@ require (
 	github.com/apache/arrow-go/v18 v18.6.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/coreos/go-oidc/v3 v3.20.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/marcboeker/go-duckdb v1.8.5
 	github.com/nxadm/tail v1.4.11
@@ -21,6 +23,7 @@ require (
 	golang.org/x/sync v0.21.0
 	gonum.org/v1/plot v0.17.0
 	google.golang.org/grpc v1.82.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -63,10 +66,10 @@ require (
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/image v0.30.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

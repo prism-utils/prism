@@ -1,6 +1,6 @@
 # Spec: prism-store — RBAC (JWT/OIDC identity + per-tenant roles, deny-by-default)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-rbac`
 - **Owner phase:** orchestrator → developer
@@ -98,17 +98,17 @@ hot-reloaded. Enforced in **all modes**, including the cluster coordinator (edge
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `internal/store/auth`: JWT/OIDC `Verifier` (JWKS via OIDC discovery or static file/URL; validates sig/`iss`/`aud`/`exp`/`nbf`; `sub`→principal). Unit tests with a locally-generated signing key + JWKS (httptest, NO external network): valid; expired; bad signature; wrong `aud`; wrong `iss`; missing `sub`; malformed → all rejected with distinct errors.
-- [ ] `internal/store/authz`: policy parse/validate (deny-by-default; unknown role, empty subject, bad tenant, `*` handling, reload-keeps-old-on-error, startup-fails-on-bad-initial); `Authorize` permission matrix (reader/writer/admin × query/ingest/ensure/stats × same/other tenant) fully table-tested incl. deny-by-default for unbound subjects; `AuthorizedTenants` for stats scoping.
-- [ ] HTTP authz middleware: 401 (missing/invalid token), 404 (authed but tenant not authorized — identical to unknown tenant), 403 (authorized tenant but action not permitted); route→action mapping correct; identity headers from the client are ignored. httptest-covered for query/ingest/ensure/stats.
-- [ ] **BOLA/isolation tests (critical):** token for user A → query/ingest/`stats?ns=B` on tenant B all return **404**; A calling an admin route without admin → **403**; unbound subject → denied everywhere; `sub` spoof via header has no effect.
-- [ ] `/stats` scoping: `*`-admin sees all tenants; scoped admin sees only its tenants; `?ns=X` requires `stats` on X (else 404); non-admin cannot enumerate. Test proves no cross-tenant leak.
-- [ ] Cluster: coordinator authenticates+authorizes before routing — unauthorized/unknown tenant returns 404/403/401 with **no upstream contacted** (httptest fakes); JWT forwarded to the owning client; client independently re-enforces (a direct client request for an unauthorized tenant is still denied even if it bypasses the coordinator).
-- [ ] `cmd/prism-store`: RBAC enabled by `AUTHZ_POLICY_FILE`; OIDC env wired; fail-fast when RBAC on but OIDC/JWKS misconfigured; middleware applied to query/ingest/admin across standalone/client/cluster; **RBAC-off path byte-for-byte unchanged** (guarded by a test). Startup logs the effective RBAC state (enabled, issuer, #bindings) WITHOUT logging secrets/tokens.
-- [ ] Hot-reload test: editing the policy file changes decisions within the reload interval; an invalid edit keeps the last good policy and logs.
-- [ ] Docs: `docs/STORE.md` (+ `docs/CONFIG.md` env table + `main.go` usage) document the RBAC model, env vars, policy file format, the 401/403/404 semantics, precedence vs `AUTH_MODE`, and the k8s (projected SA token + ConfigMap) and Vault (Agent-rendered JWT + policy) wiring. `docs/DESIGN.md` §15 gets a short RBAC ADR note with the references above. If the Helm chart exists (`deploy/charts/prism-store`), add values + templates for policy mount + OIDC env (feature-flagged, default off).
-- [ ] No secret material committed; structured **deny** logs include subject + action + tenant + reason but never the raw token.
-- [ ] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; **`CGO_ENABLED=0 go build ./cmd/prism` ok and its import graph contains NEITHER the OIDC/JWT lib NOR the YAML lib** (RBAC is store-only — verify with `go list -deps`); `make tidy` clean.
+- [x] `internal/store/auth`: JWT/OIDC `Verifier` (JWKS via OIDC discovery or static file/URL; validates sig/`iss`/`aud`/`exp`/`nbf`; `sub`→principal). Unit tests with a locally-generated signing key + JWKS (httptest, NO external network): valid; expired; bad signature; wrong `aud`; wrong `iss`; missing `sub`; malformed → all rejected with distinct errors.
+- [x] `internal/store/authz`: policy parse/validate (deny-by-default; unknown role, empty subject, bad tenant, `*` handling, reload-keeps-old-on-error, startup-fails-on-bad-initial); `Authorize` permission matrix (reader/writer/admin × query/ingest/ensure/stats × same/other tenant) fully table-tested incl. deny-by-default for unbound subjects; `AuthorizedTenants` for stats scoping.
+- [x] HTTP authz middleware: 401 (missing/invalid token), 404 (authed but tenant not authorized — identical to unknown tenant), 403 (authorized tenant but action not permitted); route→action mapping correct; identity headers from the client are ignored. httptest-covered for query/ingest/ensure/stats.
+- [x] **BOLA/isolation tests (critical):** token for user A → query/ingest/`stats?ns=B` on tenant B all return **404**; A calling an admin route without admin → **403**; unbound subject → denied everywhere; `sub` spoof via header has no effect.
+- [x] `/stats` scoping: `*`-admin sees all tenants; scoped admin sees only its tenants; `?ns=X` requires `stats` on X (else 404); non-admin cannot enumerate. Test proves no cross-tenant leak.
+- [x] Cluster: coordinator authenticates+authorizes before routing — unauthorized/unknown tenant returns 404/403/401 with **no upstream contacted** (httptest fakes); JWT forwarded to the owning client; client independently re-enforces (a direct client request for an unauthorized tenant is still denied even if it bypasses the coordinator).
+- [x] `cmd/prism-store`: RBAC enabled by `AUTHZ_POLICY_FILE`; OIDC env wired; fail-fast when RBAC on but OIDC/JWKS misconfigured; middleware applied to query/ingest/admin across standalone/client/cluster; **RBAC-off path byte-for-byte unchanged** (guarded by a test). Startup logs the effective RBAC state (enabled, issuer, #bindings) WITHOUT logging secrets/tokens.
+- [x] Hot-reload test: editing the policy file changes decisions within the reload interval; an invalid edit keeps the last good policy and logs.
+- [x] Docs: `docs/STORE.md` (+ `docs/CONFIG.md` env table + `main.go` usage) document the RBAC model, env vars, policy file format, the 401/403/404 semantics, precedence vs `AUTH_MODE`, and the k8s (projected SA token + ConfigMap) and Vault (Agent-rendered JWT + policy) wiring. `docs/DESIGN.md` §15 gets a short RBAC ADR note with the references above. If the Helm chart exists (`deploy/charts/prism-store`), add values + templates for policy mount + OIDC env (feature-flagged, default off).
+- [x] No secret material committed; structured **deny** logs include subject + action + tenant + reason but never the raw token.
+- [x] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; **`CGO_ENABLED=0 go build ./cmd/prism` ok and its import graph contains NEITHER the OIDC/JWT lib NOR the YAML lib** (RBAC is store-only — verify with `go list -deps`); `make tidy` clean.
 
 ## 6. Mandatory review gates  (reviewer owns)  — SECURITY-CRITICAL
 

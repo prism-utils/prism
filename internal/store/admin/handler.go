@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/elk-utilities/prism/internal/store/authz"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	"github.com/elk-utilities/prism/internal/store/seed"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
@@ -55,7 +56,16 @@ func StatsHandler(cfg *Config, eng *engine.Engine) http.Handler {
 			http.Error(w, "unknown tenant", http.StatusNotFound)
 			return
 		}
-		resp := BuildStatsResponse(cfg, eng, ns)
+		var resp StatsResponse
+		if scope, ok := authz.StatsScopeFromContext(r.Context()); ok {
+			if ns != "" {
+				resp = BuildStatsResponse(cfg, eng, ns)
+			} else {
+				resp = BuildStatsResponseScoped(cfg, eng, scope)
+			}
+		} else {
+			resp = BuildStatsResponse(cfg, eng, ns)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(resp)

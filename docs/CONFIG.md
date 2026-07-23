@@ -722,9 +722,18 @@ via environment variables (no YAML config file).
 | `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset. |
 | `E2E_EXPOSE_QUERY_SQL` | _(empty — off)_ | When `1`, query JSON responses include the generated SQL (e2e/regression only). |
 | `ADMIN_LISTEN_ADDR` | _(empty — off)_ | When set, binds `/admin/*`, `/stats`, and query on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
-| `ADMIN_TOKEN` | _(empty — off)_ | Static bearer token for admin-plane routes (`/admin/*`, `/stats`, query on admin bind). Constant-time compare; unset = open (use network isolation). |
+| `ADMIN_TOKEN` | _(empty — off)_ | Static bearer token for admin-plane routes (`/admin/*`, `/stats`, query on admin bind). Constant-time compare; unset = open (use network isolation). Superseded when `AUTHZ_POLICY_FILE` is set. |
+| `AUTHZ_POLICY_FILE` | _(empty — off)_ | Path to deny-by-default RBAC policy YAML. When set, enables JWT/OIDC auth + RBAC on HTTP query/ingest/admin routes. |
+| `OIDC_ISSUER` | _(required when RBAC on)_ | OIDC issuer URL for JWT verification (discovery fetches JWKS when JWKS file/URL unset). |
+| `OIDC_JWKS_URL` | _(empty)_ | Static JWKS URL (alternative to discovery). |
+| `OIDC_JWKS_FILE` | _(empty)_ | Filesystem path to static JWKS JSON (offline-friendly). |
+| `OIDC_AUDIENCE` | _(required when RBAC on)_ | Comma-separated accepted `aud` values. |
+| `AUTHZ_RELOAD_SECONDS` | `15` | Policy file reload poll interval. |
 
-See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, admin provisioning, the `/stats` billing contract, and the view-SQL helper.
+When **`AUTHZ_POLICY_FILE`** is set, RBAC supersedes `ADMIN_TOKEN` / `INGEST_TOKEN`
+on HTTP data/admin routes; `AUTH_MODE` remains for RBAC-off and for Flight.
+
+See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, admin provisioning, the `/stats` billing contract, RBAC policy format, and the view-SQL helper.
 
 ### HTTP routes
 

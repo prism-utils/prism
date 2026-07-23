@@ -104,7 +104,7 @@ func TestVersionOutput(t *testing.T) {
 
 func TestNewServeMuxRoutes(t *testing.T) {
 	dir := t.TempDir()
-	mux := newServeMux(&serverConfig{dataDir: dir}, nil, nil, planeCombined, nil)
+	mux := newServeMux(&serverConfig{dataDir: dir}, nil, nil, planeCombined, nil, nil)
 
 	for _, path := range []string{"/healthz", "/readyz"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
