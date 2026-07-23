@@ -1,6 +1,6 @@
 # Spec: prism-store — tiered storage engine (hot window → flush → L0, snapshot, tenant LRU)
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-engine`
 - **Owner phase:** orchestrator → developer
