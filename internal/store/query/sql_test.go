@@ -973,3 +973,91 @@ func TestSQLSymlinkParquetExcluded(t *testing.T) {
 		t.Fatalf("count=%v want 3 (symlink data must not be included)", out.Rows[0][0])
 	}
 }
+
+func TestSQLSymlinkedTenantRoot404(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	srv := testSQLServer(t, dataDir, nil, eng)
+
+	nsAPath := filepath.Join(dataDir, tenantSQLA)
+	if err := os.RemoveAll(nsAPath); err != nil {
+		t.Fatal(err)
+	}
+	nsBPath := filepath.Join(dataDir, tenantSQLB)
+	if err := os.Symlink(nsBPath, nsAPath); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"sql":"SELECT COUNT(*) AS c FROM metrics"}`
+	resp := postSQL(t, sqlURL(srv.URL, tenantSQLA), body)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("cross-tenant symlink status=%d want 404 body=%s", resp.StatusCode, b)
+	}
+	msg, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(msg), storetenant.UnknownTenantBody) {
+		t.Fatalf("body=%q want %q", msg, storetenant.UnknownTenantBody)
+	}
+
+	if err := os.Remove(nsAPath); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, nsAPath); err != nil {
+		t.Fatal(err)
+	}
+	resp2 := postSQL(t, sqlURL(srv.URL, tenantSQLA), body)
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode != http.StatusNotFound {
+		b, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("outside symlink status=%d want 404 body=%s", resp2.StatusCode, b)
+	}
+}
+
+func TestSQLReadParquetPathTraversal400(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	srv := testSQLServer(t, dataDir, nil, eng)
+
+	absRoot, err := filepath.Abs(filepath.Join(dataDir, tenantSQLA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	traversal := filepath.ToSlash(filepath.Join(absRoot, "..", tenantSQLB, "hot", "current.parquet"))
+
+	attacks := []string{
+		fmt.Sprintf("SELECT * FROM read_parquet('%s')", traversal),
+		fmt.Sprintf("SELECT * FROM read_parquet('../%s/hot/current.parquet')", tenantSQLB),
+	}
+	for _, sqlText := range attacks {
+		t.Run(sqlText, func(t *testing.T) {
+			execSQLExpect400(t, srv, tenantSQLA, sqlText)
+		})
+	}
+}
+
+func TestSQLResetRejected400(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	srv := testSQLServer(t, dataDir, nil, eng)
+
+	execSQLExpect400(t, srv, tenantSQLA, "RESET enable_external_access")
+
+	code, out := execSQL(t, srv, tenantSQLA, "SELECT current_setting('enable_external_access') AS v")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d", code)
+	}
+	if len(out.Rows) != 1 {
+		t.Fatalf("rows=%v", out.Rows)
+	}
+	switch v := out.Rows[0][0].(type) {
+	case string:
+		if v != "false" {
+			t.Fatalf("enable_external_access=%q want false", v)
+		}
+	case bool:
+		if v {
+			t.Fatalf("enable_external_access=true want false")
+		}
+	default:
+		t.Fatalf("unexpected type %T", v)
+	}
+}

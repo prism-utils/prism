@@ -28,3 +28,16 @@ func TestValidateReadOnlySQL_withSelectOK(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateReadOnlySQL_resetRejected(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"RESET enable_external_access",
+		"WITH x AS (SELECT 1) RESET enable_external_access",
+	}
+	for _, sql := range cases {
+		if err := validateReadOnlySQL(sql); err == nil {
+			t.Fatalf("want error for %q", sql)
+		}
+	}
+}
