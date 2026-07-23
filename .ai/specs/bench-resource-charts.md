@@ -1,6 +1,6 @@
 # Spec: benchmark — idle baseline + dense resource time-series charts + minimal resource caps
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/bench-resource-charts`
 - **Owner phase:** orchestrator → developer
@@ -93,3 +93,5 @@ Everything stays reproducible by anyone cloning the repo.
 **2026-07-23 (prism-reviewer):** REQUEST CHANGES → `READY`. Gates 1, 2, 4, honesty audit, lint/test/build/tidy all pass; product `engine.Config` Threads/MemoryLimit is no-op when unset (test `TestOpenTenant_unsetThreadsPreservesDefault` + `initFn` guard). **Blockers:** (1) `writeTimelineChart` calls `addPhaseBand` before adding series, so Y limits are unset and committed SVGs have no visible phase/idle shading (only `fill:#FFFFFF`); (2) `RenderMarkdown` emits `![…](bench/charts/…)` into `bench/RESULTS.md` where relative links need `charts/…`. Fix: add bands after plot data (or set explicit Y range), correct RESULTS embed paths, regenerate charts from `make bench`, extend chart test to assert non-white phase fill or band rect present.
 
 **2026-07-23 (prism-developer):** Addressed blockers — explicit Y range for phase bands; `RenderMarkdown` vs `RenderMarkdownRoot` embed paths; Docker `one-shot=true` for dense CH sampling; chart test asserts `fill-opacity`; engine `memory_limit` test added. Artifacts regenerated from one `make bench` run (CH series 349 points vs store ~728).
+
+**2026-07-23 (prism-reviewer, re-review):** ALL_OK. Prior Gate 3 blockers verified fixed: SVGs have 5 full-height phase-band polygons with `fill-opacity` (Y span 37.6→274.7); `bench/RESULTS.md` uses `charts/…`, root README uses `bench/charts/…`; CH timeseries 348 points (store 728) at commit `413d303`; Docker URL `stream=false&one-shot=true` + `fetchDiffSample` counter-diff unchanged; `memory_limit` apply/unset tests pass; artifacts and interpretation prose consistent. `make lint test` green; prism static build excludes gopsutil/gonum.
