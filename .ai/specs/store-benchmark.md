@@ -1,6 +1,6 @@
 # Spec: prism-store — reproducible benchmark vs ClickHouse
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 
 - **Slug / branch:** `feat/store-benchmark`
 - **Owner phase:** orchestrator → developer
@@ -72,7 +72,8 @@ reproduction steps. Both systems must be given a *fair* configuration
 - [x] Store metrics path uses the real HTTP ingest + compaction + query engine; logs path uses the engine's DuckDB-over-Parquet query (labeled engine-level).
 - [x] Each query reports p50/p95/min over K warmed runs; ingest reports wall-clock + rows/s.
 - [x] `bench/README.md`: prerequisites + exact one-command reproduction + cleanup; environment captured in `RESULTS.md` (CPU/RAM/OS/arch, CH + DuckDB versions, scale, commit).
-- [x] `README.md` gains a "Benchmark: prism-store vs ClickHouse" section with the measured table, reproduction command, environment note, and an **honest** interpretation (including any workload ClickHouse wins).
+- [ ] `README.md` gains a "Benchmark: prism-store vs ClickHouse" section with the measured table, reproduction command, environment note, and an **honest** interpretation (including any workload ClickHouse wins).
+  - README and auto-rendered `RESULTS.md` still headline prism-store “wins” on **count** and **aggregation** while those workloads use different `ts` filter semantics (see §7); that is not an honest head-to-head claim until the harness or copy is fixed.
 - [x] Harness code is clean and structured (generator / clickhouse driver / store driver / orchestrator separated); no "macaronic" one-off scripts; errors handled; no secrets.
 - [x] Bench Go code has unit tests for the deterministic generator (fixed seed → fixed substring count) and the results renderer; `make lint test` green.
 - [x] `CGO_ENABLED=0 go build ./cmd/prism` and `go build ./cmd/prism-store` still pass; bench code (if it imports DuckDB) is CGO-gated and does not pull DuckDB into the agent build.
@@ -80,13 +81,46 @@ reproduction steps. Both systems must be given a *fair* configuration
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** harness idiomatic Go, separated concerns, wrapped errors, no globals; ClickHouse client and store drivers behind small interfaces; `make bench` is the single entrypoint; comments self-contained.
-- [ ] **Gate 2 — Edge cases:** benchmark fails loudly if the `LIKE` counts differ (correctness gate); compose teardown runs even on failure; deterministic seed reproduces identical counts across two runs; `--scale` works; missing docker → clear error; ClickHouse readiness waited on (no race).
+- [x] **Gate 1 — Guidelines:** harness idiomatic Go, separated concerns, wrapped errors, no globals; ClickHouse client and store drivers behind small interfaces; `make bench` is the single entrypoint; comments self-contained.
+- [x] **Gate 2 — Edge cases:** benchmark fails loudly if the `LIKE` counts differ (correctness gate); compose teardown runs even on failure; deterministic seed reproduces identical counts across two runs; `--scale` works; missing docker → clear error; ClickHouse readiness waited on (no race).
 - [ ] **Gate 3 — Docs/comments match code:** README table/commands match what `make bench` actually produces and the harness flags; the store-logs "engine-level" caveat is stated and accurate; ClickHouse tuning claims match the actual DDL.
+  - `results.RenderMarkdown` interpret() opens with “identical time range” for all workloads, but metrics count/aggregation use ingest-time `ts` on the store vs dataset `ts` on ClickHouse; `bench/README.md` fairness notes omit this asymmetry though the spec requires it.
 - [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+  - `bench/internal/store/driver_cgo.go` nolint cites “the store query builder” (cross-location reference).
 - [ ] **Fairness audit:** reviewer confirms ClickHouse is genuinely tuned (not handicapped) AND the store isn't given an unfair shortcut (e.g. pre-cached results, skipping compaction, smaller data). Numbers in the README must be the ones `make bench` produced on the stated host — reviewer re-runs `make bench` and confirms the README table is consistent with a real run (allowing host variance).
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (generator/renderer unit tests; the full bench is opt-in, not in CI gate).
+  - Metrics **count/aggregation are not apples-to-apples**: store queries filter ingest-time `ts` over a ~1–2 s ingest window (`storeMetricsStart`/`End` in `main.go`); ClickHouse filters dataset `ts` over the full 7-day span (`ds.QueryRange()`). Both return 1M rows but scan different logical ranges/partition layouts — store timings must not be presented as beating ClickHouse on equivalent work until both use the same timestamp column and window (e.g. filter both on dataset `timestamp_ms`/`ts`, or drop count/agg from head-to-head).
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (generator/renderer unit tests; the full bench is opt-in, not in CI gate).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: CHANGES_REQUESTED** (2026-07-23). Reviewer re-ran `make lint`, `make test` (-race), `CGO_ENABLED=0 go build ./cmd/prism`, `go build ./cmd/prism-store`, and `make bench` — all green; numbers are real and shape matches README (store wins ingest/count/agg; ClickHouse wins logs LIKE).
+
+### ts-semantics fairness (critical — FAIL)
+
+| Workload | Store filter | ClickHouse filter |
+|----------|--------------|-------------------|
+| count / aggregation | `query.Request{Start: storeIngestStart±1s, End: …}` → `WHERE ts >= ? AND ts < ?` on **ingest-time `ts`** stamped by `engine.Ingest` (`CAST(? AS TIMESTAMP) AS ts`) | `ds.QueryRange()` → first/last **dataset `ts`** (7-day span Jan 1–8 2026) → `WHERE ts >= ? AND ts < ?` |
+| logs LIKE | `ds.LogsQueryRange()` (dataset `ts`) — **fair** | same — **fair** |
+
+Ingest stamps every metrics row with wall-clock `ts` inside a narrow window; ClickHouse stores generator `MetricRow.Ts` spread across days with day partitioning. Counts match (1M) but the store predicate selects a single ingest cluster while ClickHouse walks a multi-day primary-key range — timings are not comparable. Fix: align both systems on the same column/window, or exclude metrics count/agg from head-to-head and rewrite README/`interpret()`.
+
+### Literal SQL / bound params (PASS — bench artifact, not shipping bug)
+
+- **Metrics count/aggregation** use the shipping `query.Builder` with bound `?` params — no divergence from #26.
+- **Logs LIKE** (engine-level only) uses `fmt.Sprintf` literals for `read_parquet('…')`, `TIMESTAMP '…'`, and `LIKE '%%deadline exceeded%%'` because DuckDB cannot bind file paths (`engine.go` comment) and parameterized `LIKE` on `read_parquet` returns 0 in harness tests (`duckdb_like_test.go`). Substring/times are harness constants, not user input — acceptable for bench-only logs path; does not indicate a shipping query bug at scale.
+
+### ClickHouse tuning (PASS)
+
+MergeTree, `ORDER BY (ts, …)`, `LowCardinality`, no `Nullable`, `PARTITION BY toYYYYMMDD(ts)`, `tokenbf_v1` on `message`, 50k batched inserts, pinned `24.8` image — not a strawman.
+
+### Verification commands (reviewer)
+
+| Command | Result |
+|---------|--------|
+| `make lint` | 0 issues |
+| `make test` | pass (-race) |
+| `CGO_ENABLED=0 go build ./cmd/prism` | pass |
+| `go build ./cmd/prism-store` | pass |
+| `make bench` | pass (~10s); LIKE gate 10,000=10,000; teardown OK; p50 shape: store ingest/count/agg faster, ClickHouse logs LIKE faster |
+
+Reviewer `make bench` p50 (M1 Pro 16 GiB): ingest store 1.19s / CH 1.84s; count 0.8 ms / 3.9 ms; aggregation 5.8 ms / 11.1 ms; logs LIKE 19.3 ms / 16.7 ms.
