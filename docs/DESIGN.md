@@ -668,3 +668,21 @@ https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authori
 **Consequences:** Store-only surface (`internal/store/query`, `cmd/prism-store`);
 agent binary unchanged. One snapshot + sandbox per SQL request; bounded by
 `SQL_API_MAX_ROWS`, `SQL_API_TIMEOUT_SECONDS`, and `DUCKDB_MEMORY_LIMIT`.
+
+### Arrow IPC streaming for POST /{ns}/sql (2026-07)
+
+**Decision:** content-negotiate an optional Arrow IPC stream on the existing SQL
+endpoint (`Accept: application/vnd.apache.arrow.stream`). DuckDB RecordBatches
+stream zero-copy via go-duckdb v2's Arrow interface (`duckdb_arrow` build tag);
+JSON remains default. Same per-request sandbox, RBAC, row cap
+(`LIMIT rowCap+1` in-engine), and `X-Prism-Truncated` HTTP trailer. Cluster
+reverse proxy sets `FlushInterval=-1` for streaming.
+
+**References:** Arrow IPC streaming format —
+https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format ;
+go-duckdb v2 Arrow interface (`duckdb_arrow` tag).
+
+**Consequences:** Arrow code lives under `internal/store/query` behind
+`duckdb_arrow`; stub returns `406` without the tag so `go build ./...` still
+works. `cmd/prism` import graph unchanged (CGO-free). Production store builds
+(`Makefile`, goreleaser, docker-store) always include the tag.

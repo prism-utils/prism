@@ -143,7 +143,7 @@ func locateStoreBinary() (string, error) {
 	if _, err := os.Stat(bin); err == nil {
 		return bin, nil
 	}
-	build := exec.CommandContext(context.Background(), "go", "build", "-o", bin, "./cmd/prism-store")
+	build := exec.CommandContext(context.Background(), "go", "build", "-tags", "duckdb_arrow", "-o", bin, "./cmd/prism-store")
 	build.Dir = root
 	build.Env = append(os.Environ(), "CGO_ENABLED=1")
 	out, err := build.CombinedOutput()

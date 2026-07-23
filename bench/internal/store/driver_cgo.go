@@ -19,6 +19,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/elk-utilities/prism/bench/internal/gen"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	"github.com/elk-utilities/prism/internal/store/layout"
@@ -431,6 +434,122 @@ func (d *cgoDriver) AggregateMetricsAPI(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (d *cgoDriver) CountMetricsArrowAPI(ctx context.Context) (int64, error) {
+	rows, err := d.postSQLArrow(ctx, `SELECT COUNT(*) AS n FROM metrics`)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		return 0, fmt.Errorf("store: arrow count: empty rows")
+	}
+	return arrowCellInt64(rows[0][0])
+}
+
+func (d *cgoDriver) AggregateMetricsArrowAPI(ctx context.Context) error {
+	rows, err := d.postSQLArrow(ctx, `SELECT "__name__", avg(value), min(value), max(value), count(*) FROM metrics GROUP BY "__name__"`)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if len(row) < 5 {
+			return fmt.Errorf("store: arrow aggregate: short row")
+		}
+	}
+	return nil
+}
+
+func (d *cgoDriver) ScanMetricsArrowAPI(ctx context.Context, sqlText string) (int64, error) {
+	rows, err := d.postSQLArrow(ctx, sqlText)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(rows)), nil
+}
+
+func (d *cgoDriver) postSQLArrow(ctx context.Context, sqlText string) ([][]any, error) {
+	url := d.BaseURL() + "/" + d.cfg.Tenant + "/sql"
+	body, err := json.Marshal(map[string]string{"sql": sqlText})
+	if err != nil {
+		return nil, fmt.Errorf("store: marshal sql request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("store: sql request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.apache.arrow.stream")
+	if d.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+d.cfg.Token)
+	}
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("store: sql post: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("store: sql status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("store: arrow read body: %w", err)
+	}
+	return decodeArrowRows(bytes.NewReader(raw))
+}
+
+func decodeArrowRows(r io.Reader) ([][]any, error) {
+	reader, err := ipc.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("store: arrow reader: %w", err)
+	}
+	defer reader.Release()
+	var rows [][]any
+	for reader.Next() {
+		rec := reader.RecordBatch()
+		for rowIdx := int64(0); rowIdx < rec.NumRows(); rowIdx++ {
+			row := make([]any, rec.NumCols())
+			for colIdx := int64(0); colIdx < rec.NumCols(); colIdx++ {
+				row[colIdx] = arrowBenchCellAt(rec, colIdx, rowIdx)
+			}
+			rows = append(rows, row)
+		}
+		rec.Release()
+	}
+	if err := reader.Err(); err != nil {
+		return nil, fmt.Errorf("store: arrow read: %w", err)
+	}
+	return rows, nil
+}
+
+func arrowBenchCellAt(rec arrow.RecordBatch, col, row int64) any {
+	colArr := rec.Column(int(col))
+	if colArr.IsNull(int(row)) {
+		return nil
+	}
+	switch arr := colArr.(type) {
+	case *array.Int64:
+		return arr.Value(int(row))
+	case *array.Float64:
+		return arr.Value(int(row))
+	case *array.String:
+		return arr.Value(int(row))
+	default:
+		return fmt.Sprint(colArr)
+	}
+}
+
+func arrowCellInt64(v any) (int64, error) {
+	switch n := v.(type) {
+	case int64:
+		return n, nil
+	case float64:
+		return int64(n), nil
+	default:
+		return 0, fmt.Errorf("unexpected type %T", v)
+	}
 }
 
 type sqlAPIResponse struct {

@@ -12,7 +12,8 @@ GOFLAGS     :=
 FUZZTIME    ?= 30s
 COMPOSE     := docker compose -f deploy/docker-compose.integration.yml
 # Store integration tests link DuckDB (CGO); override the global CGO_ENABLED=0 export.
-INTEGRATION_GO_TEST := CGO_ENABLED=1 go test $(GOFLAGS) -tags integration ./test/integration/...
+STORE_TAGS := duckdb_arrow
+INTEGRATION_GO_TEST := CGO_ENABLED=1 go test $(GOFLAGS) -tags integration,$(STORE_TAGS) ./test/integration/...
 
 # Static, CGO-free build so the artifact runs on bare metal and in scratch/distroless.
 export CGO_ENABLED := 0
@@ -31,13 +32,13 @@ build: ## Build the static binary into ./bin/prism
 
 .PHONY: test
 test: ## Fast tests: unit + golden + fuzz seeds, with the race detector
-	CGO_ENABLED=1 go test $(GOFLAGS) -race ./...
+	CGO_ENABLED=1 go test $(GOFLAGS) -race -tags $(STORE_TAGS) ./...
 
 .PHONY: lint
 lint: ## Run golangci-lint (config in .golangci.yml)
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "golangci-lint not found — https://golangci-lint.run/welcome/install/"; exit 1; }
-	CGO_ENABLED=1 golangci-lint run ./...
+	CGO_ENABLED=1 golangci-lint run --build-tags $(STORE_TAGS) ./...
 
 .PHONY: tidy
 tidy: ## go mod tidy and fail if it produced a diff (CI-safe)
@@ -60,12 +61,12 @@ BENCH_SCALE ?= 1
 .PHONY: bench
 bench: ## Reproducible prism-store vs ClickHouse benchmark (see bench/README.md)
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make bench"; exit 1; }
-	CGO_ENABLED=1 go run ./bench/cmd/prism-bench --scale $(BENCH_SCALE)
+	CGO_ENABLED=1 go run -tags $(STORE_TAGS) ./bench/cmd/prism-bench --scale $(BENCH_SCALE)
 
 .PHONY: bench-api
 bench-api: ## RBAC + HTTP SQL API benchmark profile (see bench/README.md)
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make bench-api"; exit 1; }
-	CGO_ENABLED=1 go run ./bench/cmd/prism-bench --api --scale $(BENCH_SCALE)
+	CGO_ENABLED=1 go run -tags $(STORE_TAGS) ./bench/cmd/prism-bench --api --scale $(BENCH_SCALE)
 
 .PHONY: fuzz
 fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it finds.
@@ -96,7 +97,7 @@ e2e: ## End-to-end pipeline tests (build tag: e2e)
 	@if [ -z "$$(find test/e2e -name '*.go' 2>/dev/null)" ]; then \
 		echo "e2e: no tests under test/e2e yet — skipping"; \
 	else \
-		go test $(GOFLAGS) -tags e2e ./test/e2e/...; \
+		go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) ./test/e2e/...; \
 	fi
 
 .PHONY: full-tests
@@ -117,7 +118,7 @@ STORE_DOCKER_CTX := .docker-store-ctx
 docker-store: ## Build the store release image (tag: prism-store:$(VERSION))
 	@rm -rf $(STORE_DOCKER_CTX)
 	@mkdir -p $(STORE_DOCKER_CTX)
-	CGO_ENABLED=1 go build $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(STORE_DOCKER_CTX)/prism-store ./cmd/prism-store
+	CGO_ENABLED=1 go build $(GOFLAGS) -tags $(STORE_TAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(STORE_DOCKER_CTX)/prism-store ./cmd/prism-store
 	docker build -f Dockerfile.store.release -t prism-store:$(VERSION) $(STORE_DOCKER_CTX)
 	@rm -rf $(STORE_DOCKER_CTX)
 
