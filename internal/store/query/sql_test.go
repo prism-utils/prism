@@ -246,6 +246,50 @@ func TestSQLIsolationCrossTenant(t *testing.T) {
 	}
 }
 
+func TestSQLIsolationReadParquetOutsideTenantRoot(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	srv := testSQLServer(t, dataDir, nil, eng)
+
+	otherPath := filepath.ToSlash(filepath.Join(dataDir, tenantSQLB, "hot", "current.parquet"))
+	if _, err := os.Stat(otherPath); err != nil {
+		t.Fatalf("other tenant snapshot: %v", err)
+	}
+
+	attacks := []string{
+		fmt.Sprintf("SELECT * FROM read_parquet('%s')", otherPath),
+		"SELECT * FROM read_parquet('/etc/passwd')",
+	}
+	for _, sqlText := range attacks {
+		t.Run(sqlText, func(t *testing.T) {
+			execSQLExpect400(t, srv, tenantSQLA, sqlText)
+		})
+	}
+
+	var extAccess string
+	code, out := execSQL(t, srv, tenantSQLA, "SELECT current_setting('enable_external_access') AS v")
+	if code != http.StatusOK {
+		t.Fatalf("enable_external_access status=%d", code)
+	}
+	if len(out.Rows) != 1 {
+		t.Fatalf("rows=%v", out.Rows)
+	}
+	switch v := out.Rows[0][0].(type) {
+	case string:
+		extAccess = v
+	case bool:
+		if v {
+			extAccess = "true"
+		} else {
+			extAccess = "false"
+		}
+	default:
+		t.Fatalf("enable_external_access type=%T val=%v", v, v)
+	}
+	if extAccess != "false" {
+		t.Fatalf("enable_external_access=%q want false", extAccess)
+	}
+}
+
 func numericCell(t *testing.T, v any) float64 {
 	t.Helper()
 	return numericCellValue(v)
