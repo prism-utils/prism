@@ -21,8 +21,9 @@ Introduce a bootstrap **`MODE`** config with three values (default **`standalone
   different tenant's client. Unknown tenant → error (never a fallthrough).
 
 Identifier == tenant/namespace (`ns`), reusing the store's existing tenant boundary.
-No RBAC yet (future); this delivers the tenant-scoped data abstraction RBAC will
-build on.
+This delivers the tenant-scoped data abstraction RBAC builds on. (RBAC was
+subsequently delivered in #50 — JWT/OIDC + per-tenant roles enforced at the
+coordinator edge and clients; see `docs/STORE.md`.)
 
 ## 2. Scope
 

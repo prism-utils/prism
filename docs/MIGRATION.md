@@ -49,6 +49,17 @@ default to prism-proxy-equivalent behavior.
 | `HOT_SNAPSHOT_SECONDS`, `FLUSH_TICK_SECONDS`, `MERGE_TICK_SECONDS` | idem | Same. |
 | `E2E_EXPOSE_QUERY_SQL` | `E2E_EXPOSE_QUERY_SQL` | Same (e2e-only). |
 | — | `FLIGHT_ADDR` | New (optional): Arrow Flight `DoPut` receiver; leave unset for HTTP-only. |
+| — | `AUTHZ_POLICY_FILE` | New (optional): enables **RBAC** (JWT/OIDC + deny-by-default per-tenant `reader`/`writer`/`admin` policy) on HTTP query/ingest/admin routes. Leave unset to keep prism-proxy token behavior. |
+| — | `OIDC_ISSUER` / `OIDC_JWKS_URL` / `OIDC_JWKS_FILE` / `OIDC_AUDIENCE` / `AUTHZ_RELOAD_SECONDS` | New: JWT verification config, required when RBAC is enabled (`OIDC_JWKS_FILE` for offline/air-gapped). |
+| — | `SQL_API_ENABLED` / `SQL_API_MAX_ROWS` / `SQL_API_TIMEOUT_SECONDS` / `SQL_API_MAX_BODY_BYTES` | New: arbitrary read-only SQL API (`POST {ROUTE_PREFIX}/{ns}/sql`); default on, RBAC-guarded. |
+
+> **RBAC precedence / caution.** When `AUTHZ_POLICY_FILE` is set, RBAC is
+> authoritative on HTTP data/admin routes and **supersedes `INGEST_TOKEN`/`ADMIN_TOKEN`**
+> there — clients must send a valid JWT. RBAC is **HTTP-only**: if `FLIGHT_ADDR`
+> is enabled it must keep its own non-`none` `AUTH_MODE` (startup fail-fasts on
+> `RBAC + FLIGHT_ADDR + AUTH_MODE=none`). Keep RBAC **unset** for a like-for-like
+> prism-proxy cutover, and adopt it as a follow-up once JWT issuance (k8s SA tokens
+> or Vault) is wired.
 
 Full reference: [`docs/CONFIG.md`](CONFIG.md).
 

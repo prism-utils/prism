@@ -20,9 +20,24 @@ container**, as a **single static, CGO-free binary** (`cmd/prism`).
 | Binary | Role | Build |
 |---|---|---|
 | **`prism`** (agent) | Config-driven edge collector; produces Parquet artifacts per [`docs/OUTPUT_CONTRACT.md`](docs/OUTPUT_CONTRACT.md). | Static, `CGO_ENABLED=0` |
-| **`prism-store`** (store) | Durable tiered columnar store + query server; consumes agent output. | CGO-linked (DuckDB, later slices) |
+| **`prism-store`** (store) | Durable tiered columnar store + query server; consumes agent output. Deployable `standalone`/`client`/`cluster`, with optional **RBAC** and an **arbitrary read-only SQL API**. | CGO-linked (DuckDB) |
 
 Store design: [`docs/STORE.md`](docs/STORE.md). Architecture ADR: [`docs/DESIGN.md`](docs/DESIGN.md) §15. Cutover from `prism-proxy`: [`docs/MIGRATION.md`](docs/MIGRATION.md).
+
+**Store security (RBAC).** When `AUTHZ_POLICY_FILE` is set, HTTP query/ingest/admin
+routes require a verified **JWT (OIDC/JWKS)** and a **deny-by-default, per-tenant
+policy** — fixed roles **`reader`** (query), **`writer`** (ingest), **`admin`**
+(query + ingest + provision + stats). A principal can only act on tenants it is
+explicitly bound to; unauthorized tenants return `404` (no existence leak) and no
+role can escalate. Native fit for **k8s** (projected ServiceAccount tokens +
+ConfigMap policy) and **Vault** (Agent-rendered JWT + policy). Enforced in every
+mode, including the cluster coordinator (edge) and clients (defense-in-depth). See
+[`docs/STORE.md`](docs/STORE.md#rbac-jwtoidc--per-tenant-roles).
+
+**Arbitrary SQL API.** `POST {ROUTE_PREFIX}/{ns}/sql` runs read-only SQL over a
+tenant's `metrics` relation inside a per-request, tenant-scoped DuckDB sandbox
+(no cross-tenant or host-filesystem access), subject to the same RBAC. See
+[`docs/STORE.md`](docs/STORE.md#arbitrary-sql-api).
 
 ## What it does
 
@@ -58,7 +73,7 @@ Read these, in order:
 
 1. [`docs/DESIGN.md`](docs/DESIGN.md) — architecture, patterns, data model.
 2. [`docs/CONFIG.md`](docs/CONFIG.md) — complete config reference (every component, its options, defaults).
-3. [`docs/STORE.md`](docs/STORE.md) — store/query server layout and env (stub).
+3. [`docs/STORE.md`](docs/STORE.md) — store/query server: modes, ingest, query, arbitrary SQL API, RBAC, admin/`/stats`, and env.
 4. [`docs/PLAN.md`](docs/PLAN.md) — phased, test-first build plan.
 5. [`CONTRIBUTING.md`](CONTRIBUTING.md) — TDD workflow, data patterns, dos/don'ts.
 6. [`docs/TESTING.md`](docs/TESTING.md) — test layers and how to run them.
