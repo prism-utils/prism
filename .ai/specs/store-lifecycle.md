@@ -1,6 +1,6 @@
 # Spec: prism-store — compaction (Lucene tiered merge) + rollups + retention + metering + tickers
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 
 - **Slug / branch:** `feat/store-lifecycle`
 - **Owner phase:** orchestrator → developer
@@ -55,8 +55,8 @@ store self-manages its on-disk tiers end to end (ingest→hot→L0→L1…→ret
 - [x] **Executor:** merging 6 L0 → 1 L1 file, rows **ordered by ts**, **source files deleted** only after the output lands; `StatSegment`/`ScanTier` correct — ported `executor_test.go` green.
 - [x] **Rollups:** after an L1+ merge, `rollups/{1m,5m,1h}/…parquet` exist and their `avg/min/max/count/sum` per (bucket,name) **equal the raw aggregates** (`AggregateRaw`) — ported `rollup_test.go` green.
 - [x] **Retention:** a 16-day-old segment is deleted, a 15-day-old segment is **kept**; expired rollups removed on the same clock — ported `retention_test.go` green.
-- [x] **Metering:** a merge increments `.metering.json` `compactionCpuSeconds`; `TenantOnDiskBytes` sums tiers/rollups/hot/duckdb and **excludes** legacy `metrics-raw/` + dotfiles — ported `metering_test.go` green.
-- [x] **Tickers:** four independent tickers wired in `cmd/prism-store serve`, started and cleanly stopped on shutdown; a lifecycle test drives ingest→flush→(6×)→merge→rollup end to end and asserts a gap-free L1 + rollups.
+- [ ] **Metering:** a merge increments `.metering.json` `compactionCpuSeconds`; `TenantOnDiskBytes` sums tiers/rollups/hot/duckdb and **excludes** legacy `metrics-raw/` + dotfiles — ported `metering_test.go` green. — no test asserts `AddCompactionCPUSeconds(0)` leaves `.metering.json` absent / unchanged (elapsed==0 no-write contract).
+- [ ] **Tickers:** four independent tickers wired in `cmd/prism-store serve`, started and cleanly stopped on shutdown; a lifecycle test drives ingest→flush→(6×)→merge→rollup end to end and asserts a gap-free L1 + rollups. — lifecycle e2e calls `Runner` ticks directly; no test exercises `backgroundLoop` ticker start/stop on ctx cancel.
 - [x] New env parsed with documented defaults; `docs/CONFIG.md` + `docs/STORE.md` updated (incl. the metering wall-clock note).
 - [x] `internal/store/layout` removes the `escapePath`/`tierDir` duplication in the new packages.
 - [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
@@ -64,12 +64,12 @@ store self-manages its on-disk tiers end to end (ingest→hot→L0→L1…→ret
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** planner is pure-Go/leaf; executor/rollup close their DuckDB handles (no leak); atomic tmp+rename everywhere; sources deleted only post-rename; tickers in one goroutine, stopped on ctx; slog at the edge, libs return wrapped errors; no globals; `internal/store/*` don't import `pipeline`.
-- [ ] **Gate 2 — Edge cases:** empty/no segments; fewer than `SegmentsPerTier`; all sealed; overlapping/gapped time ranges (chain break); single oversized candidate (shrink to 1); retention exact boundary; rollup over multiple sources; metering when elapsed==0 (no write); merge when a source vanishes mid-pass; retention when a file is already gone.
-- [ ] **Gate 3 — Docs/comments match code:** `docs/STORE.md` lifecycle section (tiers, seal, rollups, retention boundary, metering approximation, tick defaults) + `docs/CONFIG.md` env match exactly; no forward references.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] **Gate 1 — Guidelines:** planner is pure-Go/leaf; executor/rollup close their DuckDB handles (no leak); atomic tmp+rename everywhere; sources deleted only post-rename; tickers in one goroutine, stopped on ctx; slog at the edge, libs return wrapped errors; no globals; `internal/store/*` don't import `pipeline`.
+- [ ] **Gate 2 — Edge cases:** empty/no segments; fewer than `SegmentsPerTier`; all sealed; overlapping/gapped time ranges (chain break); single oversized candidate (shrink to 1); retention exact boundary; rollup over multiple sources; metering when elapsed==0 (no write); merge when a source vanishes mid-pass; retention when a file is already gone. — missing asserted tests: empty segments, all-sealed tier, overlapping ranges (chain break), shrink-to-1 single candidate, `AddCompactionCPUSeconds(≤0)` no write, executor delete when source already gone, retention when target already gone.
+- [x] **Gate 3 — Docs/comments match code:** `docs/STORE.md` lifecycle section (tiers, seal, rollups, retention boundary, metering approximation, tick defaults) + `docs/CONFIG.md` env match exactly; no forward references.
+- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol. — `internal/store/stats/metering.go:86` nolint cites `STORE.md`.
 - [ ] Full docs/REVIEW.md checklist; TESTING.md layering (pure-Go planner unit tests + DuckDB-backed golden/behavior tests for executor/rollup/lifecycle).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**REQUEST CHANGES** (2026-07-22). Scope clean (#25 only): no `/stats`, `/admin/ensure`, or query HTTP routes; `befb4f5 test:` precedes implementation; upstream parity confirmed (planner size-levels/seal/adjacency/no-cascade, executor order+delete-after-rename, retention strict-before, rollup schema+aggregates, metering `.metering.json`/`compactionCpuSeconds`, on-disk bytes excluding legacy). Local checks green: `make lint test` (0 issues, `-race` pass), `CGO_ENABLED=0 go build ./cmd/prism`, `go build ./cmd/prism-store`, `go vet ./...` (all exit 0). Gate 1 holds (pure-Go planner, DuckDB Close on executor/rollup/Stat*, tmp+rename, post-rename deletes, single background goroutine+ctx stop, no pipeline imports). Gate 2/4 fail as unchecked above; §5 Metering+Tickers need the listed tests. Gate 3 + REVIEW scope/TDD/architecture/config/deps hold.
