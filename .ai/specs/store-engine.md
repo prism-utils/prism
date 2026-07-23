@@ -1,6 +1,6 @@
 # Spec: prism-store — tiered storage engine (hot window → flush → L0, snapshot, tenant LRU)
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 
 - **Slug / branch:** `feat/store-engine`
 - **Owner phase:** orchestrator → developer
@@ -70,11 +70,14 @@ receiver yet (that is #23); no compaction/rollups/retention (that is #25).
 ## 6. Mandatory review gates  (reviewer owns)
 
 - [ ] **Gate 1 — Guidelines:** factory/config pattern, no globals (the `now` closure/injected clock is fine), slog only (engine returns wrapped errors, does not log), memory discipline (temp files removed on every path incl. errors), mutex covers LRU+schedule, no goroutine leaks. `internal/store/engine` is a leaf (no import of `pipeline`).
+  — `.github/workflows/ci.yml:23-26`: lint uses `golangci-lint-action` with default `CGO_ENABLED=0`; typecheck fails on `internal/store/testparquet` (go-duckdb `undefined: Conn`). Wire CI to `make lint` or set `CGO_ENABLED=1` on that step.
 - [ ] **Gate 2 — Edge cases:** empty window; flush with empty hot_prev; first flush when `hot_current` absent; missing tables (`does not exist`/`Catalog Error`) treated as empty via `strings.Contains`; legacy import when `metrics-raw/` absent; concurrent ingest+flush under `-race`; LRU eviction closing an in-use handle is avoided.
-- [ ] **Gate 3 — Docs/comments match code:** update `docs/STORE.md` engine section (hot/flush/snapshot/LRU/legacy, env knobs `HOT_WINDOW_*`, `MaxOpenTenants`, `RowGroupSize`) to exactly what landed; no forward references.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol; the path-formatting comment is self-contained.
+  — No test for concurrent ingest+flush under `-race`; also missing tests for empty `hot_prev` flush, first flush with absent `hot_current`, and legacy import when `metrics-raw/` is absent (code paths exist, Gate 2 list requires coverage).
+- [x] **Gate 3 — Docs/comments match code:** update `docs/STORE.md` engine section (hot/flush/snapshot/LRU/legacy, env knobs `HOT_WINDOW_*`, `MaxOpenTenants`, `RowGroupSize`) to exactly what landed; no forward references.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol; the path-formatting comment is self-contained.
 - [ ] Full docs/REVIEW.md checklist passes; TESTING.md layering respected (unit + golden where a parquet fixture is asserted).
+  — Blocked by Gate 1 (CI lint/CGO parity) and Gate 2 (edge-case test gaps).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**REQUEST CHANGES** (2026-07-22). Scope is clean (#24 engine only): no ingest HTTP/Flight, compaction, query, or `/stats`/`/admin` creep; `cmd/prism-store` unchanged. History OK (`6f67fa5 test:` before `4ec3208 feat:`). Upstream parity holds (`strings.Contains`/`HasPrefix`, bound `ts` param, `tenant.TenantAllowed`, no duplicate validator). Local checks green: `make lint test` (0 issues; engine `-race` 1.835s), `CGO_ENABLED=0 go build ./cmd/prism`, `go build ./cmd/prism-store`, `go vet ./...` (all exit 0 on macOS default CGO). **CI parity:** `make lint`/`make test` force `CGO_ENABLED=1` (Makefile) and pass; CI **lint** job does not — it invokes `golangci-lint-action@v8` directly (`.github/workflows/ci.yml:23-26`) with CGO disabled, reproducing the `testparquet`/go-duckdb typecheck failure. Fix CI lint before merge. Gate 3/4 hold; Gate 2 needs concurrent + listed edge-case tests.
