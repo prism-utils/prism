@@ -12,8 +12,9 @@
 2. [`CONTRIBUTING.md`](CONTRIBUTING.md) — TDD contract, data/code patterns,
    anti-patterns, atomic comments (§3.8).
 3. [`docs/DESIGN.md`](docs/DESIGN.md) — architecture, data flow, package layout.
-4. [`docs/TESTING.md`](docs/TESTING.md) — test layers + edge-case expectations.
-5. [`docs/REVIEW.md`](docs/REVIEW.md) — the review checklist + the four
+4. [`docs/STORE.md`](docs/STORE.md) — store/query server (when working on `cmd/prism-store` or `internal/store/**`).
+5. [`docs/TESTING.md`](docs/TESTING.md) — test layers + edge-case expectations.
+6. [`docs/REVIEW.md`](docs/REVIEW.md) — the review checklist + the four
    mandatory gates.
 
 ## The three agents

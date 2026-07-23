@@ -1,6 +1,6 @@
 # Spec: prism-store — naming + repository-design ADR + compiling skeleton
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-skeleton`
 - **Owner phase:** orchestrator → developer
@@ -56,15 +56,15 @@ sub-issues (#23–#29) have a home. It blocks all of them (paths/names).
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] **ADR** added to `docs/DESIGN.md` (name, one-module/two-binary/one-release, package layout, reuse boundaries, CGO decision + build invariant). No existing DESIGN content made untrue.
-- [ ] **`internal/version`** package added; `cmd/prism` uses it with its `version` output unchanged (existing `cmd/prism` version test still passes).
-- [ ] **`cmd/prism-store`** compiles; `prism-store version` prints the version; `serve` starts, serves `/healthz`=`ok` and `/readyz` (writability check → `503`/`ready`), and shuts down gracefully on signal. Handler unit tests (httptest) for healthz/readyz (incl. unwritable data dir → 503).
-- [ ] **`internal/store/**`** skeleton packages present (`ingest`, `engine`, `lifecycle`, `merge`, `rollup`, `query`, `tenant`, `stats`), each with a `doc.go`; all compile.
-- [ ] **`internal/store/tenant`** validators (`TenantAllowed`, artifact allow) with table-driven tests (empty, leading `.`/`-`, >63 chars, uppercase, path traversal, valid).
-- [ ] **`docs/STORE.md`** created (overview, on-disk layout, env-table stub); `README.md` / `AGENTS.md` / `TASKS.md` updated to describe agent + store.
-- [ ] Build invariant holds: `CGO_ENABLED=0 go build ./cmd/prism` still succeeds; `go build ./cmd/prism-store` succeeds; `go vet ./...` clean.
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally.
+- [x] **ADR** added to `docs/DESIGN.md` (name, one-module/two-binary/one-release, package layout, reuse boundaries, CGO decision + build invariant). No existing DESIGN content made untrue.
+- [x] **`internal/version`** package added; `cmd/prism` uses it with its `version` output unchanged (existing `cmd/prism` version test still passes).
+- [x] **`cmd/prism-store`** compiles; `prism-store version` prints the version; `serve` starts, serves `/healthz`=`ok` and `/readyz` (writability check → `503`/`ready`), and shuts down gracefully on signal. Handler unit tests (httptest) for healthz/readyz (incl. unwritable data dir → 503).
+- [x] **`internal/store/**`** skeleton packages present (`ingest`, `engine`, `lifecycle`, `merge`, `rollup`, `query`, `tenant`, `stats`), each with a `doc.go`; all compile.
+- [x] **`internal/store/tenant`** validators (`TenantAllowed`, artifact allow) with table-driven tests (empty, leading `.`/`-`, >63 chars, uppercase, path traversal, valid).
+- [x] **`docs/STORE.md`** created (overview, on-disk layout, env-table stub); `README.md` / `AGENTS.md` / `TASKS.md` updated to describe agent + store.
+- [x] Build invariant holds: `CGO_ENABLED=0 go build ./cmd/prism` still succeeds; `go build ./cmd/prism-store` succeeds; `go vet ./...` clean.
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
