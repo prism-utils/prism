@@ -143,25 +143,25 @@ make bench BENCH_SCALE=2
 
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.48s · 1,349,593 rows/s | 2.06s · 971,603 rows/s |
-| count | 0.7 / 1.4 / 0.5 | 1.6 / 2.1 / 1.4 |
-| aggregation | 13.2 / 16.6 / 12.9 | 10.4 / 32.2 / 10.3 |
-| logs LIKE | 72.8 / 254.5 / 70.5 | 46.8 / 55.6 / 42.9 |
+| ingest | 1.52s · 1,319,232 rows/s | 2.05s · 974,396 rows/s |
+| count | 0.6 / 4.4 / 0.6 | 1.6 / 3.7 / 1.5 |
+| aggregation | 13.3 / 15.0 / 12.5 | 11.1 / 36.3 / 9.6 |
+| logs LIKE | 73.5 / 76.2 / 70.4 | 39.5 / 47.4 / 38.2 |
 
 **Resource usage** (dense continuous sampling; idle baseline row; store queries sample the embedded DuckDB engine in `prism-bench`; process I/O/IOPS **`n/a`** on macOS; **Docker Desktop often reports container blkio as 0** — use native Linux Docker for meaningful ClickHouse I/O/IOPS):
 
 | Workload | System | CPU mean / peak | Peak RSS | I/O | IOPS |
 |----------|--------|-----------------|----------|-----|------|
 | idle (baseline) | prism-store | 0.00 / 0.00 cores | 22.3 MiB | n/a | n/a |
-| idle (baseline) | ClickHouse | 0.08 / 1.46 cores | 248.6 MiB | 0.2 MiB | 0 |
-| ingest | prism-store | 0.04 / 1.82 cores | 99.0 MiB | n/a | n/a |
-| ingest | ClickHouse | 0.10 / 1.00 cores | 398.2 MiB | 0.6 MiB | 0 |
-| count | prism-store | 0.37 / 0.89 cores | 581.6 MiB | n/a | n/a |
-| count | ClickHouse | 0.11 / 0.47 cores | 398.5 MiB | n/a | n/a |
-| aggregation | prism-store | 0.80 / 1.94 cores | 585.4 MiB | n/a | n/a |
-| aggregation | ClickHouse | 0.50 / 1.47 cores | 402.0 MiB | n/a | n/a |
-| logs LIKE | prism-store | 1.12 / 3.25 cores | 604.2 MiB | n/a | n/a |
-| logs LIKE | ClickHouse | 0.59 / 1.99 cores | 401.5 MiB | 0.3 MiB | 0 |
+| idle (baseline) | ClickHouse | 0.06 / 1.02 cores | 260.1 MiB | 0.2 MiB | 0 |
+| ingest | prism-store | 0.04 / 1.67 cores | 90.3 MiB | n/a | n/a |
+| ingest | ClickHouse | 0.10 / 1.56 cores | 421.2 MiB | 0.7 MiB | 0 |
+| count | prism-store | 0.36 / 1.02 cores | 633.0 MiB | n/a | n/a |
+| count | ClickHouse | 0.06 / 0.22 cores | 421.2 MiB | n/a | n/a |
+| aggregation | prism-store | 0.81 / 1.97 cores | 628.1 MiB | n/a | n/a |
+| aggregation | ClickHouse | 0.40 / 1.30 cores | 423.0 MiB | 0.2 MiB | 0 |
+| logs LIKE | prism-store | 1.23 / 2.69 cores | 625.2 MiB | n/a | n/a |
+| logs LIKE | ClickHouse | 0.59 / 1.86 cores | 425.2 MiB | n/a | n/a |
 
 **Charts** (same run): [`bench/charts/cpu-cores.svg`](bench/charts/cpu-cores.svg), [`bench/charts/memory-rss.svg`](bench/charts/memory-rss.svg), [`bench/charts/disk-io.svg`](bench/charts/disk-io.svg)
 
