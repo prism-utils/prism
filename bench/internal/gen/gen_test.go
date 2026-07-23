@@ -35,3 +35,10 @@ func TestGenerate_fixedSeed_metricCardinality(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ds.MetricNames(), gen.MetricCardinality)
 }
+
+func TestGenerate_scale1_deadlineCount(t *testing.T) {
+	cfg := gen.ScaleConfig(1)
+	ds, err := gen.Generate(cfg)
+	require.NoError(t, err)
+	require.Equal(t, int64(10_000), ds.DeadlineCount())
+}

@@ -1,6 +1,6 @@
 # Spec: prism-store — reproducible benchmark vs ClickHouse
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-benchmark`
 - **Owner phase:** orchestrator → developer
@@ -66,17 +66,17 @@ reproduction steps. Both systems must be given a *fair* configuration
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `make bench` (default profile) runs end-to-end on this host: generates data, brings ClickHouse up, builds+runs prism-store, runs all four workloads, tears down, and writes `bench/results.json` + `bench/RESULTS.md`.
-- [ ] Deterministic generator (seeded); the same rows feed both systems; the `LIKE` substring frequency is fixed and the **count matches** between ClickHouse and the store (asserted; benchmark fails if they differ).
-- [ ] ClickHouse schema is tuned: MergeTree, `ts`-prefixed `ORDER BY`, `LowCardinality`/native types, no `Nullable`, day partitioning, `tokenbf_v1`/`ngrambf_v1` on `message`; inserts batched 10K–100K.
-- [ ] Store metrics path uses the real HTTP ingest + compaction + query engine; logs path uses the engine's DuckDB-over-Parquet query (labeled engine-level).
-- [ ] Each query reports p50/p95/min over K warmed runs; ingest reports wall-clock + rows/s.
-- [ ] `bench/README.md`: prerequisites + exact one-command reproduction + cleanup; environment captured in `RESULTS.md` (CPU/RAM/OS/arch, CH + DuckDB versions, scale, commit).
-- [ ] `README.md` gains a "Benchmark: prism-store vs ClickHouse" section with the measured table, reproduction command, environment note, and an **honest** interpretation (including any workload ClickHouse wins).
-- [ ] Harness code is clean and structured (generator / clickhouse driver / store driver / orchestrator separated); no "macaronic" one-off scripts; errors handled; no secrets.
-- [ ] Bench Go code has unit tests for the deterministic generator (fixed seed → fixed substring count) and the results renderer; `make lint test` green.
-- [ ] `CGO_ENABLED=0 go build ./cmd/prism` and `go build ./cmd/prism-store` still pass; bench code (if it imports DuckDB) is CGO-gated and does not pull DuckDB into the agent build.
-- [ ] Nothing heavyweight added to the default CI `test`/`full` path that needs ClickHouse unless explicitly gated (bench is opt-in via `make bench`); no committed large datasets or binaries.
+- [x] `make bench` (default profile) runs end-to-end on this host: generates data, brings ClickHouse up, builds+runs prism-store, runs all four workloads, tears down, and writes `bench/results.json` + `bench/RESULTS.md`.
+- [x] Deterministic generator (seeded); the same rows feed both systems; the `LIKE` substring frequency is fixed and the **count matches** between ClickHouse and the store (asserted; benchmark fails if they differ).
+- [x] ClickHouse schema is tuned: MergeTree, `ts`-prefixed `ORDER BY`, `LowCardinality`/native types, no `Nullable`, day partitioning, `tokenbf_v1`/`ngrambf_v1` on `message`; inserts batched 10K–100K.
+- [x] Store metrics path uses the real HTTP ingest + compaction + query engine; logs path uses the engine's DuckDB-over-Parquet query (labeled engine-level).
+- [x] Each query reports p50/p95/min over K warmed runs; ingest reports wall-clock + rows/s.
+- [x] `bench/README.md`: prerequisites + exact one-command reproduction + cleanup; environment captured in `RESULTS.md` (CPU/RAM/OS/arch, CH + DuckDB versions, scale, commit).
+- [x] `README.md` gains a "Benchmark: prism-store vs ClickHouse" section with the measured table, reproduction command, environment note, and an **honest** interpretation (including any workload ClickHouse wins).
+- [x] Harness code is clean and structured (generator / clickhouse driver / store driver / orchestrator separated); no "macaronic" one-off scripts; errors handled; no secrets.
+- [x] Bench Go code has unit tests for the deterministic generator (fixed seed → fixed substring count) and the results renderer; `make lint test` green.
+- [x] `CGO_ENABLED=0 go build ./cmd/prism` and `go build ./cmd/prism-store` still pass; bench code (if it imports DuckDB) is CGO-gated and does not pull DuckDB into the agent build.
+- [x] Nothing heavyweight added to the default CI `test`/`full` path that needs ClickHouse unless explicitly gated (bench is opt-in via `make bench`); no committed large datasets or binaries.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
@@ -85,7 +85,7 @@ reproduction steps. Both systems must be given a *fair* configuration
 - [ ] **Gate 3 — Docs/comments match code:** README table/commands match what `make bench` actually produces and the harness flags; the store-logs "engine-level" caveat is stated and accurate; ClickHouse tuning claims match the actual DDL.
 - [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
 - [ ] **Fairness audit:** reviewer confirms ClickHouse is genuinely tuned (not handicapped) AND the store isn't given an unfair shortcut (e.g. pre-cached results, skipping compaction, smaller data). Numbers in the README must be the ones `make bench` produced on the stated host — reviewer re-runs `make bench` and confirms the README table is consistent with a real run (allowing host variance).
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (generator/renderer unit tests; the full bench is opt-in, not in the default gate).
+- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (generator/renderer unit tests; the full bench is opt-in, not in CI gate).
 
 ## 7. Reviewer notes
 

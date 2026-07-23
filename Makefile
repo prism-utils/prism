@@ -50,9 +50,17 @@ cover: ## Coverage report (coverage.txt + coverage.html)
 	go tool cover -html=coverage.txt -o coverage.html
 	@go tool cover -func=coverage.txt | tail -n 1
 
-.PHONY: bench
-bench: ## Hot-path benchmarks (prints allocs/op and bytes/op)
+.PHONY: microbench
+microbench: ## Hot-path benchmarks (prints allocs/op and bytes/op)
 	go test $(GOFLAGS) -run '^$$' -bench . -benchmem ./...
+
+BENCH_COMPOSE := docker compose -f bench/docker-compose.bench.yml
+BENCH_SCALE ?= 1
+
+.PHONY: bench
+bench: ## Reproducible prism-store vs ClickHouse benchmark (see bench/README.md)
+	@command -v docker >/dev/null 2>&1 || { echo "docker required for make bench"; exit 1; }
+	CGO_ENABLED=1 go run ./bench/cmd/prism-bench --scale $(BENCH_SCALE)
 
 .PHONY: fuzz
 fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it finds.
