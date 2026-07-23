@@ -168,8 +168,8 @@ make bench BENCH_SCALE=2
 **Interpretation:** Metrics **count** and **aggregation** scan the full ingested
 table on both systems (no `ts` range pruning) — apples-to-apples over the same N
 rows. On this laptop prism-store leads **ingest** and **count** (p50). ClickHouse
-wins **aggregation** (p50 10.4 ms vs 13.2 ms) and **logs LIKE** (p50 46.8 ms vs
-72.8 ms) with fair tuning (`tokenbf_v1` skip index, typed schema, batched inserts).
+wins **aggregation** (p50 11.1 ms vs 13.3 ms) and **logs LIKE** (p50 39.5 ms vs
+73.5 ms) with fair tuning (`tokenbf_v1` skip index, typed schema, batched inserts).
 Logs LIKE uses the same dataset-`ts` window on both sides. Store logs `LIKE` is
 **engine-level** (DuckDB over a logs-shaped Parquet tier) — not a shipping logs API.
 Both systems ran under the same **2 vCPU / 1 GiB** envelope so neither could allocate the full host.
