@@ -112,6 +112,34 @@ func TestEnsureTenant204AndIdempotent(t *testing.T) {
 	}
 }
 
+func TestEnsureFailure500WhenDataDirNotWritable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	cfg := testAdminConfig(dir)
+	eng := testEngine(t, dir)
+	mux := testAdminMux(t, cfg, eng, "")
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp := postEnsure(t, srv.URL+"/admin/tenants/"+testTenant+"/ensure")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "ensure failed") {
+		t.Fatalf("body = %q, want ensure failed", string(body))
+	}
+}
+
 func TestStatsUnknownTenant404(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testAdminConfig(dir)

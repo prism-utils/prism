@@ -64,6 +64,21 @@ func TestServeMuxSplitPlanes(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("public mux must not serve /stats when split, got %d", rec.Code)
 	}
+
+	const testTenant = "user-6f3a9c2b-apps"
+	queryPath := "/" + testTenant + "/query"
+
+	rec = httptest.NewRecorder()
+	adminPlane.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, queryPath, nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("admin mux must serve /{ns}/query")
+	}
+
+	rec = httptest.NewRecorder()
+	public.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, queryPath, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("public mux must not serve /{ns}/query when split, got %d", rec.Code)
+	}
 }
 
 func TestCombinedMuxServesAllRoutes(t *testing.T) {
