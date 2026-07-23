@@ -1,0 +1,152 @@
+---
+# Source: prism-store/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: golden-prism-store
+  labels:
+    helm.sh/chart: prism-store-0.1.0
+    app.kubernetes.io/name: prism-store
+    app.kubernetes.io/instance: golden
+    app.kubernetes.io/version: "dev"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: prism-store/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-prism-store
+  labels:
+    helm.sh/chart: prism-store-0.1.0
+    app.kubernetes.io/name: prism-store
+    app.kubernetes.io/instance: golden
+    app.kubernetes.io/version: "dev"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: prism-store
+    app.kubernetes.io/instance: golden
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# Source: prism-store/templates/statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: golden-prism-store
+  labels:
+    helm.sh/chart: prism-store-0.1.0
+    app.kubernetes.io/name: prism-store
+    app.kubernetes.io/instance: golden
+    app.kubernetes.io/version: "dev"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # DuckDB allows one writer per engine file. Keep replicas at 1 so a rollout never
+  # schedules two pods against the same ReadWriteOnce /data volume.
+  replicas: 1
+  serviceName: golden-prism-store
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prism-store
+      app.kubernetes.io/instance: golden
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prism-store
+        app.kubernetes.io/instance: golden
+    spec:
+      serviceAccountName: golden-prism-store
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: prism-store
+          image: "ghcr.io/elk-utilities/prism-store:dev"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 472
+            runAsGroup: 472
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDR
+              value: ":8080"
+            - name: DATA_DIR
+              value: "/data"
+            - name: ALLOWED_ARTIFACTS
+              value: "metrics-raw"
+            - name: MAX_BODY_BYTES
+              value: "268435456"
+            - name: AUTH_MODE
+              value: "none"
+            - name: HOT_WINDOW_MINUTES
+              value: "10"
+            - name: SEGMENTS_PER_TIER
+              value: "6"
+            - name: MAX_SEGMENT_BYTES
+              value: "2147483648"
+            - name: RETENTION_DAYS
+              value: "15"
+            - name: ROLLUP_STEPS
+              value: "1m,5m,1h"
+            - name: MAX_TIER
+              value: "8"
+            - name: HOT_SNAPSHOT_SECONDS
+              value: "15"
+            - name: FLUSH_TICK_SECONDS
+              value: "30"
+            - name: MERGE_TICK_SECONDS
+              value: "60"
+            - name: RETENTION_TICK_HOURS
+              value: "1"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          helm.sh/chart: prism-store-0.1.0
+          app.kubernetes.io/name: prism-store
+          app.kubernetes.io/instance: golden
+          app.kubernetes.io/version: "dev"
+          app.kubernetes.io/managed-by: Helm
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "32Gi"

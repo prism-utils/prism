@@ -1,0 +1,26 @@
+# Example Grafana DuckDB datasource — consumer overlay.
+# Generate initSQL with: prism-store print-view-sql --tenant <ns> --data-dir /data
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-prism-store
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  prism-store.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: prism-store-demo
+        type: duckdb
+        access: proxy
+        url: http://prism-store.prism-store.svc:9090
+        jsonData:
+          initSQL: |
+            CREATE OR REPLACE VIEW prism_demo AS
+            SELECT * FROM read_parquet('/data/demo/hot/current.parquet')
+            UNION ALL
+            SELECT * FROM read_parquet('/data/demo/tiers/L0/*.parquet');
+        secureJsonData: {}
+        # When ADMIN_TOKEN is set, configure Authorization header via Grafana
+        # secureJsonData or a sidecar proxy — not inlined here.
