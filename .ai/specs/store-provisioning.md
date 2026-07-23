@@ -1,6 +1,6 @@
 # Spec: prism-store — tenant provisioning (/ensure) + /stats metering
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-provisioning`
 - **Owner phase:** orchestrator → developer
@@ -25,7 +25,7 @@ so admin/stats/query are not publicly reachable.
       { "artifacts": { "<artifact>": { "windows": int, "latestUnixNanos": int } },
         "totalWindows": int, "onDiskBytes"?: int, "compactionCpuSeconds"?: float }
       ```
-      `onDiskBytes`/`compactionCpuSeconds` use `omitempty` and are set **only when `ns` is provided**. Per-tenant: `windows` = `eng.HotRowCount(ns)` + `len(engine.ListL0(dataDir,ns))`; `latestUnixNanos` = max L0 file mtime. Aggregate (no `ns`): sum `windows` and max `latestUnixNanos` across tenant dirs; `totalWindows` = sum. Iterate `cfg.allowedArtifacts` for the `artifacts` map (today a single `metrics-raw` entry). `onDiskBytes` from `stats.TenantOnDiskBytes` (excludes legacy `metrics-raw/`), `compactionCpuSeconds` from `stats.CompactionCPUSeconds`.
+      `onDiskBytes`/`compactionCpuSeconds` use `omitempty` and are set **only when `ns` is provided`. Per-tenant: `windows` = `eng.HotRowCount(ns)` + `len(engine.ListL0(dataDir,ns))`; `latestUnixNanos` = max L0 file mtime. Aggregate (no `ns`): sum `windows` and max `latestUnixNanos` across tenant dirs; `totalWindows` = sum. Iterate `cfg.allowedArtifacts` for the `artifacts` map (today a single `metrics-raw` entry). `onDiskBytes` from `stats.TenantOnDiskBytes` (excludes legacy `metrics-raw/`), `compactionCpuSeconds` from `stats.CompactionCPUSeconds`.
   - **Separate control-plane bind in `cmd/prism-store`:**
     - `ADMIN_LISTEN_ADDR` (optional): when set, `/admin/*`, `/stats`, and the `/{ns}/query` route bind on a **second `http.Server`** on that address; the public `LISTEN_ADDR` server keeps only ingest + `/healthz` + `/readyz`. When **unset**, all routes stay on the single public mux (dev/back-compat).
     - `ADMIN_TOKEN` (optional): when set, admin+stats(+query on the admin plane) require `Authorization: Bearer <token>` (constant-time compare); missing/wrong ⇒ `401`. When unset, no auth (rely on network isolation — documented).
@@ -69,13 +69,21 @@ so admin/stats/query are not publicly reachable.
 ## 6. Mandatory review gates  (reviewer owns)
 
 - [x] **Gate 1 — Guidelines:** seed pkg leaf/pure; handlers thin, slog at edges, errors wrapped; bearer compare constant-time; no globals; two-server wiring clean with a single shutdown path.
-- [ ] **Gate 2 — Edge cases:** ensure on already-seeded tenant (idempotent, no dup rows); ensure on unknown tenant `404`; stats for tenant with no data (zero windows, not error); stats aggregate over empty dataDir; legacy `metrics-raw/` excluded from `onDiskBytes`; missing `.metering.json` ⇒ `0`; admin token unset vs set; port-collision/startup error surfaces.
+- [x] **Gate 2 — Edge cases:** ensure on already-seeded tenant (idempotent, no dup rows); ensure on unknown tenant `404`; stats for tenant with no data (zero windows, not error); stats aggregate over empty dataDir; legacy `metrics-raw/` excluded from `onDiskBytes`; missing `.metering.json` ⇒ `0`; admin token unset vs set; port-collision/startup error surfaces.
 - [x] **Gate 3 — Docs/comments match code:** STORE.md `/stats` contract matches the struct tags exactly; CONFIG.md flags match; no forward references.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (seed unit + DuckDB integration for stats/ensure; `httptest` for handlers incl. two-plane routing + auth).
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (seed unit + DuckDB integration for stats/ensure; `httptest` for handlers incl. two-plane routing + auth).
 
 ## 7. Reviewer notes
 
-**Verdict: CHANGES_REQUESTED** (2026-07-22). Independent verification green: `make lint` 0 issues; `make test` (`-race`) all packages ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `go build ./cmd/prism-store` ok. TDD order ok (`1359153 test(store-provisioning):…` before `0f11e82 feat(store-provisioning):…`). Billing JSON struct tags and golden strings match reference `artifactStats`/`statsResponse` in prism-proxy `main.go` (~273–316); `ingest.BearerEquals` uses `crypto/subtle.ConstantTimeCompare`. No committed binaries (`.parquet` fixture only).
+**Verdict: ALL_OK** (re-review 2026-07-22). All five prior CHANGES_REQUESTED items verified on uid 501 (non-root):
 
-**Fix before re-review:** _(addressed in `5a5e052` + follow-up fix commit)_
+1. **ensure 500** — `TestEnsureFailure500WhenDataDirNotWritable`: `0555` temp dir reliably yields `500` + body containing `ensure failed` (3× `-race` runs).
+2. **Split-plane query** — `TestServeMuxSplitPlanes` asserts `GET /{ns}/query` non-404 on admin plane, 404 on public.
+3. **Dual shutdown** — `TestRunServeDualShutdownStopsBothServers`: both addrs accept `/healthz`, then TCP refused on both after ctx cancel; `goleak.VerifyNone` clean.
+4. **Port-collision** — `TestRunServePublicListenAddrInUse` / `TestRunServeAdminListenAddrInUse` surface `public listen` / `admin listen` errors; `150c139` shuts down peer server on bind failure; admin case covered by `goleak`.
+5. **Atomic comment** — `stats.go:34` nolint reads “tier segment paths stay under the tenant data root” (no cross-package symbol).
+
+Full gate re-run: `make lint` 0 issues; `make test` (`-race`) green; `CGO_ENABLED=0 go build ./cmd/prism` ok; `go build ./cmd/prism-store` ok. No regressions: billing golden JSON unchanged; `ingest.BearerEquals` → `subtle.ConstantTimeCompare`; no committed binaries; seed/idempotent tests green; `stats.TestTenantOnDiskBytesIgnoresLegacyMetricsRaw` holds.
+
+Prior review: CHANGES_REQUESTED (2026-07-22, commit `ead632d`).
