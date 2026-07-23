@@ -562,3 +562,55 @@ pkg/                       # (only if we ever expose a stable public API)
 `internal/` by default — nothing is a public API contract until we say so.
 Leaf component packages never import `pipeline`; `pipeline` and `components`
 depend on `component` interfaces only. Dependency direction points inward.
+
+---
+
+## 15. ADR — prism-store (store/query server)
+
+**Status:** accepted (2026-07, issue #22).
+
+### Context
+
+prism ships two runtime components: the **agent** (`cmd/prism`), an edge
+collector that emits columnar artifacts, and the **store** (`cmd/prism-store`),
+which durably lands those artifacts, maintains a per-tenant embedded OLAP
+catalog, and serves read-only queries. The store replaces the legacy
+**`prism-proxy`** name used in early deployments; behavior and on-disk layout
+carry forward under the new binary and image name
+(`ghcr.io/elk-utilities/prism-store`).
+
+### Decision
+
+- **One Go module, two binaries, one release.** Module
+  `github.com/elk-utilities/prism` hosts `cmd/prism` (agent) and
+  `cmd/prism-store` (store) beside each other, sharing `internal/` packages.
+  Producer and consumer of `docs/OUTPUT_CONTRACT.md` compile and evolve
+  together in one supply chain.
+- **Store package layout** under `internal/store/`:
+  `ingest`, `engine`, `lifecycle`, `merge`, `rollup`, `query`, `tenant`,
+  `stats` — one package per responsibility, leaf packages that do not import
+  each other beyond documented reuse.
+- **Reuse boundaries (do not fork):** `internal/columnar`,
+  `internal/encoder/parquet`, `internal/config`, `internal/tlsconf`,
+  `internal/obs`, and `internal/version`. The store is the **consumer** side of
+  the frozen output contract; the agent remains the producer.
+- **CGO / DuckDB.** The store links DuckDB via
+  `github.com/marcboeker/go-duckdb` (CGO). Its container image uses
+  `debian:bookworm-slim` plus `libstdc++6`, running as uid/gid **472**. The
+  **agent stays pure-static `CGO_ENABLED=0`** because it never imports
+  `internal/store` or any CGO dependency.
+- **Build invariant.** Build and static-analysis each binary by explicit path
+  (`./cmd/prism`, `./cmd/prism-store`). Never run `CGO_ENABLED=0 go build ./...`
+  or `go vet ./...` under a blanket `CGO_ENABLED=0` export when the store
+  packages are present — that would mis-compile or skip CGO surfaces. CI unit
+  tests run with `CGO_ENABLED=1` (`make test`). Agent release builds keep
+  `CGO_ENABLED=0` scoped to `./cmd/prism` only.
+
+### Consequences
+
+- Goals in §1 and packaging in §12 that describe a **single static agent
+  binary** remain true for `cmd/prism`; they do not apply to `cmd/prism-store`.
+- §13’s “no CGO in the dependency budget” applies to the **agent**; the store
+  introduces an isolated CGO boundary in its own binary and image.
+- Sub-issues #23–#29 flesh out ingest, engine, lifecycle, query, provisioning,
+  Helm, and release wiring on the skeleton paths established here.

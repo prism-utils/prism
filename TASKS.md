@@ -72,5 +72,21 @@ Both end-to-end paths are green and merged:
 (`configs/metrics.yaml`, `configs/logging.yaml`); one concurrent, isolated
 worker per input; the accumulation buffer flushes on age/rows/bytes (defaults
 30s / 12MiB) and aligns heterogeneous windows to a union schema. `make
-full-tests` is green; the image is CGO-free on distroless nonroot. ML and
+full-tests` is green; the agent image is CGO-free on distroless nonroot. ML and
 scripting remain deferred by design.
+
+## Store track (epic #21, in progress)
+
+Dependency-ordered sub-issues on branch `feat/store-skeleton` and follow-ups:
+
+- [ ] **store-skeleton (#22)** — ADR, `cmd/prism-store` health skeleton,
+      `internal/store/**` stubs, `internal/version`, tenant validators.
+- [ ] **store-ingest (#23)** — HTTP-parquet ingest landing.
+- [ ] **store-engine (#24)** — DuckDB hot catalog + `go-duckdb`.
+- [ ] **store-lifecycle (#25)** — snapshot / flush / merge / retention ticks.
+- [ ] **store-rollups (#26)** — 1m / 5m / 1h rollup materialization.
+- [ ] **store-query (#27)** — read-only time-range query endpoint.
+- [ ] **store-provision (#28)** — tenant ensure / admin routes.
+- [ ] **store-release (#29)** — Helm chart, GHCR image, goreleaser ldflags.
+
+See [`docs/STORE.md`](docs/STORE.md) and [`docs/DESIGN.md`](docs/DESIGN.md) §15.

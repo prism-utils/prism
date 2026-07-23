@@ -1,8 +1,7 @@
 # prism
 
-> **Status:** foundation / design phase. No runtime yet — this repo currently
-> defines the architecture, the build plan, and the engineering guardrails.
-> Code is added phase-by-phase per [`docs/PLAN.md`](docs/PLAN.md), test-first.
+> **Status:** foundation complete for the edge agent; the **store** track (#21)
+> is in progress. See [`docs/PLAN.md`](docs/PLAN.md) and [`TASKS.md`](TASKS.md).
 >
 > **Name is provisional.** `prism` = one input stream refracted through an
 > ordered pipeline into one or more encoded outputs. Easy to rename now.
@@ -14,7 +13,16 @@ re-encode logs and metrics at the edge** and emit them as compact columnar
 artifacts (Parquet) to cheap sinks.
 
 It is designed to run identically on **Linux bare metal** and **in a
-container**, as a **single static, CGO-free binary**.
+container**, as a **single static, CGO-free binary** (`cmd/prism`).
+
+## Components
+
+| Binary | Role | Build |
+|---|---|---|
+| **`prism`** (agent) | Config-driven edge collector; produces Parquet artifacts per [`docs/OUTPUT_CONTRACT.md`](docs/OUTPUT_CONTRACT.md). | Static, `CGO_ENABLED=0` |
+| **`prism-store`** (store) | Durable tiered columnar store + query server; consumes agent output. | CGO-linked (DuckDB, later slices) |
+
+Store design: [`docs/STORE.md`](docs/STORE.md). Architecture ADR: [`docs/DESIGN.md`](docs/DESIGN.md) §15.
 
 ## What it does
 
@@ -50,10 +58,11 @@ Read these, in order:
 
 1. [`docs/DESIGN.md`](docs/DESIGN.md) — architecture, patterns, data model.
 2. [`docs/CONFIG.md`](docs/CONFIG.md) — complete config reference (every component, its options, defaults).
-3. [`docs/PLAN.md`](docs/PLAN.md) — phased, test-first build plan.
-4. [`CONTRIBUTING.md`](CONTRIBUTING.md) — TDD workflow, data patterns, dos/don'ts.
-5. [`docs/TESTING.md`](docs/TESTING.md) — test layers and how to run them.
-6. [`docs/REVIEW.md`](docs/REVIEW.md) — the reviewer checklist.
+3. [`docs/STORE.md`](docs/STORE.md) — store/query server layout and env (stub).
+4. [`docs/PLAN.md`](docs/PLAN.md) — phased, test-first build plan.
+5. [`CONTRIBUTING.md`](CONTRIBUTING.md) — TDD workflow, data patterns, dos/don'ts.
+6. [`docs/TESTING.md`](docs/TESTING.md) — test layers and how to run them.
+7. [`docs/REVIEW.md`](docs/REVIEW.md) — the reviewer checklist.
 
 ### Working with agents
 
@@ -67,6 +76,7 @@ and finishes only when the reviewer signs `ALL_OK` and it merges.
 
 ```bash
 make build                      # -> ./bin/prism (static, CGO_ENABLED=0)
+go build ./cmd/prism-store      # store skeleton (CGO when engine lands)
 ./bin/prism validate -c prism.yaml
 cat app.log | ./bin/prism run -c prism.yaml
 make test                       # fast unit tests

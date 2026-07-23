@@ -14,6 +14,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,10 +25,13 @@ import (
 	"github.com/elk-utilities/prism/internal/config"
 	"github.com/elk-utilities/prism/internal/obs"
 	"github.com/elk-utilities/prism/internal/pipeline"
+	"github.com/elk-utilities/prism/internal/version"
 )
 
-// version is overridable at build time with -ldflags "-X main.version=…".
-var version = "dev"
+func writeVersion(w io.Writer) error {
+	_, err := fmt.Fprintf(w, "prism %s\n", version.Version)
+	return err
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -43,7 +47,10 @@ func main() {
 	case "collect":
 		err = collectCmd(os.Args[2:])
 	case "version":
-		fmt.Println("prism", version)
+		if err := writeVersion(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "prism:", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -95,7 +102,7 @@ func collectCmd(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	return srv.Serve(ctx, *addr, func(bound string) {
-		logger.Info("prism collect listening", "addr", bound, "dir", *dir, "version", version)
+		logger.Info("prism collect listening", "addr", bound, "dir", *dir, "version", version.Version)
 	})
 }
 
@@ -137,7 +144,7 @@ func runCmd(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	logger.Info("prism starting", "pipelines", len(cfg.Pipelines), "version", version)
+	logger.Info("prism starting", "pipelines", len(cfg.Pipelines), "version", version.Version)
 	if err := set.Run(ctx, obs.NewHost(logger)); err != nil {
 		return err
 	}
