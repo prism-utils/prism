@@ -44,6 +44,54 @@ func TestFindMergesSixSameTierProducesOneMerge(t *testing.T) {
 	}
 }
 
+func TestFindMergesEmptyNoAction(t *testing.T) {
+	if actions := testPlanner().FindMerges(nil); len(actions) != 0 {
+		t.Fatalf("empty input should produce no merge, got %v", actions)
+	}
+}
+
+func TestFindMergesAllSealedTierNoAction(t *testing.T) {
+	p := testPlanner()
+	var segs []Segment
+	for i := 0; i < 6; i++ {
+		off := time.Duration(i*10) * time.Minute
+		segs = append(segs, seg(0, pathID(i), 200, off, off+9*time.Minute))
+	}
+	if actions := p.FindMerges(segs); len(actions) != 0 {
+		t.Fatalf("all-sealed tier should not merge, got %v", actions)
+	}
+}
+
+func TestFindMergesOverlappingRangesBreakChain(t *testing.T) {
+	p := testPlanner()
+	var segs []Segment
+	for i := 0; i < 6; i++ {
+		segs = append(segs, seg(0, pathID(i), 20, 0, 10*time.Minute))
+	}
+	if actions := p.FindMerges(segs); len(actions) != 0 {
+		t.Fatalf("overlapping ranges must not form a 6-segment chain, got %v", actions)
+	}
+}
+
+func TestFindMergesShrinksToSingleSource(t *testing.T) {
+	p := testPlanner()
+	var segs []Segment
+	for i := 0; i < 6; i++ {
+		off := time.Duration(i*10) * time.Minute
+		segs = append(segs, seg(0, pathID(i), 150, off, off+9*time.Minute))
+	}
+	actions := p.FindMerges(segs)
+	if len(actions) != 1 {
+		t.Fatalf("want 1 merge, got %d", len(actions))
+	}
+	if len(actions[0].Sources) != 1 {
+		t.Fatalf("output cap should shrink to 1 source, got %d", len(actions[0].Sources))
+	}
+	if actions[0].Sources[0].Bytes != 150 {
+		t.Fatalf("want lone 150-byte source, got %d", actions[0].Sources[0].Bytes)
+	}
+}
+
 func TestFindMergesLessThanSixNoMerge(t *testing.T) {
 	p := testPlanner()
 	var segs []Segment
