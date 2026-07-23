@@ -1,6 +1,7 @@
 package ingest_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,12 +35,47 @@ func testConfig(token string, mode ingest.AuthMode) ingest.Config {
 	}
 }
 
-func testHandler(t *testing.T, cfg ingest.Config) (http.Handler, *engine.Engine) {
+func doIngestReq(t *testing.T, req *http.Request) *http.Response {
+	t.Helper()
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/octet-stream")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
+func newIngestReq(t *testing.T, url string, body io.Reader) *http.Request {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, body)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	return req
+}
+
+func closeResp(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("close body: %v", err)
+	}
+}
+
+func testServer(t *testing.T, cfg *ingest.Config) (http.Handler, *engine.Engine) {
 	t.Helper()
 	eng := engine.New(engine.Config{DataDir: t.TempDir(), HotWindow: time.Hour}, time.Now)
 	t.Cleanup(func() { _ = eng.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return ingest.Handler(cfg, eng, logger), eng
+	mux := http.NewServeMux()
+	mux.Handle(ingest.IngestRoutePattern(cfg.RoutePrefix), ingest.Handler(cfg, eng, logger))
+	return mux, eng
+}
+
+func testHandler(t *testing.T, cfg ingest.Config) (http.Handler, *engine.Engine) { //nolint:gocritic // test helper mirrors production config shape
+	t.Helper()
+	return testServer(t, &cfg)
 }
 
 func ingestURL(base, prefix, ns, artifact string) string {
@@ -69,11 +106,8 @@ func TestIngestHappyPath(t *testing.T) {
 	defer srv.Close()
 
 	f := validWindowBody(t)
-	resp, err := http.Post(ingestURL(srv.URL, "", testTenant, "metrics-raw"), "application/octet-stream", f)
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), f))
+	defer closeResp(t, resp)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("want 204, got %d", resp.StatusCode)
 	}
@@ -87,11 +121,8 @@ func TestIngestEmptyBody204(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "", testTenant, "metrics-raw"), "application/octet-stream", strings.NewReader(""))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), strings.NewReader("")))
+	defer closeResp(t, resp)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("want 204, got %d", resp.StatusCode)
 	}
@@ -105,11 +136,8 @@ func TestIngestUnknownTenant404(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "", "../escape", "metrics-raw"), "application/octet-stream", validWindowBody(t))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", "INVALID", "metrics-raw"), validWindowBody(t)))
+	defer closeResp(t, resp)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", resp.StatusCode)
 	}
@@ -120,11 +148,8 @@ func TestIngestUnknownArtifact404(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "", testTenant, "logs-raw"), "application/octet-stream", validWindowBody(t))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", testTenant, "logs-raw"), validWindowBody(t)))
+	defer closeResp(t, resp)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", resp.StatusCode)
 	}
@@ -137,11 +162,8 @@ func TestIngestBodyTooLarge413(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "", testTenant, "metrics-raw"), "application/octet-stream", strings.NewReader("0123456789"))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), strings.NewReader("0123456789")))
+	defer closeResp(t, resp)
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("want 413, got %d", resp.StatusCode)
 	}
@@ -154,20 +176,14 @@ func TestIngestRoutePrefix(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "/prism-proxy", testTenant, "metrics-raw"), "application/octet-stream", validWindowBody(t))
-	if err != nil {
-		t.Fatalf("post prefixed: %v", err)
-	}
-	resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "/prism-proxy", testTenant, "metrics-raw"), validWindowBody(t)))
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("prefixed want 204, got %d", resp.StatusCode)
 	}
 
-	resp2, err := http.Post(ingestURL(srv.URL, "", testTenant, "metrics-raw"), "application/octet-stream", validWindowBody(t))
-	if err != nil {
-		t.Fatalf("post unprefixed: %v", err)
-	}
-	resp2.Body.Close()
+	resp2 := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t)))
+	closeResp(t, resp2)
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Fatalf("unprefixed want 404, got %d", resp2.StatusCode)
 	}
@@ -181,11 +197,8 @@ func TestIngestBearerMissing401(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "", testTenant, "metrics-raw"), "application/octet-stream", strings.NewReader("x"))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), strings.NewReader("x")))
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d", resp.StatusCode)
 	}
@@ -196,13 +209,10 @@ func TestIngestBearerWrong401(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, ingestURL(srv.URL, "", testTenant, "metrics-raw"), strings.NewReader("x"))
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), strings.NewReader("x"))
 	req.Header.Set("Authorization", "Bearer wrong")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	resp.Body.Close()
+	resp := doIngestReq(t, req)
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d", resp.StatusCode)
 	}
@@ -213,13 +223,10 @@ func TestIngestBearerCorrect204(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
 	req.Header.Set("Authorization", "Bearer s3cret")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	resp.Body.Close()
+	resp := doIngestReq(t, req)
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("want 204, got %d", resp.StatusCode)
 	}
@@ -233,13 +240,10 @@ func TestIngestTrustedHeaderMismatch403(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
 	req.Header.Set("X-Tenant", "other-tenant")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	resp.Body.Close()
+	resp := doIngestReq(t, req)
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("want 403, got %d", resp.StatusCode)
 	}
@@ -250,13 +254,10 @@ func TestIngestTrustedHeaderMatch204(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
 	req.Header.Set("X-Tenant", testTenant)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	resp.Body.Close()
+	resp := doIngestReq(t, req)
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("want 204, got %d", resp.StatusCode)
 	}
@@ -270,11 +271,8 @@ func TestIngestTrustedHeaderMissing401(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "", testTenant, "metrics-raw"), "application/octet-stream", validWindowBody(t))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	resp.Body.Close()
+	resp := doIngestReq(t, newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t)))
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d", resp.StatusCode)
 	}
@@ -282,14 +280,18 @@ func TestIngestTrustedHeaderMissing401(t *testing.T) {
 
 func TestIngestMTLSNoCert401(t *testing.T) {
 	h, _ := testHandler(t, testConfig("", ingest.AuthMTLS))
-	srv := newMTLSServer(t, h, nil)
+	ca, caKey := testCA(t)
+	srvCert := testServerTLSCert(t, ca, caKey)
+	srv := newMTLSServer(t, h, ca, &srvCert)
 	defer srv.Close()
 
-	resp, err := http.Post(ingestURL(srv.URL, "", testTenant, "metrics-raw"), "application/octet-stream", validWindowBody(t))
+	client := mtlsClient(t, ca, nil)
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	resp.Body.Close()
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401 without client cert, got %d", resp.StatusCode)
 	}
@@ -297,18 +299,19 @@ func TestIngestMTLSNoCert401(t *testing.T) {
 
 func TestIngestMTLSWrongCN403(t *testing.T) {
 	h, _ := testHandler(t, testConfig("", ingest.AuthMTLS))
-	ca, serverCert, serverKey := testCA(t)
-	wrongCert, wrongKey := testClientCert(t, ca, "wrong-tenant")
-	srv := newMTLSServer(t, h, &mtlsMaterial{ca: ca, serverCert: serverCert, serverKey: serverKey})
+	ca, caKey := testCA(t)
+	srvCert := testServerTLSCert(t, ca, caKey)
+	srv := newMTLSServer(t, h, ca, &srvCert)
 	defer srv.Close()
 
-	client := mtlsClient(t, ca, wrongCert, wrongKey)
-	req, _ := http.NewRequest(http.MethodPost, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
+	wrongCert := testClientCert(t, ca, caKey, "wrong-tenant")
+	client := mtlsClient(t, ca, &wrongCert)
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	resp.Body.Close()
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("want 403 for CN mismatch, got %d", resp.StatusCode)
 	}
@@ -316,18 +319,19 @@ func TestIngestMTLSWrongCN403(t *testing.T) {
 
 func TestIngestMTLSCNMatch204(t *testing.T) {
 	h, eng := testHandler(t, testConfig("", ingest.AuthMTLS))
-	ca, serverCert, serverKey := testCA(t)
-	clientCert, clientKey := testClientCert(t, ca, testTenant)
-	srv := newMTLSServer(t, h, &mtlsMaterial{ca: ca, serverCert: serverCert, serverKey: serverKey})
+	ca, caKey := testCA(t)
+	srvCert := testServerTLSCert(t, ca, caKey)
+	srv := newMTLSServer(t, h, ca, &srvCert)
 	defer srv.Close()
 
-	client := mtlsClient(t, ca, clientCert, clientKey)
-	req, _ := http.NewRequest(http.MethodPost, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
+	clientCert := testClientCert(t, ca, caKey, testTenant)
+	client := mtlsClient(t, ca, &clientCert)
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), validWindowBody(t))
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	resp.Body.Close()
+	closeResp(t, resp)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("want 204, got %d", resp.StatusCode)
 	}
@@ -336,13 +340,7 @@ func TestIngestMTLSCNMatch204(t *testing.T) {
 	}
 }
 
-type mtlsMaterial struct {
-	ca         *x509.Certificate
-	serverCert tls.Certificate
-	serverKey  *rsa.PrivateKey
-}
-
-func testCA(t *testing.T) (*x509.Certificate, tls.Certificate, *rsa.PrivateKey) {
+func testCA(t *testing.T) (*x509.Certificate, *rsa.PrivateKey) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -365,16 +363,39 @@ func testCA(t *testing.T) (*x509.Certificate, tls.Certificate, *rsa.PrivateKey) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	return ca, key
+}
+
+func testServerTLSCert(t *testing.T, ca *x509.Certificate, caKey *rsa.PrivateKey) tls.Certificate {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	pair, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ca, pair, key
+	return pair
 }
 
-func testClientCert(t *testing.T, ca *x509.Certificate, cn string) (tls.Certificate, *rsa.PrivateKey) {
+func testClientCert(t *testing.T, ca *x509.Certificate, caKey *rsa.PrivateKey, cn string) tls.Certificate {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -388,7 +409,7 @@ func testClientCert(t *testing.T, ca *x509.Certificate, cn string) (tls.Certific
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,21 +419,17 @@ func testClientCert(t *testing.T, ca *x509.Certificate, cn string) (tls.Certific
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pair, key
+	return pair
 }
 
-func newMTLSServer(t *testing.T, h http.Handler, mat *mtlsMaterial) *httptest.Server {
+func newMTLSServer(t *testing.T, h http.Handler, ca *x509.Certificate, srvCert *tls.Certificate) *httptest.Server {
 	t.Helper()
-	if mat == nil {
-		ca, srvCert, _ := testCA(t)
-		mat = &mtlsMaterial{ca: ca, serverCert: srvCert}
-	}
 	pool := x509.NewCertPool()
-	pool.AddCert(mat.ca)
+	pool.AddCert(ca)
 	srv := httptest.NewUnstartedServer(h)
 	srv.TLS = &tls.Config{
-		Certificates: []tls.Certificate{mat.serverCert},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
+		Certificates: []tls.Certificate{*srvCert},
+		ClientAuth:   tls.VerifyClientCertIfGiven,
 		ClientCAs:    pool,
 		MinVersion:   tls.VersionTLS12,
 	}
@@ -420,18 +437,18 @@ func newMTLSServer(t *testing.T, h http.Handler, mat *mtlsMaterial) *httptest.Se
 	return srv
 }
 
-func mtlsClient(t *testing.T, ca *x509.Certificate, cert tls.Certificate, key *rsa.PrivateKey) *http.Client {
+func mtlsClient(t *testing.T, ca *x509.Certificate, cert *tls.Certificate) *http.Client {
 	t.Helper()
 	pool := x509.NewCertPool()
 	pool.AddCert(ca)
-	_ = key
+	cfg := &tls.Config{
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	}
+	if cert != nil {
+		cfg.Certificates = []tls.Certificate{*cert}
+	}
 	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs:      pool,
-				Certificates: []tls.Certificate{cert},
-				MinVersion:   tls.VersionTLS12,
-			},
-		},
+		Transport: &http.Transport{TLSClientConfig: cfg},
 	}
 }

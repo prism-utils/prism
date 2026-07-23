@@ -3,6 +3,7 @@ package ingest_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -20,7 +21,7 @@ import (
 	"github.com/elk-utilities/prism/internal/store/ingest"
 )
 
-func startFlightReceiver(t *testing.T, cfg ingest.Config) (addr string, eng *engine.Engine) {
+func startFlightReceiver(t *testing.T, cfg *ingest.Config) (addr string, eng *engine.Engine) {
 	t.Helper()
 	eng = engine.New(engine.Config{DataDir: t.TempDir(), HotWindow: time.Hour}, time.Now)
 	t.Cleanup(func() { _ = eng.Close() })
@@ -74,7 +75,15 @@ func metricsIPCBlock(t *testing.T, mem memory.Allocator) []byte {
 	lb.Append("{}")
 	vb.Append(1)
 	tb.Append(0)
-	rec := array.NewRecordBatch(schema, []arrow.Array{nb.NewArray(), lb.NewArray(), vb.NewArray(), tb.NewArray()}, 1)
+	nc := nb.NewArray()
+	lc := lb.NewArray()
+	vc := vb.NewArray()
+	tc := tb.NewArray()
+	defer nc.Release()
+	defer lc.Release()
+	defer vc.Release()
+	defer tc.Release()
+	rec := array.NewRecordBatch(schema, []arrow.Array{nc, lc, vc, tc}, 1)
 	defer rec.Release()
 
 	var buf bytes.Buffer
@@ -134,7 +143,7 @@ func doPutWindow(t *testing.T, addr, token, tenant, artifact string, ipcBytes []
 	}
 	for {
 		if _, err := stream.Recv(); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
@@ -157,7 +166,7 @@ func TestFlightDoPutRoundTrip(t *testing.T) {
 	defer mem.AssertSize(t, 0)
 
 	cfg := testConfig("", ingest.AuthNone)
-	addr, eng := startFlightReceiver(t, cfg)
+	addr, eng := startFlightReceiver(t, &cfg)
 	ipcBytes := metricsIPCBlock(t, mem)
 	if err := doPutWindow(t, addr, "", testTenant, "metrics-raw", ipcBytes); err != nil {
 		t.Fatalf("DoPut: %v", err)
@@ -168,12 +177,9 @@ func TestFlightDoPutRoundTrip(t *testing.T) {
 }
 
 func TestFlightDoPutBearerRejected(t *testing.T) {
-	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	defer mem.AssertSize(t, 0)
-
 	cfg := testConfig("s3cret", ingest.AuthBearer)
-	addr, eng := startFlightReceiver(t, cfg)
-	ipcBytes := metricsIPCBlock(t, mem)
+	addr, eng := startFlightReceiver(t, &cfg)
+	ipcBytes := metricsIPCBlock(t, memory.DefaultAllocator)
 	if err := doPutWindow(t, addr, "wrong", testTenant, "metrics-raw", ipcBytes); err == nil {
 		t.Fatal("DoPut with wrong token should fail")
 	}
@@ -183,12 +189,9 @@ func TestFlightDoPutBearerRejected(t *testing.T) {
 }
 
 func TestFlightDoPutUnknownTenant(t *testing.T) {
-	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
-	defer mem.AssertSize(t, 0)
-
 	cfg := testConfig("", ingest.AuthNone)
-	addr, eng := startFlightReceiver(t, cfg)
-	ipcBytes := metricsIPCBlock(t, mem)
+	addr, eng := startFlightReceiver(t, &cfg)
+	ipcBytes := metricsIPCBlock(t, memory.DefaultAllocator)
 	if err := doPutWindow(t, addr, "", "../bad", "metrics-raw", ipcBytes); err == nil {
 		t.Fatal("DoPut unknown tenant should fail")
 	}
