@@ -1,6 +1,6 @@
 # Spec: prism-store — compaction (Lucene tiered merge) + rollups + retention + metering + tickers
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-lifecycle`
 - **Owner phase:** orchestrator → developer
@@ -65,11 +65,13 @@ store self-manages its on-disk tiers end to end (ingest→hot→L0→L1…→ret
 ## 6. Mandatory review gates  (reviewer owns)
 
 - [x] **Gate 1 — Guidelines:** planner is pure-Go/leaf; executor/rollup close their DuckDB handles (no leak); atomic tmp+rename everywhere; sources deleted only post-rename; tickers in one goroutine, stopped on ctx; slog at the edge, libs return wrapped errors; no globals; `internal/store/*` don't import `pipeline`.
-- [ ] **Gate 2 — Edge cases:** empty/no segments; fewer than `SegmentsPerTier`; all sealed; overlapping/gapped time ranges (chain break); single oversized candidate (shrink to 1); retention exact boundary; rollup over multiple sources; metering when elapsed==0 (no write); merge when a source vanishes mid-pass; retention when a file is already gone.
+- [x] **Gate 2 — Edge cases:** empty/no segments; fewer than `SegmentsPerTier`; all sealed; overlapping/gapped time ranges (chain break); single oversized candidate (shrink to 1); retention exact boundary; rollup over multiple sources; metering when elapsed==0 (no write); merge when a source vanishes mid-pass; retention when a file is already gone.
 - [x] **Gate 3 — Docs/comments match code:** `docs/STORE.md` lifecycle section (tiers, seal, rollups, retention boundary, metering approximation, tick defaults) + `docs/CONFIG.md` env match exactly; no forward references.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (pure-Go planner unit tests + DuckDB-backed golden/behavior tests for executor/rollup/lifecycle).
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (pure-Go planner unit tests + DuckDB-backed golden/behavior tests for executor/rollup/lifecycle).
 
 ## 7. Reviewer notes
 
-**REQUEST CHANGES** (2026-07-22). _(addressed — developer re-handoff 2026-07-22: Gate 4 nolint self-contained; edge-case tests for planner/metering/executor/retention/tickers; `RunBackgroundLoop` exported and tested with goleak.)_
+**REQUEST CHANGES** (2026-07-22). _(addressed — developer re-handoff 2026-07-22.)_
+
+**APPROVE** (2026-07-22 re-review). Fixes in `f102721`–`82a9b63` resolve prior Gate 2/4/§5 gaps: self-contained metering nolint; planner empty/all-sealed/overlap/shrink-to-1 tests; metering non-positive no-write + zero-after-positive unchanged; executor missing-source error pinned; retention idempotent second pass; `RunBackgroundLoop` exported with `TestRunBackgroundLoopStopsOnContextCancel` (goleak — pre-existing direct dep, no go.mod change). Scope still #25-only; no new HTTP routes. `make lint test` (-race), builds, `go vet`, `go mod tidy` all clean.
