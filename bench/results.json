@@ -6,11 +6,11 @@
     "ram_gib": 16,
     "clickhouse_version": "24.8.14.39",
     "duckdb_version": "v1.1.3",
-    "git_commit": "67be130",
+    "git_commit": "944a09b",
     "metrics_rows": 1000000,
     "logs_rows": 1000000,
     "scale": 1,
-    "measured_at": "2026-07-23T09:32:05.537398Z"
+    "measured_at": "2026-07-23T09:39:57.873872Z"
   },
   "like_count_store": 10000,
   "like_count_clickhouse": 10000,
@@ -20,129 +20,129 @@
     {
       "name": "ingest",
       "system": "prism-store",
-      "wall_seconds": 1.136640084,
-      "rows_per_sec": 1759571.9420361388,
+      "wall_seconds": 1.181991083,
+      "rows_per_sec": 1692060.1422168259,
       "rows": 2000000,
       "usage": {
-        "cpu_cores_mean": 0.48118333731625207,
-        "cpu_cores_peak": 2.2704807159136444,
-        "rss_peak_bytes": 101138432,
+        "cpu_cores_mean": 0.5004178168473675,
+        "cpu_cores_peak": 2.1233180859242915,
+        "rss_peak_bytes": 95059968,
         "read_bytes": 0,
         "write_bytes": 0,
-        "duration_sec": 1.136633542
+        "duration_sec": 1.181993541
       }
     },
     {
       "name": "ingest",
       "system": "clickhouse",
-      "wall_seconds": 1.618534125,
-      "rows_per_sec": 1235686.025464554,
+      "wall_seconds": 1.673205958,
+      "rows_per_sec": 1195310.111368848,
       "rows": 2000000,
       "usage": {
-        "cpu_cores_mean": 0.2635618481858869,
-        "cpu_cores_peak": 0.4767745222929936,
-        "rss_peak_bytes": 331812864,
+        "cpu_cores_mean": 0.25293474491252393,
+        "cpu_cores_peak": 0.44617290322580644,
+        "rss_peak_bytes": 326176768,
         "read_bytes": 0,
-        "write_bytes": 0,
+        "write_bytes": 8192,
         "read_ops": 0,
         "write_ops": 0,
-        "duration_sec": 1.6185340419999998
+        "duration_sec": 1.6732070829999999
       }
     },
     {
       "name": "count",
       "system": "prism-store",
-      "p50_ms": 0.913,
-      "p95_ms": 5.349,
-      "min_ms": 0.535,
+      "p50_ms": 0.892,
+      "p95_ms": 7.142,
+      "min_ms": 0.647,
       "usage": {
-        "cpu_cores_mean": 0.08896078067594554,
-        "cpu_cores_peak": 0.17792156135189108,
-        "rss_peak_bytes": 682033152,
+        "cpu_cores_mean": 0.06769514416456972,
+        "cpu_cores_peak": 0.13539028832913944,
+        "rss_peak_bytes": 676069376,
         "read_bytes": 0,
         "write_bytes": 0,
-        "duration_sec": 0.022625458
+        "duration_sec": 0.026276792
       }
     },
     {
       "name": "count",
       "system": "clickhouse",
-      "p50_ms": 1.395,
-      "p95_ms": 1.703,
-      "min_ms": 1.264,
+      "p50_ms": 1.919,
+      "p95_ms": 2.055,
+      "min_ms": 1.557,
       "usage": {
-        "cpu_cores_mean": 0.05413939393939394,
-        "cpu_cores_peak": 0.05413939393939394,
-        "rss_peak_bytes": 380342272,
+        "cpu_cores_mean": 0.04834962216624685,
+        "cpu_cores_peak": 0.04834962216624685,
+        "rss_peak_bytes": 390029312,
         "read_bytes": 0,
         "write_bytes": 0,
         "read_ops": 0,
         "write_ops": 0,
-        "duration_sec": 0.007370166
+        "duration_sec": 0.009328167
       }
     },
     {
       "name": "aggregation",
       "system": "prism-store",
-      "p50_ms": 6.146,
-      "p95_ms": 12.404,
-      "min_ms": 3.968,
+      "p50_ms": 8.174,
+      "p95_ms": 14.629,
+      "min_ms": 5.194,
       "usage": {
-        "cpu_cores_mean": 0.9431775828506604,
-        "cpu_cores_peak": 1.886355165701321,
-        "rss_peak_bytes": 702464000,
+        "cpu_cores_mean": 0.8590658380059937,
+        "cpu_cores_peak": 1.7181316760119874,
+        "rss_peak_bytes": 691617792,
         "read_bytes": 0,
         "write_bytes": 0,
-        "duration_sec": 0.03314
+        "duration_sec": 0.042812375
       }
     },
     {
       "name": "aggregation",
       "system": "clickhouse",
-      "p50_ms": 6.058,
-      "p95_ms": 23.642,
-      "min_ms": 5.296,
+      "p50_ms": 6.249,
+      "p95_ms": 25.893,
+      "min_ms": 5.756,
       "usage": {
-        "cpu_cores_mean": 0.04423789209535759,
-        "cpu_cores_peak": 0.04423789209535759,
-        "rss_peak_bytes": 367652864,
+        "cpu_cores_mean": 0.043759899117276166,
+        "cpu_cores_peak": 0.043759899117276166,
+        "rss_peak_bytes": 346505216,
         "read_bytes": 0,
         "write_bytes": 0,
         "read_ops": 0,
         "write_ops": 0,
-        "duration_sec": 0.04676775
+        "duration_sec": 0.050270125
       }
     },
     {
       "name": "logs_like",
       "system": "prism-store",
-      "p50_ms": 17.2,
-      "p95_ms": 29.497,
-      "min_ms": 16.84,
+      "p50_ms": 18.71,
+      "p95_ms": 29.248,
+      "min_ms": 17.622,
       "usage": {
-        "cpu_cores_mean": 1.9240108152304427,
-        "cpu_cores_peak": 3.8480216304608854,
-        "rss_peak_bytes": 729546752,
+        "cpu_cores_mean": 1.9539137581384407,
+        "cpu_cores_peak": 3.9078275162768814,
+        "rss_peak_bytes": 715571200,
         "read_bytes": 0,
         "write_bytes": 0,
-        "duration_sec": 0.10068475
+        "duration_sec": 0.103186375
       }
     },
     {
       "name": "logs_like",
       "system": "clickhouse",
-      "p50_ms": 15.295,
-      "p95_ms": 23.316,
-      "min_ms": 14.291,
+      "p50_ms": 16.143,
+      "p95_ms": 23.264,
+      "min_ms": 15.007,
       "usage": {
-        "cpu_cores_mean": 0.05514822335025381,
-        "cpu_cores_peak": 0.05514822335025381,
-        "rss_peak_bytes": 413212672,
+        "cpu_cores_mean": 0.04550842767295597,
+        "cpu_cores_peak": 0.04550842767295597,
+        "rss_peak_bytes": 379613184,
         "read_bytes": 0,
         "write_bytes": 0,
         "read_ops": 0,
         "write_ops": 0,
-        "duration_sec": 0.084984208
+        "duration_sec": 0.086707166
       }
     }
   ]

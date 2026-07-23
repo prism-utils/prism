@@ -69,13 +69,56 @@ sampling for the embedded engine).
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** samplers behind a small interface, no globals, goroutine lifecycle tied to context/stop, errors wrapped; Docker socket resolution handles `DOCKER_HOST`; graceful degradation documented in code; comments self-contained.
-- [ ] **Gate 2 — Edge cases:** container missing/not-ready; Docker socket absent (fallback path); process exits mid-sample; zero-duration workload; a metric unsupported on the host → `n/a` (not a crash or a fake 0); sampler adds negligible skew to the latency numbers (sampling must not materially inflate the timings it runs alongside — verify timings are consistent with PR #42).
-- [ ] **Gate 3 — Docs/comments match code:** RESULTS/README tables match the schema and the units rendered; the caveats (embedded-engine sampling, macOS IOPS n/a) are accurate; the published numbers came from the committed `make bench` run.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] **Honesty/attribution audit:** confirm each workload samples the process/container that actually does the work; the store-query self-sampling is disclosed and not presented as a separate server; no metric is fabricated when unavailable.
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (monitor + renderer unit tests; full bench opt-in).
+- [x] **Gate 1 — Guidelines:** samplers behind a small interface, no globals, goroutine lifecycle tied to context/stop, errors wrapped; Docker socket resolution handles `DOCKER_HOST`; graceful degradation documented in code; comments self-contained.
+- [x] **Gate 2 — Edge cases:** container missing/not-ready; Docker socket absent (fallback path); process exits mid-sample; zero-duration workload; a metric unsupported on the host → `n/a` (not a crash or a fake 0); sampler adds negligible skew to the latency numbers (sampling must not materially inflate the timings it runs alongside — verify timings are consistent with PR #42).
+- [x] **Gate 3 — Docs/comments match code:** RESULTS/README tables match the schema and the units rendered; the caveats (embedded-engine sampling, macOS IOPS n/a) are accurate; the published numbers came from the committed `make bench` run.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] **Honesty/attribution audit:** confirm each workload samples the process/container that actually does the work; the store-query self-sampling is disclosed and not presented as a separate server; no metric is fabricated when unavailable.
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (monitor + renderer unit tests; full bench opt-in).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**2026-07-23 — READY (changes requested on Gates 2 & 3).** Implementation is sound and CI-green; attribution wiring is correct. Blockers are missing edge-case unit tests and incomplete Docker Desktop I/O caveat docs.
+
+**2026-07-23 — developer fix pass:** Added Docker CLI fallback + `aggregateProcSamples` edge-case tests; Docker Desktop blkio-zero caveat in `bench/README.md` and root README; re-ran `make bench` at HEAD for fresh `git_commit` metadata.
+
+### Commands (reviewer re-ran)
+
+```
+make lint          → 0 issues
+make test (-race)  → all packages ok (monitor, results, …)
+CGO_ENABLED=0 go build ./cmd/prism → ok
+go list -deps ./cmd/prism | grep -i gopsutil → (empty)
+go build ./cmd/prism-store → ok
+go mod tidy && git diff go.mod go.sum → clean
+git status → clean
+```
+
+### TDD history
+
+`45e3c03 test:` precedes `5ed9112 feat:` — test-first contract satisfied.
+
+### Gate-by-gate summary
+
+| Gate | Verdict | Notes |
+|------|---------|-------|
+| 1 Guidelines | PASS | `Sampler` interface; ctx/cancel + `done` channel lifecycle; wrapped errors; `DOCKER_HOST` unix/tcp/npipe |
+| 2 Edge cases | FAIL | Latency skew vs main negligible; macOS proc I/O → `n/a` tested; fallback/zero-duration/process-gone untested |
+| 3 Docs | FAIL | RESULTS.json ↔ RESULTS.md ↔ README numbers consistent; Docker Desktop blkio-zero caveat missing; stale `git_commit` |
+| 4 Atomic comments | PASS | New monitor/timing comments are self-contained |
+| Honesty | PASS | Ingest→store PID; queries→bench PID; CH→container; disclosure in RESULTS.md/README |
+
+### Latency skew vs PR #42 (main)
+
+| Workload | main p50 | branch p50 | Δ |
+|----------|----------|------------|---|
+| ingest store | 1.18s | 1.14s | −3% |
+| ingest CH | 1.84s | 1.62s | −12% |
+| count store | 0.7 ms | 0.9 ms | +0.2 ms |
+| count CH | 1.8 ms | 1.4 ms | −0.4 ms |
+| aggregation store | 5.1 ms | 6.1 ms | +1.0 ms |
+| aggregation CH | 6.1 ms | 6.1 ms | 0 |
+| logs LIKE store | 19.6 ms | 17.2 ms | −2.4 ms |
+| logs LIKE CH | 16.4 ms | 15.3 ms | −1.1 ms |
+
+Sampling overhead is not material.

@@ -70,7 +70,7 @@ While each workload runs, the harness samples **actual** CPU, memory, and disk I
 - **Why not node_exporter / host metrics?** Host-level sampling conflates both systems, the OS, and other processes. Per-process and per-container attribution is exact and needs no extra services.
 - **Caveats**:
   - Store queries run in an **embedded DuckDB engine inside `prism-bench`** — there is no separate query server; resource usage for count/aggregation/logs LIKE reflects that embedding (the store’s real architecture).
-  - Per-process disk **IOPS** (and process-level I/O bytes) come from Linux `/proc/<pid>/io` only. On **macOS/Windows** the process sampler reports CPU/mem and marks process I/O/IOPS **`n/a`**. ClickHouse container I/O/IOPS work on all Docker platforms via cgroup blkio stats.
+  - Per-process disk **IOPS** (and process-level I/O bytes) come from Linux `/proc/<pid>/io` only. On **macOS/Windows** the process sampler reports CPU/mem and marks process I/O/IOPS **`n/a`**. ClickHouse container I/O/IOPS use Docker cgroup blkio stats; **Docker Desktop (macOS/Windows) frequently reports blkio as 0**, so meaningful container I/O/IOPS needs a **native Linux Docker host**.
   - If the Docker socket is unreachable, the container sampler falls back to `docker stats --no-stream` for CPU/mem and marks IOPS **`n/a`**.
 
 Results appear in `RESULTS.md` (full table), `results.json`, and the root `README.md` benchmark section.

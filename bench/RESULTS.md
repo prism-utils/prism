@@ -12,8 +12,8 @@ Measured on this host with `make bench` (default small profile).
 | ClickHouse | 24.8.14.39 |
 | DuckDB | v1.1.3 |
 | Dataset | 1000000 metrics + 1000000 logs rows (scale=1) |
-| Git commit | `67be130` |
-| Measured | 2026-07-23T09:32:05Z |
+| Git commit | `944a09b` |
+| Measured | 2026-07-23T09:39:57Z |
 
 ## Correctness gates
 
@@ -25,23 +25,23 @@ Logs `LIKE '%deadline exceeded%'` count: store **10,000**, ClickHouse **10,000**
 
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.14s · 1759572 rows/s | 1.62s · 1235686 rows/s |
-| count | 0.9 / 5.3 / 0.5 | 1.4 / 1.7 / 1.3 |
-| aggregation | 6.1 / 12.4 / 4.0 | 6.1 / 23.6 / 5.3 |
-| logs LIKE | 17.2 / 29.5 / 16.8 | 15.3 / 23.3 / 14.3 |
+| ingest | 1.18s · 1692060 rows/s | 1.67s · 1195310 rows/s |
+| count | 0.9 / 7.1 / 0.6 | 1.9 / 2.1 / 1.6 |
+| aggregation | 8.2 / 14.6 / 5.2 | 6.2 / 25.9 / 5.8 |
+| logs LIKE | 18.7 / 29.2 / 17.6 | 16.1 / 23.3 / 15.0 |
 
 ## Resource usage (sampled during timed window)
 
 | Workload | System | CPU mean / peak (cores) | Peak RSS (MiB) | Read+write (MiB) | MiB/s | IOPS |
 |----------|--------|-------------------------|----------------|------------------|-------|------|
-| ingest | prism-store | 0.48 / 2.27 | 96.5 | n/a | n/a | n/a |
-| ingest | ClickHouse | 0.26 / 0.48 | 316.4 | 0.0 | 0.0 | 0 |
-| count | prism-store | 0.09 / 0.18 | 650.4 | n/a | n/a | n/a |
-| count | ClickHouse | 0.05 / 0.05 | 362.7 | 0.0 | 0.0 | 0 |
-| aggregation | prism-store | 0.94 / 1.89 | 669.9 | n/a | n/a | n/a |
-| aggregation | ClickHouse | 0.04 / 0.04 | 350.6 | 0.0 | 0.0 | 0 |
-| logs LIKE | prism-store | 1.92 / 3.85 | 695.8 | n/a | n/a | n/a |
-| logs LIKE | ClickHouse | 0.06 / 0.06 | 394.1 | 0.0 | 0.0 | 0 |
+| ingest | prism-store | 0.50 / 2.12 | 90.7 | n/a | n/a | n/a |
+| ingest | ClickHouse | 0.25 / 0.45 | 311.1 | 0.0 | 0.0 | 0 |
+| count | prism-store | 0.07 / 0.14 | 644.8 | n/a | n/a | n/a |
+| count | ClickHouse | 0.05 / 0.05 | 372.0 | 0.0 | 0.0 | 0 |
+| aggregation | prism-store | 0.86 / 1.72 | 659.6 | n/a | n/a | n/a |
+| aggregation | ClickHouse | 0.04 / 0.04 | 330.5 | 0.0 | 0.0 | 0 |
+| logs LIKE | prism-store | 1.95 / 3.91 | 682.4 | n/a | n/a | n/a |
+| logs LIKE | ClickHouse | 0.05 / 0.05 | 362.0 | 0.0 | 0.0 | 0 |
 
 Store **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** samples the `prism-store` binary. ClickHouse samples the container cgroup.
 
@@ -57,10 +57,10 @@ The store metrics path uses real HTTP Parquet ingest, hot→L0 flush, tier compa
 
 ClickHouse uses MergeTree with `LowCardinality` dimensions, day partitioning, batched inserts (50k rows), and a `tokenbf_v1` skip index on `message`.
 
-- **ingest**: prism-store leads on ingest throughput (1759572 vs 1235686 rows/s).
-- **count**: prism-store p50 0.9 ms vs ClickHouse 1.4 ms.
-- **aggregation**: ClickHouse p50 6.1 ms beats prism-store 6.1 ms on this host.
-- **logs_like**: ClickHouse p50 15.3 ms beats prism-store 17.2 ms on this host.
+- **ingest**: prism-store leads on ingest throughput (1692060 vs 1195310 rows/s).
+- **count**: prism-store p50 0.9 ms vs ClickHouse 1.9 ms.
+- **aggregation**: ClickHouse p50 6.2 ms beats prism-store 8.2 ms on this host.
+- **logs_like**: ClickHouse p50 16.1 ms beats prism-store 18.7 ms on this host.
 ## Reproduce
 
 ```bash

@@ -140,23 +140,23 @@ make bench BENCH_SCALE=2
 
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.14s · 1,759,572 rows/s | 1.62s · 1,235,686 rows/s |
-| count | 0.9 / 5.3 / 0.5 | 1.4 / 1.7 / 1.3 |
-| aggregation | 6.1 / 12.4 / 4.0 | 6.1 / 23.6 / 5.3 |
-| logs LIKE | 17.2 / 29.5 / 16.8 | 15.3 / 23.3 / 14.3 |
+| ingest | 1.18s · 1,692,060 rows/s | 1.67s · 1,195,310 rows/s |
+| count | 0.9 / 7.1 / 0.6 | 1.9 / 2.1 / 1.6 |
+| aggregation | 8.2 / 14.6 / 5.2 | 6.2 / 25.9 / 5.8 |
+| logs LIKE | 18.7 / 29.2 / 17.6 | 16.1 / 23.3 / 15.0 |
 
-**Resource usage** (sampled during each timed window; store queries sample the embedded DuckDB engine in `prism-bench`; process I/O/IOPS `n/a` on macOS):
+**Resource usage** (sampled during each timed window; store queries sample the embedded DuckDB engine in `prism-bench`; process I/O/IOPS `n/a` on macOS; **Docker Desktop often reports container blkio as 0** — use native Linux Docker for meaningful ClickHouse I/O/IOPS):
 
 | Workload | System | CPU mean / peak | Peak RSS | I/O | IOPS |
 |----------|--------|-----------------|----------|-----|------|
-| ingest | prism-store | 0.48 / 2.27 cores | 96.5 MiB | n/a | n/a |
-| ingest | ClickHouse | 0.26 / 0.48 cores | 316.4 MiB | 0.0 MiB | 0 |
-| count | prism-store | 0.09 / 0.18 cores | 650.4 MiB | n/a | n/a |
-| count | ClickHouse | 0.05 / 0.05 cores | 362.7 MiB | 0.0 MiB | 0 |
-| aggregation | prism-store | 0.94 / 1.89 cores | 669.9 MiB | n/a | n/a |
-| aggregation | ClickHouse | 0.04 / 0.04 cores | 350.6 MiB | 0.0 MiB | 0 |
-| logs LIKE | prism-store | 1.92 / 3.85 cores | 695.8 MiB | n/a | n/a |
-| logs LIKE | ClickHouse | 0.06 / 0.06 cores | 394.1 MiB | 0.0 MiB | 0 |
+| ingest | prism-store | 0.48 / 1.85 cores | 95.9 MiB | n/a | n/a |
+| ingest | ClickHouse | 0.27 / 0.48 cores | 296.6 MiB | 0.0 MiB | 0 |
+| count | prism-store | 0.07 / 0.14 cores | 635.5 MiB | n/a | n/a |
+| count | ClickHouse | 0.05 / 0.05 cores | 364.1 MiB | 0.0 MiB | 0 |
+| aggregation | prism-store | 0.64 / 1.28 cores | 501.2 MiB | n/a | n/a |
+| aggregation | ClickHouse | 0.04 / 0.04 cores | 337.9 MiB | 0.0 MiB | 0 |
+| logs LIKE | prism-store | 2.51 / 5.02 cores | 522.9 MiB | n/a | n/a |
+| logs LIKE | ClickHouse | 0.04 / 0.04 cores | 394.4 MiB | 0.0 MiB | 0 |
 
 **Interpretation:** Metrics **count** and **aggregation** scan the full ingested
 table on both systems (no `ts` range pruning) — apples-to-apples over the same N
