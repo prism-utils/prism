@@ -1,6 +1,6 @@
 # Spec: benchmark over the HTTP SQL API with RBAC on (attached profile)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `chore/rbac-docs-bench` (docs already committed on this branch)
 - **Owner phase:** orchestrator → developer (harness) → orchestrator runs the actual benchmark
@@ -87,6 +87,8 @@ The developer builds + unit/integration-tests the harness (NO Docker run). The o
 **2026-07-23 — ALL_OK (prism-reviewer).** Re-ran `make lint`, `make test` (-race), `go test -tags cgo -run TestDriverAPIRBACIntegration ./bench/internal/store/` (PASS, 1.20s), builds, `make tidy` (clean), `git status` clean. TDD order: `test(bench)` → `feat(bench)`. Baseline (`--api` absent): query order and `serverEnv` unchanged; outputs via `ArtifactPaths("","")` match prior paths; mid-phase `ForceSample` triplets between store/CH alternation removed (phase-boundary sampling via `setPhase` retained — minor usage-series drift only, not latency). API profile: `StopServer`/`StartServer` + `closeEngine` release DuckDB locks; integration test covers reader→200, writer→403, other-tenant→404, no-token→401; expired JWT covered in `authgen_test`; COUNT mismatch returns `fmt.Errorf`. Security: RS256 + kid in JWKS; policy grants only `bench-admin=admin` on bench tenant; keys under ephemeral work dir. Accepted: RBAC integration skips under `-race`; `BENCH_FLAGS` unused (mirrors existing `bench`/`BENCH_SCALE`).
 
 **2026-07-23 — developer (sampling fix, back to IN_REVIEW).** `make bench-api` correctness gates passed but API profile store **count/aggregation** resource rows showed CPU/RSS zero: static `NewProcStreamSampler(sd.Pid())` kept polling the pre-restart pid. Fix: `NewProcSamplerFunc` / `NewProcStreamSamplerFunc` resolve pid on each sample; API profile wires `func() int { return sd.Pid() }`; static constructors unchanged for baseline.
+
+**2026-07-23 — ALL_OK final (prism-reviewer, post-orchestrator).** Re-validated full branch (8 commits). `make lint` + `make test` (-race) green; RBAC integration PASS (1.20s, no -race); `TestNewCreatesMissingWorkDir` + dynamic-pid sampler tests PASS; builds + `make tidy` clean; `git status` clean. Baseline bench artifacts (`results.json`, `RESULTS.md`, `charts/*`, `results-timeseries.json`) **not** in diff — only `-api` suffixed files + `charts-api/` added. README API subsection numbers match `bench/RESULTS-api.md` exactly (ingest 1,431,753 rows/s; count 286.5; aggregation 296.9; logs LIKE 62.5; count/aggregation prism-store 1.19/1.20 cores, 471.2/483.4 MiB); chart links `bench/charts-api/*`; interpretation cites DuckDB v1.1.3 materialize-then-lock + ClickHouse native caveat; baseline benchmark subsection unchanged. authgen `MkdirAll` fix + regression test; dynamic store sampler follows pid across restart (baseline static sampler unchanged). Orchestrator §8 complete: committed `results-api.json`, `RESULTS-api.md`, `results-timeseries-api.json`, `charts-api/*.svg`, README subsection.
 
 ## 8. Orchestrator post-merge-of-harness step (not a dev task)
 - Run `make bench-api`; verify correctness gates pass; commit `bench/results-api.json`, `bench/RESULTS-api.md`, `bench/results-timeseries-api.json`, `bench/charts-api/*.svg`; add a **new** README benchmark subsection embedding the API/RBAC results **beside** the existing baseline (attach, not replace).
