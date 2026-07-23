@@ -83,6 +83,7 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 | `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies |
 | `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset |
 | `E2E_EXPOSE_QUERY_SQL` | _(empty)_ | When `1`, query JSON includes generated SQL (e2e/regression only) |
+| `QUERY_HOT_ONLY` | `false` | When `true`, HTTP query unions only `hot_current`/`hot_prev` (no tier or rollup Parquet reads). Grafana `print-view-sql` is unchanged. |
 | `ADMIN_LISTEN_ADDR` | _(empty)_ | When set, binds admin/stats/query on a second HTTP server (see below) |
 | `ADMIN_TOKEN` | _(empty)_ | Static bearer token for admin-plane routes when set |
 
@@ -219,6 +220,10 @@ hot table mid-flush.
 
 The optional `sql` field appears only when `E2E_EXPOSE_QUERY_SQL=1` (regression
 guards; not for production).
+
+When `QUERY_HOT_ONLY=true`, the union includes only parts (1)–(2) below; tier
+and rollup Parquet reads are skipped for lower latency on freshness-only
+queries. Default is the full union (hot + tiers + rollups).
 
 ### Union SQL shape
 

@@ -8,6 +8,10 @@
 //	prism-store serve    start the HTTP server
 //	prism-store print-view-sql --tenant <ns> [--data-dir <dir>]
 //	prism-store version  print version
+//
+// Query hot-only mode: set QUERY_HOT_ONLY=true to serve HTTP queries from the
+// in-memory hot cache only (no tier or rollup Parquet reads). Default false.
+// Grafana print-view-sql is unaffected.
 package main
 
 import (
@@ -83,6 +87,7 @@ type serverConfig struct {
 	retentionTick     time.Duration
 	duckdbThreads     int
 	duckdbMemoryLimit string
+	queryHotOnly      bool
 }
 
 func loadConfig() serverConfig {
@@ -108,6 +113,7 @@ func loadConfig() serverConfig {
 		retentionTick:     loadRetentionTick(),
 		duckdbThreads:     envIntZero("DUCKDB_THREADS"),
 		duckdbMemoryLimit: os.Getenv("DUCKDB_MEMORY_LIMIT"),
+		queryHotOnly:      envBool("QUERY_HOT_ONLY", false),
 	}
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
@@ -169,6 +175,15 @@ func envInt64(key string, def int64) int64 {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			return n
+		}
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def
@@ -241,6 +256,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		DataDir:     cfg.dataDir,
 		RoutePrefix: cfg.routePrefix,
 		ExposeSQL:   query.ExposeSQLFromEnv(),
+		HotOnly:     cfg.queryHotOnly,
 	}
 
 	if serveIngest {
@@ -360,6 +376,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 			"auth_mode", cfg.authMode,
 			"hot_window", cfg.hotWindow.String(),
 			"segments_per_tier", cfg.segmentsPerTier,
+			"query_hot_only", cfg.queryHotOnly,
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("public listen: %w", err)

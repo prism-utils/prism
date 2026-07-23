@@ -19,6 +19,7 @@ type Config struct {
 	DataDir     string
 	RoutePrefix string
 	ExposeSQL   bool
+	HotOnly     bool
 }
 
 // QueryRoutePattern returns the ServeMux pattern for the query GET route.
@@ -32,7 +33,7 @@ func QueryRoutePattern(prefix string) string {
 
 // Handler serves GET query requests under the engine read lock.
 func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler {
-	b := &Builder{DataDir: cfg.DataDir}
+	b := &Builder{DataDir: cfg.DataDir, HotOnly: cfg.HotOnly}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.PathValue("ns")
 		if !storeingest.ValidateTenant(ns) {

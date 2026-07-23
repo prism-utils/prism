@@ -1,6 +1,6 @@
 # Spec: prism-store — "hot only" query mode flag
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-query-hot-only`
 - **Owner phase:** orchestrator → developer
@@ -39,12 +39,12 @@ rollups). Default behavior (unified hot + Parquet view) is unchanged.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `Builder`/`Config` gain `HotOnly`; `buildSQL` emits only hot-table SELECTs (no `read_parquet`, no rollup branch) when set; unit test asserts the generated SQL contains `hot_current`/`hot_prev` and contains **no** `read_parquet` and no `rollups` path when `HotOnly=true`, and still includes tiers/rollups when false.
-- [ ] Integration test (CGO/DuckDB): a tenant with BOTH hot rows and sealed tier Parquet returns ONLY the hot rows under hot-only, and the full union when disabled; args count matches emitted parts (no `sql: expected N args` errors).
-- [ ] `cmd/prism-store` reads `QUERY_HOT_ONLY` (default false), passes it to `query.Config`, logs the effective value; `serve` unchanged when unset.
-- [ ] `AggregateSQL` still works on hot-only output (shape preserved); a test covers aggregate over hot-only SQL.
-- [ ] Docs updated: `docs/STORE.md` (and `--help`/usage comment in `main.go`) document `QUERY_HOT_ONLY`, its default, that it excludes tiers+rollups, and that the Grafana view path is unaffected.
-- [ ] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; no committed blobs.
+- [x] `Builder`/`Config` gain `HotOnly`; `buildSQL` emits only hot-table SELECTs (no `read_parquet`, no rollup branch) when set; unit test asserts the generated SQL contains `hot_current`/`hot_prev` and contains **no** `read_parquet` and no `rollups` path when `HotOnly=true`, and still includes tiers/rollups when false.
+- [x] Integration test (CGO/DuckDB): a tenant with BOTH hot rows and sealed tier Parquet returns ONLY the hot rows under hot-only, and the full union when disabled; args count matches emitted parts (no `sql: expected N args` errors).
+- [x] `cmd/prism-store` reads `QUERY_HOT_ONLY` (default false), passes it to `query.Config`, logs the effective value; `serve` unchanged when unset.
+- [x] `AggregateSQL` still works on hot-only output (shape preserved); a test covers aggregate over hot-only SQL.
+- [x] Docs updated: `docs/STORE.md` (and `--help`/usage comment in `main.go`) document `QUERY_HOT_ONLY`, its default, that it excludes tiers+rollups, and that the Grafana view path is unaffected.
+- [x] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `make tidy` clean; no committed blobs.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
