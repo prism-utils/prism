@@ -9,8 +9,10 @@
 
 `prism-store` is a **drop-in** replacement for `prism-proxy`: identical on-disk
 layout, identical `/stats` billing JSON, identical ingest/query wire paths **when
-`ROUTE_PREFIX=/prism-proxy` is set**. The cutover is an **image swap + one env
-var** on the same PVC — no re-ingest, no dashboard changes, no billing changes.
+`ROUTE_PREFIX=/prism-proxy` is set**. The cutover is an **image swap + a couple of
+env vars** (`ROUTE_PREFIX`, and `AUTH_MODE=bearer` if the deployment uses
+`INGEST_TOKEN`) on the same PVC — no re-ingest, no dashboard changes, no billing
+changes.
 
 ## Compatibility invariants (must not break)
 
@@ -18,7 +20,7 @@ var** on the same PVC — no re-ingest, no dashboard changes, no billing changes
 |---|---|
 | **Ingest path** `POST /prism-proxy/{ns}/ingest/{artifact}` | Preserved by setting `ROUTE_PREFIX=/prism-proxy` (prism-proxy hardcoded this prefix; prism-store makes it configurable). |
 | **Query path** `GET /prism-proxy/{ns}/query` | Same — governed by `ROUTE_PREFIX`. Grafana view SQL uses the exported helper (`prism-store print-view-sql`, #26); result set unchanged. |
-| **Billing** `GET /stats?ns=` | Byte-for-byte identical JSON (`windows`, `latestUnixNanos`, `totalWindows`, `onDiskBytes`, `compactionCpuSeconds`) — #27. `credit-metering.ts` keeps working unchanged. |
+| **Billing** `GET /stats?ns=` | Byte-for-byte identical JSON — top-level `totalWindows`, `onDiskBytes`, `compactionCpuSeconds` plus per-artifact `artifacts.<name>.{windows,latestUnixNanos}` — #27. `credit-metering.ts` keeps working unchanged. |
 | **On-disk layout** (`tiers/`, `hot/`, `rollups/`, `engine.duckdb`, `.metering.json`) | Identical — the **existing PVC data is reused in place**. The legacy `metrics-raw/` importer (#24) covers any un-migrated tenant on first open. |
 | **Provisioning** `POST /admin/tenants/{ns}/ensure` | Same handler + idempotent seeds — #27. |
 | **OUTPUT_CONTRACT** (agent Parquet) | Unchanged — the agent (`cmd/prism`) is untouched. |
@@ -36,7 +38,7 @@ default to prism-proxy-equivalent behavior.
 | _(implicit bearer/none)_ | `AUTH_MODE` | New: `none` (default) \| `bearer` \| `mtls` \| `trusted-header`. Set to match the current ForwardAuth/token posture. |
 | `LISTEN_ADDR` | `LISTEN_ADDR` | Same (`:8080`). |
 | — | `ADMIN_LISTEN_ADDR` | New (optional): bind `/admin/*`+`/stats`+`/query` on a separate port for NetworkPolicy isolation. Leave unset to keep single-port behavior. |
-| — | `ADMIN_TOKEN` | New (optional): bearer for the admin plane. |
+| — | `ADMIN_TOKEN` | New (optional): bearer for the admin plane. **Caution:** enabling it makes `/admin/*`, `/stats`, and `/query` require the bearer — update the reconciler and billing scraper first, or they break (prism-proxy had no admin-plane auth). |
 | `DATA_DIR` | `DATA_DIR` | Same (`/data`). Point at the existing PVC. |
 | `ALLOWED_ARTIFACTS` | `ALLOWED_ARTIFACTS` | Same (`metrics-raw`). |
 | `MAX_BODY_BYTES` | `MAX_BODY_BYTES` | Same. |
