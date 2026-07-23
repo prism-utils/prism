@@ -1,6 +1,6 @@
 # Spec: Arrow-transport benchmark profile (memory + latency impact, RBAC on)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/bench-arrow-transport`
 - **Owner phase:** orchestrator → developer → reviewer; then orchestrator RUNS the benchmark and commits results.
@@ -68,11 +68,29 @@ Write NEW artifacts (`bench/results-api-arrow.*`, `bench/RESULTS-api-arrow.md`, 
 - [x] Committed result artifacts are left for the orchestrator run (do NOT fabricate numbers).
 
 ## 6. Mandatory review gates (reviewer)
-- [ ] Gate 1 — Guidelines: fairness/consistency with the existing api profile (same caps, seed, count gate); reused chart/render helpers; wrapped errors; atomic comments §3.8; no fabricated results committed.
-- [ ] Gate 2 — Edge cases: `--arrow` requires `--api`; scan row-count gate JSON==Arrow; per-phase RSS attributed to the right phase across the store restart; empty/large scan handled; chart embed paths correct for both markdown roots.
-- [ ] Gate 3 — Docs match code (new profile, reproduce steps, attach-not-replace); old `-api` section intact.
-- [ ] Gate 4 — Atomic comments.
-- [ ] Full `docs/REVIEW.md`; TESTING layering; TDD (`git log`).
+- [x] Gate 1 — Guidelines: fairness/consistency with the existing api profile (same caps, seed, count gate); reused chart/render helpers; wrapped errors; atomic comments §3.8; no fabricated results committed.
+- [x] Gate 2 — Edge cases: `--arrow` requires `--api`; scan row-count gate JSON==Arrow; per-phase RSS attributed to the right phase across the store restart; empty/large scan handled; chart embed paths correct for both markdown roots.
+- [x] Gate 3 — Docs match code (new profile, reproduce steps, attach-not-replace); old `-api` section intact.
+- [x] Gate 4 — Atomic comments.
+- [x] Full `docs/REVIEW.md`; TESTING layering; TDD (`git log`).
 
 ## 7. Reviewer notes
-_(empty until first review)_
+**Verdict: ALL_OK** (2026-07-23). No blocking findings.
+
+**TDD:** `4052e3c test(bench): add api-arrow profile unit tests` precedes `cb13604 feat(bench): add api-arrow transport benchmark profile`.
+
+**Verification (reviewer re-ran):**
+- `make lint` — 0 issues (`golangci-lint run --build-tags duckdb_arrow ./...`)
+- `make test` — all packages green (`-race -tags duckdb_arrow`)
+- `go build -tags duckdb_arrow ./bench/...` — ok
+- `go vet -tags duckdb_arrow ./bench/...` — ok
+- No `results-api-arrow.*` / `RESULTS-api-arrow.md` / `charts-api-arrow/*` tracked or staged
+- Root `README.md` diff is append-only; existing `-api` subsection unchanged (zero deletions)
+
+**Gate spot-checks:**
+- Fairness: `bench-api-arrow` mirrors `bench-api` caps/seed (`BENCH_SCALE`, `STORE_TAGS`, CGO); store restart + metrics count gate preserved in `runAPIArrowQueryPhase`; dynamic-PID sampler reused (`NewProcStreamSamplerFunc`).
+- Scan limit: `scanRowLimit` caps at 100k (`main.go:765-769`); default scale yields 1M metrics → 100k scan rows.
+- Row-count gate: orchestrator `jsonScanRows != arrowScanRows` (`main.go:946-947`); driver parity in `driver_arrow_test.go:87-94`.
+- Chart embeds: `chartEmbedForBenchResults` strips `bench/` for `RESULTS-api-arrow.md`; `RenderMarkdownRoot` keeps `bench/` prefix — covered by `render_test.go:67-111`.
+- `--arrow` without `--api`: `profile_test.go:30-34`.
+- Placeholders only in root README new subsection (`_numbers populated by make bench-api-arrow_`).

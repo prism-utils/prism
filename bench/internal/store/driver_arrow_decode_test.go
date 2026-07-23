@@ -38,7 +38,7 @@ func TestDecodeArrowRowsTimestampColumn(t *testing.T) {
 		require.NoError(t, err)
 		b.Field(2).(*array.TimestampBuilder).Append(ts)
 	}
-	rec := b.NewRecord()
+	rec := b.NewRecordBatch()
 	defer rec.Release()
 
 	var buf bytes.Buffer
