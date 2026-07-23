@@ -202,17 +202,18 @@ func runMain() error {
 		return fmt.Errorf("clickhouse truncate: %w", err)
 	}
 
+	// Build the store with the duckdb_arrow tag so the launched server carries the
+	// Arrow transport, matching the released binary (goreleaser/Makefile). Rebuild
+	// unconditionally so a stale untagged binary from a prior run is never reused.
 	storeBin := filepath.Join(root, "bin", "prism-store")
-	if _, err := os.Stat(storeBin); err != nil {
-		//nolint:gosec // G204: storeBin is under the repo bin/ directory from git root.
-		build := exec.CommandContext(ctx, "go", "build", "-o", storeBin, "./cmd/prism-store")
-		build.Dir = root
-		build.Env = append(os.Environ(), "CGO_ENABLED=1")
-		build.Stdout = os.Stderr
-		build.Stderr = os.Stderr
-		if err := build.Run(); err != nil {
-			return fmt.Errorf("build prism-store: %w", err)
-		}
+	//nolint:gosec // G204: storeBin is under the repo bin/ directory from git root.
+	build := exec.CommandContext(ctx, "go", "build", "-tags", "duckdb_arrow", "-o", storeBin, "./cmd/prism-store")
+	build.Dir = root
+	build.Env = append(os.Environ(), "CGO_ENABLED=1")
+	build.Stdout = os.Stderr
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		return fmt.Errorf("build prism-store: %w", err)
 	}
 
 	dataDir := filepath.Join(absWork, "store-data")
