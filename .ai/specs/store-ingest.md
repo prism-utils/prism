@@ -1,6 +1,6 @@
 # Spec: prism-store — ingest receiver (HTTP + Flight) + tenant isolation + pluggable auth
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-ingest`
 - **Owner phase:** orchestrator → developer
@@ -69,12 +69,20 @@ removed and made configurable. Ported/generalized from `homelab-apps`
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** factory/config patterns, no globals beyond compiled regex, slog only (handlers log at the edge, not libs), errors wrapped, `MaxBytesReader` used (not manual counting), graceful shutdown, mux handlers thin. `internal/store/ingest` is leaf (imports engine + tenant + tlsconf only).
-- [ ] **Gate 2 — Edge cases:** empty body; oversize body; malformed/unknown artifact; malformed tenant + path traversal; each auth-mode failure; tenant/identity mismatch; Flight unauthenticated + bad descriptor; concurrent ingest under `-race`.
-- [ ] **Gate 3 — Docs/comments match code:** `docs/CONFIG.md` + `docs/STORE.md` list exactly the env + routes + auth modes that landed; ingest handler order documented; no forward references.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (httptest unit + a Flight integration/golden where useful).
+- [x] **Gate 1 — Guidelines:** factory/config patterns, no globals beyond compiled regex, slog only (handlers log at the edge, not libs), errors wrapped, `MaxBytesReader` used (not manual counting), graceful shutdown, mux handlers thin. `internal/store/ingest` is leaf (imports engine + tenant + tlsconf only).
+- [x] **Gate 2 — Edge cases:** empty body; oversize body; malformed/unknown artifact; malformed tenant + path traversal; each auth-mode failure; tenant/identity mismatch; Flight unauthenticated + bad descriptor; concurrent ingest under `-race`.
+- [x] **Gate 3 — Docs/comments match code:** `docs/CONFIG.md` + `docs/STORE.md` list exactly the env + routes + auth modes that landed; ingest handler order documented; no forward references.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (httptest unit + a Flight integration/golden where useful).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**APPROVE** — Issue #23 scope only (HTTP ingest + pluggable auth + optional Flight
+DoPut). No compaction tickers, query API, `/stats`, or `/admin/ensure`. History:
+`1c06425 test:` precedes `c371fae feat:`. `make lint test`, `make full-tests`,
+`CGO_ENABLED=0 go build ./cmd/prism`, `go build ./cmd/prism-store`, and
+`go vet ./...` all green. HTTP validation order matches upstream proxy parity
+(auth → tenant → artifact → MaxBytesReader/413 → 204) with documented 403 on
+identity mismatch. Flight descriptor deviation #1 **acceptable**: store expects
+`[tenant, artifact, start, end]` and `docs/STORE.md` §Ingest documents it
+(agent Flight output uses `[pipeline, branch, …]`; HTTP remains primary).
