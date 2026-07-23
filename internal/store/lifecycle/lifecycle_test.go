@@ -198,3 +198,33 @@ func TestRetentionRollupFiles(t *testing.T) {
 		t.Fatalf("expired rollup should be deleted")
 	}
 }
+
+func TestRemovePathAlreadyGoneNoError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.parquet")
+	if err := removePath(path); err != nil {
+		t.Fatalf("remove missing path: %v", err)
+	}
+}
+
+func TestTickRetentionSecondPassNoError(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	expired := filepath.Join(dataDir, lifecycleTenant, "tiers", "L0", "old.parquet")
+	testparquet.WriteSegmentWithTs(t, expired, now.Add(-16*24*time.Hour), "old", 1)
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+
+	runner := NewRunner(Config{
+		DataDir:       dataDir,
+		RetentionDays: 15,
+		MaxTier:       8,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickRetention(); err != nil {
+		t.Fatalf("first retention: %v", err)
+	}
+	if err := runner.TickRetention(); err != nil {
+		t.Fatalf("second retention pass must tolerate already-removed targets: %v", err)
+	}
+}
