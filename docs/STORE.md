@@ -422,6 +422,21 @@ Success `200 application/json`:
 {"columns":["…"],"rows":[[…],…],"row_count":N,"truncated":false}
 ```
 
+**Arrow IPC stream (optional):** send
+`Accept: application/vnd.apache.arrow.stream` to receive a streaming Arrow IPC
+response (`Content-Type: application/vnd.apache.arrow.stream`) instead of JSON.
+JSON remains the default when `Accept` is absent, `*/*`, or `application/json`.
+The stream carries the same sandboxed query result; row-cap truncation is
+signaled by the HTTP trailer **`X-Prism-Truncated: true|false`** (declared in
+the `Trailer` response header). Clients must read the full response body before
+trailer fields are available. Mid-stream failures after `200` terminate the IPC
+stream (status cannot change).
+
+Arrow transport requires building **`prism-store`** with the **`duckdb_arrow`**
+build tag (CGO enabled). Production `Makefile` / release targets include it;
+`go build ./...` without the tag returns **`406 Not Acceptable`** for Arrow
+`Accept` requests (stub). RBAC action **`query`** applies identically.
+
 | Condition | Status |
 |---|---|
 | malformed JSON / empty SQL / non-SELECT / multi-statement / exec error | `400 bad query` |

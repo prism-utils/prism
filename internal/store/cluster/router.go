@@ -91,7 +91,8 @@ func (r *Router) proxyFor(target *url.URL) *httputil.ReverseProxy {
 	}
 	base := *target
 	p := &httputil.ReverseProxy{
-		Transport: transport,
+		Transport:     transport,
+		FlushInterval: -1,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(&base)
 			pr.Out.URL.Path = pr.In.URL.Path

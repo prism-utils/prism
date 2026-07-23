@@ -6,6 +6,8 @@ version: "2"
 
 run:
   timeout: 5m
+  build-tags:
+    - duckdb_arrow
 
 linters:
   enable:

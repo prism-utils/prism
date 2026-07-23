@@ -52,6 +52,7 @@ default to prism-proxy-equivalent behavior.
 | — | `AUTHZ_POLICY_FILE` | New (optional): enables **RBAC** (JWT/OIDC + deny-by-default per-tenant `reader`/`writer`/`admin` policy) on HTTP query/ingest/admin routes. Leave unset to keep prism-proxy token behavior. |
 | — | `OIDC_ISSUER` / `OIDC_JWKS_URL` / `OIDC_JWKS_FILE` / `OIDC_AUDIENCE` / `AUTHZ_RELOAD_SECONDS` | New: JWT verification config, required when RBAC is enabled (`OIDC_JWKS_FILE` for offline/air-gapped). |
 | — | `SQL_API_ENABLED` / `SQL_API_MAX_ROWS` / `SQL_API_TIMEOUT_SECONDS` / `SQL_API_MAX_BODY_BYTES` | New: arbitrary read-only SQL API (`POST {ROUTE_PREFIX}/{ns}/sql`); default on, RBAC-guarded. |
+| — | **`duckdb_arrow` build tag** | **Build-from-source only:** `prism-store` release/CI builds pass `-tags duckdb_arrow` (CGO) to enable Arrow IPC streaming on `POST /sql` when clients send `Accept: application/vnd.apache.arrow.stream`. Prebuilt images include it; plain `go build ./...` without the tag serves JSON only (Arrow requests → `406`). |
 
 > **RBAC precedence / caution.** When `AUTHZ_POLICY_FILE` is set, RBAC is
 > authoritative on HTTP data/admin routes and **supersedes `INGEST_TOKEN`/`ADMIN_TOKEN`**

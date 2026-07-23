@@ -27,6 +27,8 @@ const (
 	defaultSQLTimeout      = 30 * time.Second
 	defaultSQLMaxBodyBytes = 1 << 20 // 1 MiB
 	sandboxMetricsView     = "metrics"
+	arrowStreamMediaType   = "application/vnd.apache.arrow.stream"
+	truncatedTrailer       = "X-Prism-Truncated"
 )
 
 // DefaultSQLMaxBodyBytes is the default POST /sql JSON body cap.
@@ -156,10 +158,47 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			rowCap = *req.MaxRows
 		}
 
-		result, err := runSandboxQuery(ctx, absRoot, req.SQL, rowCap, sandboxLimits{
+		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, sandboxLimits{
 			MemoryLimit: cfg.MemoryLimit,
 			Threads:     cfg.Threads,
 		})
+		if err != nil {
+			if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
+				errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
+				errors.Is(err, errNoParquetSources) {
+				http.Error(w, "bad query", http.StatusBadRequest)
+				return
+			}
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				http.Error(w, "bad query", http.StatusBadRequest)
+				return
+			}
+			logger.Error("sql sandbox", "ns", ns, "err", err)
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		defer cleanup()
+
+		if wantsArrowStream(r) {
+			if err := writeArrowResponse(ctx, w, conn, req.SQL, rowCap, logger); err != nil {
+				if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
+					errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
+					errors.Is(err, errNoParquetSources) {
+					http.Error(w, "bad query", http.StatusBadRequest)
+					return
+				}
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					http.Error(w, "bad query", http.StatusBadRequest)
+					return
+				}
+				logger.Error("sql arrow failed", "ns", ns, "err", err)
+				http.Error(w, "query failed", http.StatusInternalServerError)
+				return
+			}
+			return
+		}
+
+		result, err := queryJSON(ctx, conn, req.SQL, rowCap)
 		if err != nil {
 			if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
 				errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
@@ -190,24 +229,32 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 	})
 }
 
-func runSandboxQuery(ctx context.Context, tenantRoot, userSQL string, rowCap int, limits sandboxLimits) (*SQLResponse, error) {
+func wantsArrowStream(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), arrowStreamMediaType)
+}
+
+func prepareSandboxConn(ctx context.Context, tenantRoot string, limits sandboxLimits) (*sql.Conn, func(), error) {
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
-		return nil, fmt.Errorf("query: open sandbox: %w", err)
+		return nil, nil, err
 	}
-	defer cleanup()
-
 	viewSQL, err := sandboxMetricsUnionSQL(tenantRoot)
 	if err != nil {
-		return nil, wrapSandboxErr(err)
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
 	}
 	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
-		return nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
+		cleanup()
+		return nil, nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
 	}
 	if err := lockSandbox(ctx, conn); err != nil {
-		return nil, err
+		cleanup()
+		return nil, nil, err
 	}
+	return conn, cleanup, nil
+}
 
+func queryJSON(ctx context.Context, conn *sql.Conn, userSQL string, rowCap int) (*SQLResponse, error) {
 	rows, err := conn.QueryContext(ctx, userSQL)
 	if err != nil {
 		return nil, wrapSandboxErr(err)

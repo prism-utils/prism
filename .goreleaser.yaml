@@ -41,6 +41,8 @@ builds:
       - arm64
     flags:
       - -trimpath
+    tags:
+      - duckdb_arrow
     ldflags:
       - -s -w -X github.com/elk-utilities/prism/internal/version.Version={{ .Version }}
     overrides:

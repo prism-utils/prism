@@ -1,6 +1,6 @@
 # Spec: Arrow IPC streaming query transport for POST /{ns}/sql
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/sql-arrow-transport`
 - **Owner phase:** orchestrator → developer → reviewer + security-review
@@ -60,16 +60,16 @@ Add an Arrow IPC streaming response to `POST /{ns}/sql`, selected by HTTP conten
   - perf/memory: streams one RecordBatch at a time zero-copy from DuckDB → bounded RSS + columnar throughput vs the O(rows) JSON buffer. product: opt-in via `Accept`, JSON default preserved, RBAC + tenant isolation identical, so no client breakage and no security regression.
 
 ## 5. Acceptance checklist (developer)
-- [ ] `POST /{ns}/sql` with `Accept: application/vnd.apache.arrow.stream` returns a valid Arrow IPC stream (`Content-Type` set); JSON remains default for other/absent Accept.
-- [ ] Sandbox setup is shared (single code path) between JSON and Arrow; Arrow runs against the SAME locked conn (allowed_directories + lazy view + external-access off + lock).
-- [ ] Streaming is bounded: one RecordBatch materialized at a time; row cap enforced via `LIMIT rowCap+1`; `X-Prism-Truncated` trailer set correctly (false when under cap, true when exceeded); final record sliced to rowCap.
-- [ ] Pre-stream errors map correctly (empty/invalid/non-SELECT → 400; unknown/symlinked tenant → 404; sandbox exec error before bytes → 400); disabled API → 404; body cap honored.
-- [ ] **TDD tests (tag `duckdb_arrow`):** Arrow↔JSON parity for COUNT(*), GROUP BY avg, and a multi-row scan (decode Arrow with `ipc.Reader`, compare values); empty result → schema-only stream; scan over cap → truncated trailer + exactly rowCap rows; RBAC on Arrow (reader 200 / writer 403 / unbound 404 / no-JWT 401); isolation on Arrow (cross-tenant `read_parquet` → 400, no stream); cluster deny-before-proxy for Arrow.
-- [ ] Stub path (`!duckdb_arrow`): `writeArrowResponse` → 406; package builds & base tests pass without the tag.
-- [ ] Build plumbing: `make test`/`lint`/`store-integration`/`integration`/`e2e`/`bench*`/`docker-store` and goreleaser carry `duckdb_arrow` (CGO on); `.golangci.yml` build-tags updated; `CGO_ENABLED=0 go build ./cmd/prism` ok and `go list -deps ./cmd/prism` unchanged (no arrow/duckdb).
-- [ ] Bench Arrow client decoder added + test (round-trips against a live tenant).
-- [ ] Docs updated (STORE.md, CONFIG.md, MIGRATION.md, DESIGN.md §15).
-- [ ] `make lint test` green (with tag); e2e/integration green; `git status` clean; TDD history (tests-first).
+- [x] `POST /{ns}/sql` with `Accept: application/vnd.apache.arrow.stream` returns a valid Arrow IPC stream (`Content-Type` set); JSON remains default for other/absent Accept.
+- [x] Sandbox setup is shared (single code path) between JSON and Arrow; Arrow runs against the SAME locked conn (allowed_directories + lazy view + external-access off + lock).
+- [x] Streaming is bounded: one RecordBatch materialized at a time; row cap enforced via `LIMIT rowCap+1`; `X-Prism-Truncated` trailer set correctly (false when under cap, true when exceeded); final record sliced to rowCap.
+- [x] Pre-stream errors map correctly (empty/invalid/non-SELECT → 400; unknown/symlinked tenant → 404; sandbox exec error before bytes → 400); disabled API → 404; body cap honored.
+- [x] **TDD tests (tag `duckdb_arrow`):** Arrow↔JSON parity for COUNT(*), GROUP BY avg, and a multi-row scan (decode Arrow with `ipc.Reader`, compare values); empty result → schema-only stream; scan over cap → truncated trailer + exactly rowCap rows; RBAC on Arrow (reader 200 / writer 403 / unbound 404 / no-JWT 401); isolation on Arrow (cross-tenant `read_parquet` → 400, no stream); cluster deny-before-proxy for Arrow.
+- [x] Stub path (`!duckdb_arrow`): `writeArrowResponse` → 406; package builds & base tests pass without the tag.
+- [x] Build plumbing: `make test`/`lint`/`store-integration`/`integration`/`e2e`/`bench*`/`docker-store` and goreleaser carry `duckdb_arrow` (CGO on); `.golangci.yml` build-tags updated; `CGO_ENABLED=0 go build ./cmd/prism` ok and `go list -deps ./cmd/prism` unchanged (no arrow/duckdb).
+- [x] Bench Arrow client decoder added + test (round-trips against a live tenant).
+- [x] Docs updated (STORE.md, CONFIG.md, MIGRATION.md, DESIGN.md §15).
+- [x] `make lint test` green (with tag); e2e/integration green; `git status` clean; TDD history (tests-first).
 
 ## 6. Mandatory review gates (reviewer) — SECURITY-SENSITIVE
 - [ ] Gate 1 — Guidelines: shared sandbox path (no duplicated/weakened setup for Arrow); idiomatic build tags + stub; wrapped errors; atomic comments §3.8.
