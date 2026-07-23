@@ -62,6 +62,11 @@ bench: ## Reproducible prism-store vs ClickHouse benchmark (see bench/README.md)
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make bench"; exit 1; }
 	CGO_ENABLED=1 go run ./bench/cmd/prism-bench --scale $(BENCH_SCALE)
 
+.PHONY: bench-api
+bench-api: ## RBAC + HTTP SQL API benchmark profile (see bench/README.md)
+	@command -v docker >/dev/null 2>&1 || { echo "docker required for make bench-api"; exit 1; }
+	CGO_ENABLED=1 go run ./bench/cmd/prism-bench --api --scale $(BENCH_SCALE)
+
 .PHONY: fuzz
 fuzz: ## Longer fuzz soak (override with FUZZTIME=2m). Runs each Fuzz target it finds.
 	@for pkg in $$(go list ./... ); do \

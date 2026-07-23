@@ -3,8 +3,10 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -65,30 +67,37 @@ func (d *cgoDriver) Start(ctx context.Context) error {
 	if err := seed.EnsureTieredLayoutForTenant(d.cfg.DataDir, d.cfg.Tenant); err != nil { //nolint:contextcheck // seed API has no context parameter.
 		return fmt.Errorf("store: seed tenant: %w", err)
 	}
+	return d.startServerProcess(ctx)
+}
 
+func (d *cgoDriver) StartServer(ctx context.Context) error {
+	if err := d.closeEngine(); err != nil {
+		return err
+	}
+	return d.startServerProcess(ctx)
+}
+
+func (d *cgoDriver) StopServer(ctx context.Context) error {
+	if err := d.stopServer(ctx); err != nil {
+		return err
+	}
+	return d.closeEngine()
+}
+
+func (d *cgoDriver) BaseURL() string {
+	return "http://" + d.cfg.ListenAddr
+}
+
+func (d *cgoDriver) startServerProcess(ctx context.Context) error {
+	if d.cmd != nil && d.cmd.Process != nil {
+		return fmt.Errorf("store: prism-store already running")
+	}
 	bin := d.cfg.StoreBin
 	if bin == "" {
 		bin = "prism-store"
 	}
 	d.cmd = exec.CommandContext(ctx, bin, "serve") //nolint:gosec // operator-built binary path
-	env := append(os.Environ(),
-		"LISTEN_ADDR="+d.cfg.ListenAddr,
-		"DATA_DIR="+d.cfg.DataDir,
-		"AUTH_MODE=none",
-		"ALLOWED_ARTIFACTS=metrics-raw",
-		"HOT_WINDOW_SECONDS=3600",
-		"FLUSH_TICK_SECONDS=3600",
-		"MERGE_TICK_SECONDS=3600",
-	)
-	if d.cfg.Budget.IsSet() {
-		env = append(env,
-			"GOMAXPROCS="+strconv.Itoa(d.cfg.Budget.Threads()),
-			"GOMEMLIMIT="+d.cfg.Budget.GoMemLimit(),
-			"DUCKDB_THREADS="+strconv.Itoa(d.cfg.Budget.Threads()),
-			"DUCKDB_MEMORY_LIMIT="+d.cfg.Budget.DuckDBMemoryLimit(),
-		)
-	}
-	d.cmd.Env = env
+	d.cmd.Env = d.serverEnv()
 	d.cmd.Stdout = os.Stderr
 	d.cmd.Stderr = os.Stderr
 	if err := d.cmd.Start(); err != nil {
@@ -96,7 +105,7 @@ func (d *cgoDriver) Start(ctx context.Context) error {
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- d.cmd.Wait() }()
-	if err := waitHTTP(ctx, "http://"+d.cfg.ListenAddr+"/healthz", 30*time.Second); err != nil {
+	if err := waitHTTP(ctx, d.BaseURL()+"/healthz", 30*time.Second); err != nil {
 		return err
 	}
 	select {
@@ -107,25 +116,50 @@ func (d *cgoDriver) Start(ctx context.Context) error {
 	return nil
 }
 
-func (d *cgoDriver) Stop(ctx context.Context) error {
-	if d.cmd != nil && d.cmd.Process != nil {
-		_ = d.cmd.Process.Signal(os.Interrupt)
-		done := make(chan error, 1)
-		go func() { done <- d.cmd.Wait() }()
-		select {
-		case <-ctx.Done():
-			_ = d.cmd.Process.Kill()
-		case <-done:
-		}
-		d.cmd = nil
+func (d *cgoDriver) serverEnv() []string {
+	env := append(os.Environ(),
+		"LISTEN_ADDR="+d.cfg.ListenAddr,
+		"DATA_DIR="+d.cfg.DataDir,
+		"AUTH_MODE=none",
+		"ALLOWED_ARTIFACTS=metrics-raw",
+		"HOT_WINDOW_SECONDS=3600",
+		"FLUSH_TICK_SECONDS=3600",
+		"MERGE_TICK_SECONDS=3600",
+	)
+	if d.cfg.RBAC != nil {
+		env = append(env,
+			"AUTHZ_POLICY_FILE="+d.cfg.RBAC.PolicyFile,
+			"OIDC_ISSUER="+d.cfg.RBAC.Issuer,
+			"OIDC_JWKS_FILE="+d.cfg.RBAC.JWKSFile,
+			"OIDC_AUDIENCE="+d.cfg.RBAC.Audience,
+		)
 	}
-	if d.eng != nil {
-		err := d.eng.Close()
-		d.eng = nil
-		d.runner = nil
+	if d.cfg.Budget.IsSet() {
+		env = append(env,
+			"GOMAXPROCS="+strconv.Itoa(d.cfg.Budget.Threads()),
+			"GOMEMLIMIT="+d.cfg.Budget.GoMemLimit(),
+			"DUCKDB_THREADS="+strconv.Itoa(d.cfg.Budget.Threads()),
+			"DUCKDB_MEMORY_LIMIT="+d.cfg.Budget.DuckDBMemoryLimit(),
+		)
+	}
+	return env
+}
+
+func (d *cgoDriver) closeEngine() error {
+	if d.eng == nil {
+		return nil
+	}
+	err := d.eng.Close()
+	d.eng = nil
+	d.runner = nil
+	return err
+}
+
+func (d *cgoDriver) Stop(ctx context.Context) error {
+	if err := d.stopServer(ctx); err != nil {
 		return err
 	}
-	return nil
+	return d.closeEngine()
 }
 
 func (d *cgoDriver) openEngine() error {
@@ -167,6 +201,9 @@ func (d *cgoDriver) IngestMetricsHTTP(ctx context.Context, windows []string) err
 			return fmt.Errorf("store: ingest request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
+		if d.cfg.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+d.cfg.Token)
+		}
 		resp, err := client.Do(req)
 		_ = f.Close()
 		if err != nil {
@@ -366,6 +403,101 @@ func (d *cgoDriver) Pid() int {
 		return d.cmd.Process.Pid
 	}
 	return 0
+}
+
+func (d *cgoDriver) CountMetricsAPI(ctx context.Context) (int64, error) {
+	out, err := d.postSQL(ctx, `SELECT COUNT(*) AS n FROM metrics`)
+	if err != nil {
+		return 0, err
+	}
+	if len(out.Rows) == 0 || len(out.Rows[0]) == 0 {
+		return 0, fmt.Errorf("store: sql count: empty rows")
+	}
+	n, err := sqlCellInt64(out.Rows[0][0])
+	if err != nil {
+		return 0, fmt.Errorf("store: sql count cell: %w", err)
+	}
+	return n, nil
+}
+
+func (d *cgoDriver) AggregateMetricsAPI(ctx context.Context) error {
+	out, err := d.postSQL(ctx, `SELECT "__name__", avg(value), min(value), max(value), count(*) FROM metrics GROUP BY "__name__"`)
+	if err != nil {
+		return err
+	}
+	for _, row := range out.Rows {
+		if len(row) < 5 {
+			return fmt.Errorf("store: sql aggregate: short row")
+		}
+	}
+	return nil
+}
+
+type sqlAPIResponse struct {
+	Columns   []string `json:"columns"`
+	Rows      [][]any  `json:"rows"`
+	RowCount  int      `json:"row_count"`
+	Truncated bool     `json:"truncated"`
+}
+
+func (d *cgoDriver) postSQL(ctx context.Context, sqlText string) (*sqlAPIResponse, error) {
+	url := d.BaseURL() + "/" + d.cfg.Tenant + "/sql"
+	body, err := json.Marshal(map[string]string{"sql": sqlText})
+	if err != nil {
+		return nil, fmt.Errorf("store: marshal sql request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("store: sql request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if d.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+d.cfg.Token)
+	}
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("store: sql post: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("store: sql read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("store: sql status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out sqlAPIResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("store: sql decode: %w", err)
+	}
+	if len(out.Columns) == 0 {
+		return nil, fmt.Errorf("store: sql response missing columns")
+	}
+	return &out, nil
+}
+
+func sqlCellInt64(v any) (int64, error) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), nil
+	case int64:
+		return n, nil
+	case int:
+		return int64(n), nil
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			f, err := n.Float64()
+			if err != nil {
+				return 0, err
+			}
+			return int64(f), nil
+		}
+		return i, nil
+	default:
+		return 0, fmt.Errorf("unexpected type %T", v)
+	}
 }
 
 func duckTS(t time.Time) string {

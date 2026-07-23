@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/elk-utilities/prism/bench/internal/authgen"
 	"github.com/elk-utilities/prism/bench/internal/caps"
 	"github.com/elk-utilities/prism/bench/internal/clickhouse"
 	"github.com/elk-utilities/prism/bench/internal/env"
@@ -80,6 +81,7 @@ func main() {
 
 func runMain() error {
 	scale := flag.Int("scale", 1, "multiply default row counts")
+	apiProfile := flag.Bool("api", false, "run RBAC + HTTP SQL API profile (writes profile-suffixed results)")
 	workDir := flag.String("workdir", "bench/.work", "ephemeral data directory (relative to repo root unless absolute)")
 	cpus := flag.Float64("cpus", caps.DefaultCPUs, "vCPU cap per system")
 	memMiB := flag.Int("mem-mib", caps.DefaultMemMiB, "memory cap per system in MiB")
@@ -88,6 +90,10 @@ func runMain() error {
 
 	ctx := context.Background()
 	budget := caps.Budget{CPUs: *cpus, MemMiB: *memMiB}
+	profile := ""
+	if *apiProfile {
+		profile = "api"
+	}
 
 	if err := requireDocker(ctx); err != nil {
 		return err
@@ -195,12 +201,30 @@ func runMain() error {
 	}
 
 	dataDir := filepath.Join(absWork, "store-data")
-	sd, err := benchstore.New(benchstore.Config{
+	storeCfg := benchstore.Config{
 		DataDir:  dataDir,
 		Tenant:   tenant,
 		StoreBin: storeBin,
 		Budget:   budget,
-	})
+	}
+	if profile == "api" {
+		authEnv, err := authgen.New(filepath.Join(absWork, "auth"), tenant)
+		if err != nil {
+			return fmt.Errorf("auth setup: %w", err)
+		}
+		tok, err := authEnv.Token()
+		if err != nil {
+			return fmt.Errorf("auth token: %w", err)
+		}
+		storeCfg.RBAC = &benchstore.RBACConfig{
+			PolicyFile: authEnv.PolicyPath(),
+			Issuer:     authEnv.Issuer(),
+			JWKSFile:   authEnv.JWKSPath(),
+			Audience:   authEnv.Audience(),
+		}
+		storeCfg.Token = tok
+	}
+	sd, err := benchstore.New(storeCfg)
 	if err != nil {
 		return fmt.Errorf("store driver: %w", err)
 	}
@@ -254,6 +278,7 @@ func runMain() error {
 			DuckDBThreads:     budget.Threads(),
 			DuckDBMemoryLimit: budget.DuckDBMemoryLimit(),
 			IdleWindowSec:     *idleSec,
+			Profile:           profile,
 		},
 	}
 
@@ -312,6 +337,131 @@ func runMain() error {
 
 	expectedLike := gen.ExpectedDeadlineCount(cfg.LogsRows)
 
+	if profile == "api" {
+		if err := runAPIQueryPhase(ctx, sd, ch, cfg, logsGlob, logsStart, logsEnd, expectedLike, setPhase, &workloads, queryRuns, rep); err != nil {
+			return err
+		}
+	} else {
+		if err := runBaselineQueryPhase(ctx, sd, ch, cfg, logsGlob, logsStart, logsEnd, expectedLike, setPhase, &workloads, queryRuns, rep); err != nil {
+			return err
+		}
+	}
+
+	phaseSpans := phases.finish()
+	storePoints := storeStream.Stop()
+	benchPoints := benchStream.Stop()
+	chPoints := chStream.Stop()
+
+	storeStitched := monitor.StitchStoreSeries(storePoints, benchPoints, phaseSpans)
+
+	usageFor := func(system, phase string) monitor.Usage {
+		switch system {
+		case "prism-store":
+			switch phase {
+			case monitor.PhaseIdle, monitor.PhaseIngest:
+				return monitor.AggregatePhaseSpan(storePoints, phase, phaseSpans)
+			case monitor.PhaseCount, monitor.PhaseAggregation:
+				if profile == "api" {
+					return monitor.AggregatePhaseSpan(storePoints, phase, phaseSpans)
+				}
+				return monitor.AggregatePhaseSpan(benchPoints, phase, phaseSpans)
+			default:
+				return monitor.AggregatePhaseSpan(benchPoints, phase, phaseSpans)
+			}
+		case "clickhouse":
+			return monitor.AggregatePhaseSpan(chPoints, phase, phaseSpans)
+		default:
+			return monitor.Usage{}
+		}
+	}
+
+	attachUsage := func(name, system string) *monitor.Usage {
+		u := usageFor(system, name)
+		return &u
+	}
+	idleStore := attachUsage(monitor.PhaseIdle, "prism-store")
+	idleCH := attachUsage(monitor.PhaseIdle, "clickhouse")
+	workloads = append([]results.Workload{
+		{Name: "idle", System: "prism-store", Usage: idleStore},
+		{Name: "idle", System: "clickhouse", Usage: idleCH},
+	}, workloads...)
+	for i := range workloads {
+		w := &workloads[i]
+		if w.Usage != nil {
+			continue
+		}
+		u := usageFor(w.System, w.Name)
+		w.Usage = &u
+	}
+
+	rep.Workloads = workloads
+
+	artifacts := results.ArtifactPaths(root, profile)
+	if err := os.MkdirAll(artifacts.ChartsDir, 0o750); err != nil {
+		return fmt.Errorf("charts dir: %w", err)
+	}
+	cpuChart := filepath.Join(artifacts.ChartsDir, "cpu-cores.svg")
+	memChart := filepath.Join(artifacts.ChartsDir, "memory-rss.svg")
+	ioChart := filepath.Join(artifacts.ChartsDir, "disk-io.svg")
+	if err := results.WriteCPUChart(cpuChart, storeStitched, chPoints, phaseSpans); err != nil {
+		return fmt.Errorf("cpu chart: %w", err)
+	}
+	if err := results.WriteMemoryChart(memChart, storeStitched, chPoints, phaseSpans); err != nil {
+		return fmt.Errorf("memory chart: %w", err)
+	}
+	chartPaths := []string{
+		results.ChartRel(&artifacts, "cpu-cores.svg"),
+		results.ChartRel(&artifacts, "memory-rss.svg"),
+	}
+	if ok, err := results.WriteIOChart(ioChart, storeStitched, chPoints, phaseSpans); err != nil {
+		return fmt.Errorf("io chart: %w", err)
+	} else if ok {
+		chartPaths = append(chartPaths, results.ChartRel(&artifacts, "disk-io.svg"))
+	}
+	rep.Environment.ChartPaths = chartPaths
+
+	tsPath := artifacts.Timeseries
+	if err := results.WriteTimeseriesJSON(tsPath, &results.TimeseriesReport{
+		Phases:     phaseSpans,
+		Store:      storeStitched,
+		ClickHouse: chPoints,
+		Series: []results.TimeseriesSeries{
+			{System: "prism-store", Target: "prism-store binary", Points: storePoints},
+			{System: "prism-store", Target: "benchmark process (embedded engine)", Points: benchPoints},
+			{System: "clickhouse", Target: "container", Points: chPoints},
+		},
+	}); err != nil {
+		return fmt.Errorf("write timeseries: %w", err)
+	}
+
+	jsonPath := artifacts.JSON
+	mdPath := artifacts.Markdown
+	if err := results.WriteJSON(jsonPath, rep); err != nil {
+		return fmt.Errorf("write json: %w", err)
+	}
+	md := results.RenderMarkdown(rep)
+	if err := results.WriteMarkdown(mdPath, md); err != nil {
+		return fmt.Errorf("write markdown: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s, %s, %s, charts under %s\n", jsonPath, tsPath, mdPath, artifacts.ChartsDir)
+	fmt.Print(md)
+	return nil
+}
+
+//nolint:contextcheck // RunQueryMonitored has no ctx param; timed closures use outer ctx by design.
+func runBaselineQueryPhase(
+	ctx context.Context,
+	sd benchstore.Driver,
+	ch *clickhouse.Client,
+	cfg gen.Config,
+	logsGlob string,
+	logsStart, logsEnd time.Time,
+	expectedLike int64,
+	setPhase func(string),
+	workloads *[]results.Workload,
+	queryRuns int,
+	rep *results.Report,
+) error {
 	storeLike, err := sd.CountLogsLike(ctx, logsGlob, logsStart, logsEnd)
 	if err != nil {
 		return fmt.Errorf("store logs like count: %w", err)
@@ -360,9 +510,6 @@ func runMain() error {
 	if err != nil {
 		return fmt.Errorf("store count: %w", err)
 	}
-	chStream.ForceSample(runCtx)
-	storeStream.ForceSample(runCtx)
-	benchStream.ForceSample(runCtx)
 	chCountOut, err := timing.RunQueryMonitored(queryRuns, func() error {
 		n, err := ch.CountMetrics(ctx)
 		if err != nil {
@@ -376,10 +523,7 @@ func runMain() error {
 	if err != nil {
 		return fmt.Errorf("clickhouse count: %w", err)
 	}
-	chStream.ForceSample(runCtx)
-	storeStream.ForceSample(runCtx)
-	benchStream.ForceSample(runCtx)
-	workloads = append(workloads,
+	*workloads = append(*workloads,
 		results.Workload{Name: "count", System: "prism-store", P50Ms: storeCountOut.Stats.P50Ms, P95Ms: storeCountOut.Stats.P95Ms, MinMs: storeCountOut.Stats.MinMs},
 		results.Workload{Name: "count", System: "clickhouse", P50Ms: chCountOut.Stats.P50Ms, P95Ms: chCountOut.Stats.P95Ms, MinMs: chCountOut.Stats.MinMs},
 	)
@@ -397,10 +541,7 @@ func runMain() error {
 	if err != nil {
 		return fmt.Errorf("clickhouse aggregate: %w", err)
 	}
-	chStream.ForceSample(runCtx)
-	storeStream.ForceSample(runCtx)
-	benchStream.ForceSample(runCtx)
-	workloads = append(workloads,
+	*workloads = append(*workloads,
 		results.Workload{Name: "aggregation", System: "prism-store", P50Ms: storeAggOut.Stats.P50Ms, P95Ms: storeAggOut.Stats.P95Ms, MinMs: storeAggOut.Stats.MinMs},
 		results.Workload{Name: "aggregation", System: "clickhouse", P50Ms: chAggOut.Stats.P50Ms, P95Ms: chAggOut.Stats.P95Ms, MinMs: chAggOut.Stats.MinMs},
 	)
@@ -432,104 +573,152 @@ func runMain() error {
 	if err != nil {
 		return fmt.Errorf("clickhouse logs like timing: %w", err)
 	}
-	chStream.ForceSample(runCtx)
-	storeStream.ForceSample(runCtx)
-	benchStream.ForceSample(runCtx)
-	workloads = append(workloads,
+	*workloads = append(*workloads,
+		results.Workload{Name: "logs_like", System: "prism-store", P50Ms: storeLikeOut.Stats.P50Ms, P95Ms: storeLikeOut.Stats.P95Ms, MinMs: storeLikeOut.Stats.MinMs},
+		results.Workload{Name: "logs_like", System: "clickhouse", P50Ms: chLikeOut.Stats.P50Ms, P95Ms: chLikeOut.Stats.P95Ms, MinMs: chLikeOut.Stats.MinMs},
+	)
+	return nil
+}
+
+//nolint:contextcheck // RunQueryMonitored has no ctx param; timed closures use outer ctx by design.
+func runAPIQueryPhase(
+	ctx context.Context,
+	sd benchstore.Driver,
+	ch *clickhouse.Client,
+	cfg gen.Config,
+	logsGlob string,
+	logsStart, logsEnd time.Time,
+	expectedLike int64,
+	setPhase func(string),
+	workloads *[]results.Workload,
+	queryRuns int,
+	rep *results.Report,
+) error {
+	storeLike, err := sd.CountLogsLike(ctx, logsGlob, logsStart, logsEnd)
+	if err != nil {
+		return fmt.Errorf("store logs like count: %w", err)
+	}
+	chLike, err := ch.CountLogsLike(ctx, logsStart, logsEnd)
+	if err != nil {
+		return fmt.Errorf("clickhouse logs like count: %w", err)
+	}
+	if storeLike != chLike {
+		return fmt.Errorf("LIKE count mismatch: store=%d clickhouse=%d", storeLike, chLike)
+	}
+	if storeLike != expectedLike {
+		return fmt.Errorf("LIKE count wrong: got %d want %d", storeLike, expectedLike)
+	}
+	rep.LikeCountStore = storeLike
+	rep.LikeCountClickHouse = chLike
+
+	setPhase(monitor.PhaseLogsLike)
+	storeLikeOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := sd.CountLogsLike(ctx, logsGlob, logsStart, logsEnd)
+		if err != nil {
+			return err
+		}
+		if n != expectedLike {
+			return fmt.Errorf("store logs like %d != %d", n, expectedLike)
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store logs like timing: %w", err)
+	}
+	chLikeOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := ch.CountLogsLike(ctx, logsStart, logsEnd)
+		if err != nil {
+			return err
+		}
+		if n != expectedLike {
+			return fmt.Errorf("clickhouse logs like %d != %d", n, expectedLike)
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("clickhouse logs like timing: %w", err)
+	}
+	*workloads = append(*workloads,
 		results.Workload{Name: "logs_like", System: "prism-store", P50Ms: storeLikeOut.Stats.P50Ms, P95Ms: storeLikeOut.Stats.P95Ms, MinMs: storeLikeOut.Stats.MinMs},
 		results.Workload{Name: "logs_like", System: "clickhouse", P50Ms: chLikeOut.Stats.P50Ms, P95Ms: chLikeOut.Stats.P95Ms, MinMs: chLikeOut.Stats.MinMs},
 	)
 
-	phaseSpans := phases.finish()
-	storePoints := storeStream.Stop()
-	benchPoints := benchStream.Stop()
-	chPoints := chStream.Stop()
+	stopCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	if err := sd.StopServer(stopCtx); err != nil {
+		cancel()
+		return fmt.Errorf("store stop for api restart: %w", err)
+	}
+	cancel()
+	if err := sd.StartServer(ctx); err != nil {
+		return fmt.Errorf("store restart for api queries: %w", err)
+	}
 
-	storeStitched := monitor.StitchStoreSeries(storePoints, benchPoints, phaseSpans)
+	storeMetricsCount, err := sd.CountMetricsAPI(ctx)
+	if err != nil {
+		return fmt.Errorf("store metrics count gate (api): %w", err)
+	}
+	chMetricsCount, err := ch.CountMetrics(ctx)
+	if err != nil {
+		return fmt.Errorf("clickhouse metrics count gate: %w", err)
+	}
+	if storeMetricsCount != chMetricsCount {
+		return fmt.Errorf("metrics count mismatch: store=%d clickhouse=%d", storeMetricsCount, chMetricsCount)
+	}
+	if storeMetricsCount != cfg.MetricsRows {
+		return fmt.Errorf("metrics count wrong: got %d want %d", storeMetricsCount, cfg.MetricsRows)
+	}
+	rep.MetricsCountStore = storeMetricsCount
+	rep.MetricsCountClickHouse = chMetricsCount
 
-	usageFor := func(system, phase string) monitor.Usage {
-		switch system {
-		case "prism-store":
-			switch phase {
-			case monitor.PhaseIdle, monitor.PhaseIngest:
-				return monitor.AggregatePhaseSpan(storePoints, phase, phaseSpans)
-			default:
-				return monitor.AggregatePhaseSpan(benchPoints, phase, phaseSpans)
-			}
-		case "clickhouse":
-			return monitor.AggregatePhaseSpan(chPoints, phase, phaseSpans)
-		default:
-			return monitor.Usage{}
+	setPhase(monitor.PhaseCount)
+	storeCountOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := sd.CountMetricsAPI(ctx)
+		if err != nil {
+			return err
 		}
-	}
-
-	attachUsage := func(name, system string) *monitor.Usage {
-		u := usageFor(system, name)
-		return &u
-	}
-	idleStore := attachUsage(monitor.PhaseIdle, "prism-store")
-	idleCH := attachUsage(monitor.PhaseIdle, "clickhouse")
-	workloads = append([]results.Workload{
-		{Name: "idle", System: "prism-store", Usage: idleStore},
-		{Name: "idle", System: "clickhouse", Usage: idleCH},
-	}, workloads...)
-	for i := range workloads {
-		w := &workloads[i]
-		if w.Usage != nil {
-			continue
+		if n != cfg.MetricsRows {
+			return fmt.Errorf("store metrics count %d != %d", n, cfg.MetricsRows)
 		}
-		u := usageFor(w.System, w.Name)
-		w.Usage = &u
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store count (api): %w", err)
 	}
+	chCountOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		n, err := ch.CountMetrics(ctx)
+		if err != nil {
+			return err
+		}
+		if n != cfg.MetricsRows {
+			return fmt.Errorf("clickhouse metrics count %d != %d", n, cfg.MetricsRows)
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("clickhouse count: %w", err)
+	}
+	*workloads = append(*workloads,
+		results.Workload{Name: "count", System: "prism-store", P50Ms: storeCountOut.Stats.P50Ms, P95Ms: storeCountOut.Stats.P95Ms, MinMs: storeCountOut.Stats.MinMs},
+		results.Workload{Name: "count", System: "clickhouse", P50Ms: chCountOut.Stats.P50Ms, P95Ms: chCountOut.Stats.P95Ms, MinMs: chCountOut.Stats.MinMs},
+	)
 
-	rep.Workloads = workloads
-
-	chartsDir := filepath.Join(root, "bench", "charts")
-	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
-		return fmt.Errorf("charts dir: %w", err)
+	setPhase(monitor.PhaseAggregation)
+	storeAggOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		return sd.AggregateMetricsAPI(ctx)
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("store aggregate (api): %w", err)
 	}
-	cpuChart := filepath.Join(chartsDir, "cpu-cores.svg")
-	memChart := filepath.Join(chartsDir, "memory-rss.svg")
-	ioChart := filepath.Join(chartsDir, "disk-io.svg")
-	if err := results.WriteCPUChart(cpuChart, storeStitched, chPoints, phaseSpans); err != nil {
-		return fmt.Errorf("cpu chart: %w", err)
+	chAggOut, err := timing.RunQueryMonitored(queryRuns, func() error {
+		return ch.AggregateMetrics(ctx)
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("clickhouse aggregate: %w", err)
 	}
-	if err := results.WriteMemoryChart(memChart, storeStitched, chPoints, phaseSpans); err != nil {
-		return fmt.Errorf("memory chart: %w", err)
-	}
-	chartPaths := []string{"bench/charts/cpu-cores.svg", "bench/charts/memory-rss.svg"}
-	if ok, err := results.WriteIOChart(ioChart, storeStitched, chPoints, phaseSpans); err != nil {
-		return fmt.Errorf("io chart: %w", err)
-	} else if ok {
-		chartPaths = append(chartPaths, "bench/charts/disk-io.svg")
-	}
-	rep.Environment.ChartPaths = chartPaths
-
-	tsPath := filepath.Join(root, "bench", "results-timeseries.json")
-	if err := results.WriteTimeseriesJSON(tsPath, &results.TimeseriesReport{
-		Phases:     phaseSpans,
-		Store:      storeStitched,
-		ClickHouse: chPoints,
-		Series: []results.TimeseriesSeries{
-			{System: "prism-store", Target: "prism-store binary", Points: storePoints},
-			{System: "prism-store", Target: "benchmark process (embedded engine)", Points: benchPoints},
-			{System: "clickhouse", Target: "container", Points: chPoints},
-		},
-	}); err != nil {
-		return fmt.Errorf("write timeseries: %w", err)
-	}
-
-	jsonPath := filepath.Join(root, "bench", "results.json")
-	mdPath := filepath.Join(root, "bench", "RESULTS.md")
-	if err := results.WriteJSON(jsonPath, rep); err != nil {
-		return fmt.Errorf("write json: %w", err)
-	}
-	md := results.RenderMarkdown(rep)
-	if err := results.WriteMarkdown(mdPath, md); err != nil {
-		return fmt.Errorf("write markdown: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "wrote %s, %s, %s, charts under %s\n", jsonPath, tsPath, mdPath, chartsDir)
-	fmt.Print(md)
+	*workloads = append(*workloads,
+		results.Workload{Name: "aggregation", System: "prism-store", P50Ms: storeAggOut.Stats.P50Ms, P95Ms: storeAggOut.Stats.P95Ms, MinMs: storeAggOut.Stats.MinMs},
+		results.Workload{Name: "aggregation", System: "clickhouse", P50Ms: chAggOut.Stats.P50Ms, P95Ms: chAggOut.Stats.P95Ms, MinMs: chAggOut.Stats.MinMs},
+	)
 	return nil
 }
 

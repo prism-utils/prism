@@ -36,7 +36,36 @@ Outputs:
 - `bench/charts/*.svg` — CPU, memory, and I/O timeline charts
 
 Optional flags on `prism-bench`: `--cpus`, `--mem-mib` (default **2 vCPU / 1024 MiB**
-per system), `--idle-seconds` (default **5** s quiet baseline before workloads).
+per system), `--idle-seconds` (default **5** s quiet baseline before workloads), `--api`
+(RBAC + HTTP SQL API profile; writes profile-suffixed artifacts).
+
+## RBAC + HTTP SQL API profile
+
+An opt-in second profile measures the same dataset with **RBAC enabled** and store
+**count/aggregation over `POST /{tenant}/sql`** (JWT bearer). Ingest also uses Bearer
+JWT. Results are **attached** beside the baseline — baseline files are untouched.
+
+```bash
+make bench-api
+make bench-api BENCH_SCALE=2
+```
+
+Outputs (profile-suffixed):
+
+- `bench/results-api.json`
+- `bench/results-timeseries-api.json`
+- `bench/RESULTS-api.md`
+- `bench/charts-api/*.svg`
+
+**What differs from baseline:** store count and aggregation run end-to-end over HTTP
+with JWT verification, RBAC authorization, and the per-request SQL sandbox
+(materialize-then-lock). ClickHouse still uses its **native protocol** client — an
+honest apples-to-oranges caveat is rendered in `RESULTS-api.md`. **Logs LIKE** remains
+**engine-level** (embedded DuckDB over a logs-shaped Parquet tier; server stopped
+during that phase) because the store has no logs SQL relation yet.
+
+Resource sampling in the API profile: ingest, idle, count, and aggregation sample the
+`prism-store` binary; logs LIKE samples the benchmark process (embedded engine).
 
 Cleanup is automatic (`docker compose down -v` on exit). Ephemeral data lives under `bench/.work/` (gitignored).
 

@@ -1,6 +1,6 @@
 # Spec: benchmark over the HTTP SQL API with RBAC on (attached profile)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `chore/rbac-docs-bench` (docs already committed on this branch)
 - **Owner phase:** orchestrator → developer (harness) → orchestrator runs the actual benchmark
@@ -68,13 +68,13 @@ The developer builds + unit/integration-tests the harness (NO Docker run). The o
   - perf/product: avoids re-baselining ClickHouse; the honest caveat prevents an apples-to-oranges misread while still giving context.
 
 ## 5. Acceptance checklist (developer)
-- [ ] `bench/internal/authgen`: RSA keygen, JWKS file, RS256 JWT (matching `iss`/`aud`), policy YAML writer; a short-expiry token helper. Unit test: minted JWT verifies against the JWKS and the store's verifier config (or a focused parse test).
-- [ ] Driver: RBAC-on `Start`, Bearer ingest, `CountMetricsAPI`/`AggregateMetricsAPI` over `/sql`, `StopServer`/`StartServer` (or `Restart`) with engine released before restart; baseline path byte-for-byte unchanged.
-- [ ] **Integration test (no Docker):** boot `prism-store` with RBAC (JWKS file + policy), ingest a small window with Bearer, run `/sql` COUNT + GROUP BY and assert correct numbers; negative cases reader→200, writer→403, other-tenant→404, no-token→401.
-- [ ] Orchestrator `--api`: reordered phases, per-phase sampling source fixed for API, correctness gates enforced, profile-suffixed outputs, baseline path unchanged when flag absent.
-- [ ] Report: `Environment.Profile="api"`, RBAC/API title + caveat line, chart-embed paths correct for `RESULTS-api.md`.
-- [ ] `Makefile` `bench-api` target; `bench/README.md` profile section (+ caveat + reproduce). Baseline docs unchanged.
-- [ ] `make lint` + `make test` (`-race`) green (new tests included); `go build ./bench/... ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` unaffected; `make tidy` clean; `git status` clean. **Do not run the full Docker benchmark** (orchestrator does that).
+- [x] `bench/internal/authgen`: RSA keygen, JWKS file, RS256 JWT (matching `iss`/`aud`), policy YAML writer; a short-expiry token helper. Unit test: minted JWT verifies against the JWKS and the store's verifier config (or a focused parse test).
+- [x] Driver: RBAC-on `Start`, Bearer ingest, `CountMetricsAPI`/`AggregateMetricsAPI` over `/sql`, `StopServer`/`StartServer` (or `Restart`) with engine released before restart; baseline path byte-for-byte unchanged.
+- [x] **Integration test (no Docker):** boot `prism-store` with RBAC (JWKS file + policy), ingest a small window with Bearer, run `/sql` COUNT + GROUP BY and assert correct numbers; negative cases reader→200, writer→403, other-tenant→404, no-token→401.
+- [x] Orchestrator `--api`: reordered phases, per-phase sampling source fixed for API, correctness gates enforced, profile-suffixed outputs, baseline path unchanged when flag absent.
+- [x] Report: `Environment.Profile="api"`, RBAC/API title + caveat line, chart-embed paths correct for `RESULTS-api.md`.
+- [x] `Makefile` `bench-api` target; `bench/README.md` profile section (+ caveat + reproduce). Baseline docs unchanged.
+- [x] `make lint` + `make test` (`-race`) green (new tests included); `go build ./bench/... ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` unaffected; `make tidy` clean; `git status` clean. **Do not run the full Docker benchmark** (orchestrator does that).
 
 ## 6. Mandatory review gates (reviewer)
 - [ ] **Gate 1:** harness code cohesive; no duplicated renderer; wrapped errors; no globals; token/JWKS handling clean; atomic comments (§3.8).

@@ -29,6 +29,7 @@ type Environment struct {
 	DuckDBThreads     int       `json:"duckdb_threads"`
 	DuckDBMemoryLimit string    `json:"duckdb_memory_limit"`
 	IdleWindowSec     float64   `json:"idle_window_sec"`
+	Profile           string    `json:"profile,omitempty"`
 	ChartPaths        []string  `json:"chart_paths,omitempty"`
 }
 
@@ -87,9 +88,16 @@ func RenderMarkdownRoot(rep *Report) string {
 
 func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 	env := rep.Environment
+	apiProfile := env.Profile == "api"
 	var b strings.Builder
-	b.WriteString("# Benchmark: prism-store vs ClickHouse\n\n")
-	b.WriteString("Measured on this host with `make bench` (default small profile).\n\n")
+	if apiProfile {
+		b.WriteString("# Benchmark: prism-store (RBAC + HTTP `/sql`) vs ClickHouse\n\n")
+		b.WriteString("Measured on this host with `make bench-api` — queries over the RBAC-guarded HTTP SQL API.\n\n")
+		b.WriteString("*prism-store count/aggregation are end-to-end HTTP + JWT/RBAC + per-request sandbox (materialize-then-lock); ClickHouse uses its native protocol client; logs LIKE remains engine-level (no logs API).*\n\n")
+	} else {
+		b.WriteString("# Benchmark: prism-store vs ClickHouse\n\n")
+		b.WriteString("Measured on this host with `make bench` (default small profile).\n\n")
+	}
 	b.WriteString("## Environment\n\n")
 	fmt.Fprintf(&b, "| Key | Value |\n|-----|-------|\n")
 	fmt.Fprintf(&b, "| OS / arch | %s / %s |\n", env.OS, env.Arch)
@@ -135,7 +143,11 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 				formatUsageCPU(w), formatUsageRSS(w), formatUsageIO(w), formatUsageMiBps(w), formatUsageIOPS(w))
 		}
 	}
-	b.WriteString("\nStore **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms).\n")
+	if apiProfile {
+		b.WriteString("\n**API profile:** store **count** and **aggregation** sample the `prism-store` binary (HTTP `/sql` with JWT/RBAC). Store **logs LIKE** samples the benchmark process (embedded engine; server stopped). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms).\n")
+	} else {
+		b.WriteString("\nStore **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms).\n")
+	}
 
 	if len(env.ChartPaths) > 0 {
 		b.WriteString("\n## Resource charts\n\n")
@@ -146,7 +158,7 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 			}
 			embed := p
 			if benchLocalCharts {
-				embed = chartEmbedForBenchResults(p)
+				embed = chartEmbedForBenchResults(p, apiProfile)
 			}
 			fmt.Fprintf(&b, "### %s\n\n![%s](%s)\n\n", strings.TrimSuffix(base, ".svg"), base, embed)
 		}
@@ -155,12 +167,26 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 	b.WriteString("\n## Interpretation\n\n")
 	b.WriteString(interpret(rep))
 	b.WriteString("\n## Reproduce\n\n")
-	b.WriteString("```bash\nmake bench        # default scale (2M rows total)\nmake bench BENCH_SCALE=2\n```\n")
+	if apiProfile {
+		b.WriteString("```bash\nmake bench-api        # default scale (2M rows total)\nmake bench-api BENCH_SCALE=2\n```\n")
+	} else {
+		b.WriteString("```bash\nmake bench        # default scale (2M rows total)\nmake bench BENCH_SCALE=2\n```\n")
+	}
 	b.WriteString("\nSee [`bench/README.md`](README.md) for prerequisites and cleanup.\n")
 	return b.String()
 }
 
-func chartEmbedForBenchResults(storedPath string) string {
+func chartEmbedForBenchResults(storedPath string, apiProfile bool) string {
+	if apiProfile {
+		const prefix = "bench/charts-api/"
+		if strings.HasPrefix(storedPath, prefix) {
+			return strings.TrimPrefix(storedPath, "bench/")
+		}
+		if strings.HasPrefix(storedPath, "charts-api/") {
+			return storedPath
+		}
+		return storedPath
+	}
 	const prefix = "bench/charts/"
 	if strings.HasPrefix(storedPath, prefix) {
 		return strings.TrimPrefix(storedPath, "bench/")
