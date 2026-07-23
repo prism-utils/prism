@@ -118,7 +118,7 @@ Local dry run: `make release-check` (validate config) and `make snapshot`
 
 Reproducible comparison harness under [`bench/`](bench/) (Epic #21 deliverable).
 Default profile: **1M metrics + 1M logs** (~2M rows total), deterministic seed,
-correctness gate on logs `LIKE '%deadline exceeded%'` (10,000 matches).
+correctness gates on full-table metrics `COUNT(*)` and logs `LIKE '%deadline exceeded%'` (10,000 matches).
 
 ```bash
 make bench              # requires Docker + CGO; ~15s on Apple M1 Pro 16 GiB
@@ -138,17 +138,18 @@ make bench BENCH_SCALE=2
 
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.17s · 1,714,212 rows/s | 1.82s · 1,100,331 rows/s |
-| count (p50 / p95 / min ms) | 0.8 / 0.9 / 0.8 | 4.4 / 16.5 / 3.8 |
-| aggregation | 6.4 / 6.6 / 5.3 | 11.8 / 26.1 / 11.1 |
-| logs LIKE | 19.6 / 19.9 / 19.3 | 15.9 / 16.3 / 15.5 |
+| ingest | 1.18s · 1,693,033 rows/s | 1.84s · 1,085,187 rows/s |
+| count (p50 / p95 / min ms) | 0.7 / 0.8 / 0.5 | 1.8 / 1.9 / 1.6 |
+| aggregation | 5.1 / 5.4 / 4.5 | 6.1 / 26.9 / 5.8 |
+| logs LIKE | 19.6 / 21.6 / 18.7 | 16.4 / 23.2 / 16.1 |
 
-**Interpretation:** prism-store wins ingest, count, and aggregation on this laptop.
-ClickHouse wins the logs `LIKE` workload (p50 15.9 ms vs 19.6 ms) despite fair
-tuning (`tokenbf_v1` skip index, batched inserts). Store metrics queries filter
-on **ingest-time** `ts` (the real HTTP ingest path); ClickHouse stores sample
-timestamps from the dataset. Store logs `LIKE` is **engine-level** (DuckDB over
-a logs-shaped Parquet tier) — not a shipping logs API.
+**Interpretation:** Metrics **count** and **aggregation** scan the full ingested
+table on both systems (no `ts` range pruning) — apples-to-apples over the same N
+rows. On this laptop prism-store leads ingest, count, and aggregation (p50).
+ClickHouse wins logs `LIKE` (p50 16.4 ms vs 19.6 ms) with fair tuning
+(`tokenbf_v1` skip index, typed schema, batched inserts). Logs LIKE uses the
+same dataset-`ts` window on both sides. Store logs `LIKE` is **engine-level**
+(DuckDB over a logs-shaped Parquet tier) — not a shipping logs API.
 
 Full tables, fairness notes, and cleanup: [`bench/README.md`](bench/README.md),
 [`bench/RESULTS.md`](bench/RESULTS.md).
