@@ -35,7 +35,7 @@ test: ## Fast tests: unit + golden + fuzz seeds, with the race detector
 lint: ## Run golangci-lint (config in .golangci.yml)
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "golangci-lint not found — https://golangci-lint.run/welcome/install/"; exit 1; }
-	golangci-lint run ./...
+	CGO_ENABLED=1 golangci-lint run ./...
 
 .PHONY: tidy
 tidy: ## go mod tidy and fail if it produced a diff (CI-safe)
