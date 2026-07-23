@@ -81,6 +81,10 @@ env:
   # When set, overrides retentionTickHours (seconds).
   retentionTickSeconds: ""
 
+  sqlAPIEnabled: "true"
+  sqlAPIMaxRows: "100000"
+  sqlAPITimeoutSeconds: "30"
+
 # Tokens are never inlined here. Point existingSecret at a pre-created Secret; the chart
 # does not create or rotate credentials (no ESO/SealedSecrets dependency).
 secrets:

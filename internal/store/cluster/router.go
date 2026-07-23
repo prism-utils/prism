@@ -44,6 +44,7 @@ func NewServeMux(clients map[string]*url.URL, routePrefix string, wrapQuery func
 		q = wrapQuery(q)
 	}
 	mux.Handle(query.QueryRoutePattern(routePrefix), q)
+	mux.Handle(query.SQLRoutePattern(routePrefix), q)
 	return mux
 }
 

@@ -103,6 +103,13 @@ func (s *rbacStack) wrapQuery(h http.Handler) http.Handler {
 	return s.middleware.WrapQuery(h)
 }
 
+func (s *rbacStack) wrapSQL(h http.Handler) http.Handler {
+	if s == nil {
+		return h
+	}
+	return s.middleware.WrapSQL(h)
+}
+
 func (s *rbacStack) wrapIngest(h http.Handler) http.Handler {
 	if s == nil {
 		return h

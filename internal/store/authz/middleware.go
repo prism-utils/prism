@@ -29,6 +29,11 @@ func (m *Middleware) WrapQuery(next http.Handler) http.Handler {
 	return m.wrapTenantAction(ActionQuery, next)
 }
 
+// WrapSQL protects POST /{ns}/sql routes.
+func (m *Middleware) WrapSQL(next http.Handler) http.Handler {
+	return m.wrapTenantAction(ActionQuery, next)
+}
+
 // WrapIngest protects POST /{ns}/ingest/{artifact} routes.
 func (m *Middleware) WrapIngest(next http.Handler) http.Handler {
 	return m.wrapTenantAction(ActionIngest, next)

@@ -11,6 +11,9 @@
 //
 // Query hot-only mode: set QUERY_HOT_ONLY=true to serve HTTP queries from the
 // in-memory hot cache only (no tier or rollup Parquet reads). Default false.
+// Arbitrary SQL API: POST /{ns}/sql (RBAC action query, or ADMIN_TOKEN when RBAC
+// off). Disable with SQL_API_ENABLED=false. Limits: SQL_API_MAX_ROWS (default
+// 100000), SQL_API_TIMEOUT_SECONDS (default 30). Reuses DUCKDB_MEMORY_LIMIT.
 // Background jobs: set RUN_JOBS=false to skip all lifecycle maintenance
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
@@ -21,7 +24,7 @@
 //   - client — data-holding leaf; CLIENT_TENANTS (required) lists owned tenants.
 //     Queries for other tenants return 404 before the engine runs.
 //   - cluster — stateless query coordinator; CLUSTER_CLIENTS maps tenant=url pairs.
-//     Forwards GET /{ns}/query to the owning client; no engine, ingest, or jobs.
+//     Forwards GET /{ns}/query and POST /{ns}/sql to the owning client; no engine, ingest, or jobs.
 //
 // RBAC (optional): set AUTHZ_POLICY_FILE to a deny-by-default YAML policy path.
 // When set, JWT/OIDC auth (OIDC_ISSUER, OIDC_AUDIENCE, OIDC_JWKS_*) is required
@@ -105,6 +108,9 @@ type serverConfig struct {
 	duckdbThreads     int
 	duckdbMemoryLimit string
 	queryHotOnly      bool
+	sqlAPIEnabled     bool
+	sqlAPIMaxRows     int
+	sqlAPITimeout     time.Duration
 	runJobs           bool
 	mode              string
 	clientTenants     string
@@ -136,6 +142,9 @@ func loadConfig() serverConfig {
 		duckdbThreads:     envIntZero("DUCKDB_THREADS"),
 		duckdbMemoryLimit: os.Getenv("DUCKDB_MEMORY_LIMIT"),
 		queryHotOnly:      envBool("QUERY_HOT_ONLY", false),
+		sqlAPIEnabled:     envBool("SQL_API_ENABLED", true),
+		sqlAPIMaxRows:     envInt("SQL_API_MAX_ROWS", 100000),
+		sqlAPITimeout:     time.Duration(envInt("SQL_API_TIMEOUT_SECONDS", 30)) * time.Second,
 		runJobs:           envBool("RUN_JOBS", true),
 		mode:              envOr("MODE", "standalone"),
 		clientTenants:     os.Getenv("CLIENT_TENANTS"),
@@ -307,6 +316,21 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			queryHandler = cluster.OwnedTenantGuard(ownedTenants, queryHandler)
 		}
 		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, queryHandler))
+
+		if cfg.sqlAPIEnabled {
+			sqlCfg := &query.SQLConfig{
+				DataDir:     cfg.dataDir,
+				RoutePrefix: cfg.routePrefix,
+				MaxRows:     cfg.sqlAPIMaxRows,
+				Timeout:     cfg.sqlAPITimeout,
+				MemoryLimit: cfg.duckdbMemoryLimit,
+			}
+			sqlHandler := query.SQLHandler(sqlCfg, eng, logger)
+			if ownedTenants != nil {
+				sqlHandler = cluster.OwnedTenantGuard(ownedTenants, sqlHandler)
+			}
+			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, sqlHandler))
+		}
 	}
 	return mux
 }
