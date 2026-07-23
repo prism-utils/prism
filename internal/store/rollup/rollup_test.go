@@ -1,6 +1,7 @@
 package rollup
 
 import (
+	"context"
 	"math"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func TestRollupAggregatesMatchDirectAggregation(t *testing.T) {
 		paths = append(paths, path)
 	}
 
-	b, err := NewBuilder(dataDir, tenant, []Step{{Name: "1m", Interval: "1 minute"}})
+	b, err := NewBuilder(dataDir, tenant, []Step{{Name: "1m", Interval: "1 minute"}}, BuilderConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,4 +73,30 @@ func TestRollupAggregatesMatchDirectAggregation(t *testing.T) {
 
 func closeF(a, b float64) bool {
 	return math.Abs(a-b) < 1e-9
+}
+
+func TestNewBuilder_appliesDuckDBCaps(t *testing.T) {
+	t.Parallel()
+	b, err := NewBuilder(t.TempDir(), "tenant", []Step{{Name: "1m", Interval: "1 minute"}}, BuilderConfig{
+		Threads:     2,
+		MemoryLimit: "128MB",
+	})
+	if err != nil {
+		t.Fatalf("builder: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	var threads, memLimit string
+	if err := b.db.QueryRowContext(context.Background(), "SELECT current_setting('threads')").Scan(&threads); err != nil {
+		t.Fatalf("threads: %v", err)
+	}
+	if err := b.db.QueryRowContext(context.Background(), "SELECT current_setting('memory_limit')").Scan(&memLimit); err != nil {
+		t.Fatalf("memory_limit: %v", err)
+	}
+	if threads != "2" {
+		t.Fatalf("threads = %q, want 2", threads)
+	}
+	if memLimit == "" {
+		t.Fatal("memory_limit empty, want configured cap")
+	}
 }
