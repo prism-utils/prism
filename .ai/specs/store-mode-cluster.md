@@ -1,6 +1,6 @@
 # Spec: prism-store — deployment `MODE` (standalone / client / cluster) with tenant-routed query federation
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-mode-cluster`
 - **Owner phase:** orchestrator → developer
@@ -74,13 +74,13 @@ build on.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `internal/store/cluster`: `ParseMode` (default standalone, invalid errors); `ParseClients` (valid map; rejects malformed URL, empty tenant, dup tenant, empty-in-cluster-mode); `ParseOwnedTenants` (required non-empty in client mode) — all unit-tested incl. error paths.
-- [ ] Coordinator `Router`: **routing correctness + isolation** proven with `httptest` fake client servers — a query for tenant A reaches ONLY A's upstream; tenant B reaches ONLY B's upstream; **unknown tenant → 404 and NO upstream is contacted**; the response returned is exactly the owning client's response; `Authorization` header is forwarded; path + query string preserved; upstream error → `502`.
-- [ ] Client-mode guard: with `CLIENT_TENANTS={A}`, a query for A is served; a query for B → `404` **before** the engine is touched (unit/httptest).
-- [ ] `cmd/prism-store`: `MODE` parsed (default standalone; invalid → startup error, logged); **cluster** runs `runCluster` with **no engine/ingest/jobs** and serves health + query routing; **client** runs the engine-backed server with the owned-tenant guard on the query route; **standalone** unchanged. Startup logs include `mode` (+ owned tenants / client count).
-- [ ] `runCluster` graceful shutdown: starts, serves, stops cleanly on ctx cancel; bind-failure returns a wrapped error; no goroutine leak (`-race`/goleak). A test asserts cluster mode does NOT open the engine/data dir.
-- [ ] Docs: `docs/STORE.md` (+ `main.go` usage comment) document `MODE`, `CLUSTER_CLIENTS`, `CLIENT_TENANTS`, the three roles, the isolation guarantee, and the out-of-scope/future list (RBAC, ingest routing, scatter-gather, discovery). If `docs/DESIGN.md` has an ADR/architecture section, add a short mode/federation note (Decision Protocol reference included).
-- [ ] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok (no new deps; httputil is stdlib); `make tidy` clean; no committed blobs.
+- [x] `internal/store/cluster`: `ParseMode` (default standalone, invalid errors); `ParseClients` (valid map; rejects malformed URL, empty tenant, dup tenant, empty-in-cluster-mode); `ParseOwnedTenants` (required non-empty in client mode) — all unit-tested incl. error paths.
+- [x] Coordinator `Router`: **routing correctness + isolation** proven with `httptest` fake client servers — a query for tenant A reaches ONLY A's upstream; tenant B reaches ONLY B's upstream; **unknown tenant → 404 and NO upstream is contacted**; the response returned is exactly the owning client's response; `Authorization` header is forwarded; path + query string preserved; upstream error → `502`.
+- [x] Client-mode guard: with `CLIENT_TENANTS={A}`, a query for A is served; a query for B → `404` **before** the engine is touched (unit/httptest).
+- [x] `cmd/prism-store`: `MODE` parsed (default standalone; invalid → startup error, logged); **cluster** runs `runCluster` with **no engine/ingest/jobs** and serves health + query routing; **client** runs the engine-backed server with the owned-tenant guard on the query route; **standalone** unchanged. Startup logs include `mode` (+ owned tenants / client count).
+- [x] `runCluster` graceful shutdown: starts, serves, stops cleanly on ctx cancel; bind-failure returns a wrapped error; no goroutine leak (`-race`/goleak). A test asserts cluster mode does NOT open the engine/data dir.
+- [x] Docs: `docs/STORE.md` (+ `main.go` usage comment) document `MODE`, `CLUSTER_CLIENTS`, `CLIENT_TENANTS`, the three roles, the isolation guarantee, and the out-of-scope/future list (RBAC, ingest routing, scatter-gather, discovery). If `docs/DESIGN.md` has an ADR/architecture section, add a short mode/federation note (Decision Protocol reference included).
+- [x] `make lint test` (`-race`) green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok (no new deps; httputil is stdlib); `make tidy` clean; no committed blobs.
 
 ## 6. Mandatory review gates  (reviewer owns)
 

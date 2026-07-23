@@ -15,6 +15,13 @@
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
 // Grafana print-view-sql is unaffected.
+//
+// Deployment MODE (default standalone):
+//   - standalone — self-contained store (engine, ingest, jobs).
+//   - client — data-holding leaf; CLIENT_TENANTS (required) lists owned tenants.
+//     Queries for other tenants return 404 before the engine runs.
+//   - cluster — stateless query coordinator; CLUSTER_CLIENTS maps tenant=url pairs.
+//     Forwards GET /{ns}/query to the owning client; no engine, ingest, or jobs.
 package main
 
 import (
@@ -24,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -32,6 +40,7 @@ import (
 	"time"
 
 	"github.com/elk-utilities/prism/internal/store/admin"
+	"github.com/elk-utilities/prism/internal/store/cluster"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/lifecycle"
@@ -92,6 +101,9 @@ type serverConfig struct {
 	duckdbMemoryLimit string
 	queryHotOnly      bool
 	runJobs           bool
+	mode              string
+	clientTenants     string
+	clusterClients    string
 }
 
 func loadConfig() serverConfig {
@@ -119,6 +131,9 @@ func loadConfig() serverConfig {
 		duckdbMemoryLimit: os.Getenv("DUCKDB_MEMORY_LIMIT"),
 		queryHotOnly:      envBool("QUERY_HOT_ONLY", false),
 		runJobs:           envBool("RUN_JOBS", true),
+		mode:              envOr("MODE", "standalone"),
+		clientTenants:     os.Getenv("CLIENT_TENANTS"),
+		clusterClients:    os.Getenv("CLUSTER_CLIENTS"),
 	}
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
@@ -236,7 +251,7 @@ func handleReadyz(dataDir string) http.HandlerFunc {
 	}
 }
 
-func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane) *http.ServeMux {
+func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane, ownedTenants map[string]struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(cfg.dataDir))
@@ -271,7 +286,11 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 	if serveAdmin {
 		mux.Handle(admin.EnsureRoutePattern(), admin.WithBearerAuth(adminCfg.AdminToken, admin.EnsureHandler(adminCfg, eng, logger)))
 		mux.Handle(admin.StatsRoutePattern(), admin.WithBearerAuth(adminCfg.AdminToken, admin.StatsHandler(adminCfg, eng)))
-		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), admin.WithBearerAuth(adminCfg.AdminToken, query.Handler(queryCfg, eng, logger)))
+		queryHandler := query.Handler(queryCfg, eng, logger)
+		if ownedTenants != nil {
+			queryHandler = cluster.OwnedTenantGuard(ownedTenants, queryHandler)
+		}
+		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), admin.WithBearerAuth(adminCfg.AdminToken, queryHandler))
 	}
 	return mux
 }
@@ -323,7 +342,73 @@ func defaultBackgroundLoopStart(ctx context.Context, runner *lifecycle.Runner, c
 
 var startBackgroundLoop backgroundLoopStartFunc = defaultBackgroundLoopStart
 
-func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
+func runStore(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
+	mode, err := cluster.ParseMode(cfg.mode)
+	if err != nil {
+		return fmt.Errorf("mode: %w", err)
+	}
+	switch mode {
+	case cluster.ModeStandalone:
+		return runServe(ctx, cfg, logger, nil)
+	case cluster.ModeClient:
+		owned, parseErr := cluster.ParseOwnedTenants(cfg.clientTenants)
+		if parseErr != nil {
+			return parseErr
+		}
+		logger.Info("prism-store client mode", "owned_tenant_count", len(owned))
+		return runServe(ctx, cfg, logger, owned)
+	case cluster.ModeCluster:
+		clients, parseErr := cluster.ParseClients(cfg.clusterClients)
+		if parseErr != nil {
+			return parseErr
+		}
+		return runCluster(ctx, cfg, clients, logger)
+	default:
+		return fmt.Errorf("mode: %w", cluster.ErrInvalidMode)
+	}
+}
+
+func runCluster(ctx context.Context, cfg *serverConfig, clients map[string]*url.URL, logger *slog.Logger) error {
+	mux := cluster.NewServeMux(clients, cfg.routePrefix)
+	srv := &http.Server{
+		Addr:              cfg.listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("prism-store listening",
+			"mode", "cluster",
+			"addr", cfg.listenAddr,
+			"client_count", len(clients),
+		)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("listen: %w", err)
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		if err != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+			defer shutdownCancel()
+			_ = srv.Shutdown(shutdownCtx)
+			return err
+		}
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	logger.Info("prism-store stopped")
+	return nil
+}
+
+func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, ownedTenants map[string]struct{}) error {
 	mode, err := storeingest.ParseAuthMode(cfg.authMode)
 	if err != nil {
 		return fmt.Errorf("auth mode: %w", err)
@@ -372,7 +457,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
-		Handler:           newServeMux(cfg, eng, logger, publicPlane(cfg)),
+		Handler:           newServeMux(cfg, eng, logger, publicPlane(cfg), ownedTenants),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
@@ -380,7 +465,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 	if cfg.adminListenAddr != "" {
 		adminSrv = &http.Server{
 			Addr:              cfg.adminListenAddr,
-			Handler:           newServeMux(cfg, eng, logger, planeAdmin),
+			Handler:           newServeMux(cfg, eng, logger, planeAdmin, ownedTenants),
 			ReadHeaderTimeout: readHeaderTimeout,
 		}
 	}
@@ -388,6 +473,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("prism-store listening",
+			"mode", cfg.mode,
 			"addr", cfg.listenAddr,
 			"data_dir", cfg.dataDir,
 			"auth_mode", cfg.authMode,
@@ -485,7 +571,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := loadConfig()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	err := runServe(ctx, &cfg, logger)
+	err := runStore(ctx, &cfg, logger)
 	stop()
 	if err != nil {
 		logger.Error("prism-store failed", "err", err)

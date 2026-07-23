@@ -614,3 +614,20 @@ carry forward under the new binary and image name
   introduces an isolated CGO boundary in its own binary and image.
 - Sub-issues #23–#29 flesh out ingest, engine, lifecycle, query, provisioning,
   Helm, and release wiring on the skeleton paths established here.
+
+### Deployment modes and query federation (2026-07)
+
+**Decision:** optional bootstrap `MODE` with three roles — `standalone` (default,
+unchanged), `client` (engine-backed leaf with an owned-tenant isolation guard),
+and `cluster` (stateless HTTP coordinator that forwards queries to the single
+owning client per tenant via static `CLUSTER_CLIENTS` config).
+
+**Rationale:** route-to-single-owner gives hard per-tenant data isolation (the
+seam future RBAC builds on) while keeping the coordinator free of DuckDB/CGO.
+Reference: ClickHouse Distributed-table routing pattern (QueryPlane cluster
+replication notes); stdlib `httputil.ReverseProxy` with `Rewrite`/`SetURL` for
+forwarding (Decision Protocol in `store-mode-cluster` spec).
+
+**Consequences:** `internal/store/cluster` is a leaf package with no engine
+import; cluster-mode `prism-store` opens no `DATA_DIR` catalog. Ingest and
+admin remain on client/standalone nodes only until a later federation slice.

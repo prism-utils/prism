@@ -17,6 +17,35 @@ lands sub-issue by sub-issue; this page describes the target shape.
 agents, lands them into per-tenant DuckDB hot catalogs, maintains tiered Parquet
 segments, materializes rollups, and exposes read-only query endpoints.
 
+### Deployment modes (`MODE`)
+
+Bootstrap **`MODE`** selects one of three roles (default **`standalone`**):
+
+| Mode | Role | Data | Query routing |
+|---|---|---|---|
+| `standalone` | Self-contained node | Engine + ingest + jobs on `DATA_DIR` | Local engine |
+| `client` | Data-holding leaf fronted by a coordinator | Same as standalone | Local engine, but only for tenants listed in `CLIENT_TENANTS`; other tenants → `404` before the engine runs |
+| `cluster` | Stateless coordinator/router | **None** — no engine, ingest, or background jobs | Forwards `GET <prefix>/{ns}/query` to the owning client URL from `CLUSTER_CLIENTS` |
+
+**Isolation guarantee:** identifier == tenant/namespace (`ns`). The coordinator routes
+each query to **exactly one** owning client; unknown/unmapped tenants get `404`
+with **no** upstream contact. Client mode adds a second layer: the owned-tenant
+guard rejects non-owned `ns` before the engine is touched.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MODE` | `standalone` | `standalone` \| `client` \| `cluster` |
+| `CLIENT_TENANTS` | _(empty)_ | Comma-separated owned tenants; **required** in `client` mode |
+| `CLUSTER_CLIENTS` | _(empty)_ | Static map `tenant=http://host:port,...`; **required** in `cluster` mode |
+
+Cluster mode serves `/healthz`, `/readyz`, and query routing only on
+`LISTEN_ADDR`. It forwards the inbound `Authorization` header and preserves
+the full path + query string via `httputil.ReverseProxy`.
+
+**Future / out of scope:** RBAC; routing ingest, admin, `/stats`, or `/ensure`
+through the coordinator; scatter-gather across clients; dynamic service
+discovery; per-client mTLS; health-aware routing and failover.
+
 ---
 
 ## Ingest (`internal/store/ingest`)
@@ -87,6 +116,9 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 | `RUN_JOBS` | `true` | When `false`, disables all background maintenance (hot snapshot, flush, merge, rollups, retention). Ingest and query still run; hot data will not flush or compact and retention will not delete. |
 | `ADMIN_LISTEN_ADDR` | _(empty)_ | When set, binds admin/stats/query on a second HTTP server (see below) |
 | `ADMIN_TOKEN` | _(empty)_ | Static bearer token for admin-plane routes when set |
+| `MODE` | `standalone` | Deployment role: `standalone`, `client`, or `cluster` (see Role § above) |
+| `CLIENT_TENANTS` | _(empty)_ | Owned tenants for `client` mode (comma-separated) |
+| `CLUSTER_CLIENTS` | _(empty)_ | Tenant→client base URL map for `cluster` mode (`tenant=http://host:port,...`) |
 
 See [`CONFIG.md`](CONFIG.md) §14 for the full `prism-store` env reference.
 
