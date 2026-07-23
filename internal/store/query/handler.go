@@ -70,7 +70,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 
 		var payload []byte
 		ctx := r.Context()
-		//nolint:contextcheck // engine.WithRead exposes *sql.DB only; request ctx is used inside the callback.
+		//nolint:contextcheck // read callback receives *sql.DB only; request ctx is captured above.
 		if err := eng.WithRead(ns, func(db *sql.DB) error {
 			req := &Request{
 				Tenant: ns,

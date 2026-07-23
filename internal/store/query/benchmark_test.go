@@ -3,7 +3,6 @@ package query
 import (
 	"database/sql"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -86,7 +85,10 @@ func BenchmarkQueryAggregateCompactedTenant(b *testing.B) {
 			if buildErr != nil {
 				return buildErr
 			}
-			aggSQL := strings.Replace(runSQL, "SELECT * FROM ", "SELECT COUNT(*), SUM(value) FROM ", 1)
+			aggSQL, err := AggregateSQL(runSQL)
+			if err != nil {
+				return err
+			}
 			row := db.QueryRowContext(b.Context(), aggSQL, runArgs...)
 			var cnt int64
 			var sum sql.NullFloat64

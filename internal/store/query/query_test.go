@@ -112,6 +112,46 @@ func TestBuildSQLIncludesRollupForWideRange(t *testing.T) {
 	}
 }
 
+func TestAggregateSQLRunsOverUnionWithRollup(t *testing.T) {
+	dataDir := t.TempDir()
+	rollupDir := layout.RollupDir(dataDir, testTenant, "1m")
+	if err := os.MkdirAll(rollupDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	testparquet.WriteRollupBucket(t, filepath.Join(rollupDir, "r.parquet"),
+		time.Unix(1700000000, 0).UTC(), "up", 1)
+
+	b := Builder{DataDir: dataDir}
+	start := time.Unix(1700000000, 0).UTC()
+	sqlText, args, err := b.BuildSQL(&Request{
+		Tenant: testTenant,
+		Start:  start,
+		End:    start.Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	aggSQL, err := AggregateSQL(sqlText)
+	if err != nil {
+		t.Fatalf("aggregate sql: %v", err)
+	}
+	if strings.Contains(aggSQL, "ORDER BY") {
+		t.Fatalf("aggregate must not retain ORDER BY: %s", aggSQL)
+	}
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return start })
+	t.Cleanup(func() { _ = eng.Close() })
+
+	if err := eng.WithRead(testTenant, func(db *sql.DB) error {
+		var cnt int64
+		var sum sql.NullFloat64
+		return db.QueryRowContext(context.Background(), aggSQL, args...).Scan(&cnt, &sum)
+	}); err != nil {
+		t.Fatalf("aggregate execute: %v", err)
+	}
+}
+
 func TestQueryRangeSpansHotAndTiers(t *testing.T) {
 	dataDir := t.TempDir()
 	start := time.Unix(1700000000, 0).UTC()

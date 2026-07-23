@@ -100,6 +100,18 @@ func (b *Builder) buildSQL(ctx context.Context, req *Request, db *sql.DB) (strin
 	return sqlText, args, nil
 }
 
+// AggregateSQL rewrites a unified row query as COUNT/SUM over the union subquery.
+// The input must be the shape produced by BuildSQL: SELECT * FROM (…) ORDER BY ts.
+func AggregateSQL(sqlText string) (string, error) {
+	const open = "SELECT * FROM ("
+	const close = ") ORDER BY ts"
+	if !strings.HasPrefix(sqlText, open) || !strings.HasSuffix(sqlText, close) {
+		return "", fmt.Errorf("query: unexpected unified sql shape")
+	}
+	inner := sqlText[len(open) : len(sqlText)-len(close)]
+	return "SELECT COUNT(*), COALESCE(SUM(value), 0) FROM (" + inner + ") AS agg", nil
+}
+
 func hotTableExists(ctx context.Context, db *sql.DB, table string) bool {
 	//nolint:gosec // G201: table name is a package const, not user input.
 	_, err := db.ExecContext(ctx, fmt.Sprintf("SELECT 1 FROM %s LIMIT 0", table))
@@ -152,8 +164,9 @@ func pickRollupStep(step string, start, end time.Time) string {
 	return ""
 }
 
-// ToJSON encodes rows for the HTTP response.
-// env E2E_EXPOSE_QUERY_SQL=1), the generated SQL is included for regression guards.
+// ToJSON encodes query rows as JSON for the HTTP response body.
+// The payload always includes a "rows" array. When exposeSQL is true, a "sql"
+// field is added with the generated unified query text (for e2e regression guards).
 func ToJSON(rows []Row, exposeSQL bool, sqlText string) ([]byte, error) {
 	out := map[string]any{"rows": rows}
 	if exposeSQL {
