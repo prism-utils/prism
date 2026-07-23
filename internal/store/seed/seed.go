@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	duckdb "github.com/marcboeker/go-duckdb"
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 //go:embed metrics-raw-seed.parquet

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/elk-utilities/prism/internal/store/layout"
-	duckdb "github.com/marcboeker/go-duckdb"
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 // Step is a downsampling interval (e.g. 1m, 5m, 1h).

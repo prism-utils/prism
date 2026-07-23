@@ -375,8 +375,8 @@ func (d *cgoDriver) CountLogsLike(ctx context.Context, logsGlob string, start, e
 		//nolint:gosec // G201: bounds and substring are harness-owned constants, not user input.
 		q := fmt.Sprintf(`
 			SELECT count(*) FROM read_parquet('%s')
-			WHERE CAST(ts AS TIMESTAMP) >= TIMESTAMP '%s'
-			  AND CAST(ts AS TIMESTAMP) < TIMESTAMP '%s'
+			WHERE ts >= TIMESTAMPTZ '%s'
+			  AND ts < TIMESTAMPTZ '%s'
 			  AND message LIKE '%%%s%%'
 		`, layout.ToSlash(logsGlob), duckTS(start), duckTS(end), gen.DeadlineSubstring)
 		return db.QueryRowContext(ctx, q).Scan(&count)
@@ -501,7 +501,7 @@ func sqlCellInt64(v any) (int64, error) {
 }
 
 func duckTS(t time.Time) string {
-	return t.UTC().Format("2006-01-02 15:04:05.999999")
+	return t.UTC().Format("2006-01-02T15:04:05.999999Z")
 }
 
 func waitHTTP(ctx context.Context, url string, timeout time.Duration) error {

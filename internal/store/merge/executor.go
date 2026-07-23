@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/elk-utilities/prism/internal/store/layout"
-	duckdb "github.com/marcboeker/go-duckdb"
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 // ExecutorConfig holds merge execution parameters.

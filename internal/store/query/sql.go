@@ -19,7 +19,7 @@ import (
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/layout"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
-	duckdb "github.com/marcboeker/go-duckdb"
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 const (
@@ -38,6 +38,7 @@ var (
 	errMultiStatement   = errors.New("query: multi-statement sql")
 	errSandboxExec      = errors.New("query: sandbox exec")
 	errNoParquetSources = errors.New("query: no parquet sources")
+	errUnknownTenant    = errors.New("query: unknown tenant")
 )
 
 // SQLConfig holds arbitrary SQL API settings.
@@ -118,25 +119,16 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		}
 
 		tenantRoot := filepath.Join(cfg.DataDir, ns)
-		if _, err := os.Stat(tenantRoot); err != nil { //nolint:gosec // G703: ns validated before join
-			if os.IsNotExist(err) {
+		absRoot, err := resolveSandboxTenantRoot(cfg.DataDir, tenantRoot)
+		if err != nil {
+			if errors.Is(err, errUnknownTenant) {
 				http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 				return
 			}
-			logger.Error("sql stat tenant root", "ns", ns, "err", err)
+			logger.Error("sql tenant root", "ns", ns, "err", err)
 			http.Error(w, "query failed", http.StatusInternalServerError)
 			return
 		}
-		absRoot, err := filepath.Abs(tenantRoot)
-		if err != nil {
-			logger.Error("sql abs tenant root", "ns", ns, "err", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
-			return
-		}
-		if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
-			absRoot = resolved
-		}
-		absRoot = filepath.Clean(absRoot)
 
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Timeout)
 		defer cancel()
@@ -209,8 +201,8 @@ func runSandboxQuery(ctx context.Context, tenantRoot, userSQL string, rowCap int
 	if err != nil {
 		return nil, wrapSandboxErr(err)
 	}
-	if _, err := conn.ExecContext(ctx, "CREATE TABLE "+sandboxMetricsView+" AS "+viewSQL); err != nil {
-		return nil, wrapSandboxErr(fmt.Errorf("materialize metrics: %w", err))
+	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
+		return nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
 	}
 	if err := lockSandbox(ctx, conn); err != nil {
 		return nil, err
@@ -307,9 +299,8 @@ func applySandboxBootstrap(ctx context.Context, conn *sql.Conn, tenantRoot strin
 			return fmt.Errorf("query: sandbox bootstrap: %w", err)
 		}
 	}
-	// allowed_directories exists in DuckDB ≥1.2; best-effort before external access is disabled.
 	dirSet := fmt.Sprintf("SET allowed_directories=[%s]", quoteSQLPath(tenantRoot))
-	if _, err := conn.ExecContext(ctx, dirSet); err != nil && !isUnknownConfig(err) {
+	if _, err := conn.ExecContext(ctx, dirSet); err != nil {
 		return fmt.Errorf("query: sandbox allowed_directories: %w", err)
 	}
 	return nil
@@ -330,14 +321,6 @@ func lockSandbox(ctx context.Context, conn *sql.Conn) error {
 		}
 	}
 	return nil
-}
-
-func isUnknownConfig(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unrecognized configuration parameter")
 }
 
 func sandboxMetricsUnionSQL(tenantRoot string) (string, error) {
@@ -409,7 +392,48 @@ func validateReadOnlySQL(raw string) error {
 
 var forbiddenSQLKeywords = []string{
 	"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "ATTACH",
-	"COPY", "INSTALL", "LOAD", "PRAGMA", "EXPORT", "CALL", "SET",
+	"COPY", "INSTALL", "LOAD", "PRAGMA", "EXPORT", "CALL", "SET", "RESET",
+}
+
+func resolveSandboxTenantRoot(dataDir, tenantRoot string) (string, error) {
+	fi, err := os.Lstat(tenantRoot) //nolint:gosec // G703: tenantRoot joins validated ns under dataDir
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", errUnknownTenant
+		}
+		return "", fmt.Errorf("query: lstat tenant root: %w", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		return "", errUnknownTenant
+	}
+	absDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return "", fmt.Errorf("query: abs data dir: %w", err)
+	}
+	absDataDir, err = evalCleanSymlinks(absDataDir)
+	if err != nil {
+		return "", fmt.Errorf("query: resolve data dir: %w", err)
+	}
+	absRoot, err := filepath.Abs(tenantRoot)
+	if err != nil {
+		return "", fmt.Errorf("query: abs tenant root: %w", err)
+	}
+	absRoot, err = evalCleanSymlinks(absRoot)
+	if err != nil {
+		return "", errUnknownTenant
+	}
+	if !pathUnderTenantRoot(absDataDir, absRoot) {
+		return "", errUnknownTenant
+	}
+	return absRoot, nil
+}
+
+func evalCleanSymlinks(p string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func containsForbiddenKeyword(s string) bool {
@@ -581,7 +605,7 @@ func collectSafeParquetPaths(absTenantRoot, tenantRoot string) ([]string, error)
 }
 
 func safeTenantParquetFile(absTenantRoot, path string) (bool, error) {
-	fi, err := os.Lstat(path)
+	fi, err := os.Lstat(path) //nolint:gosec // G703: path is collected from tenant-scoped globs under absTenantRoot
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil

@@ -444,19 +444,27 @@ query / Grafana view SQL. Visibility: committed hot (as of snapshot) + all tiers
 ### Sandbox guarantees
 
 Per request, on a dedicated `:memory:` DuckDB connection (settings applied in
-order; **`lock_configuration=true` last**):
+order; **`lock_configuration=true` last**). Bundled DuckDB is **≥1.2** via
+`go-duckdb/v2`.
 
-1. `SET memory_limit` — from `DUCKDB_MEMORY_LIMIT` when set
+1. `SET threads` / `SET memory_limit` — from config when set
 2. `SET max_temp_directory_size='0B'`
-3. `LOAD parquet` (when needed)
-4. `SET allowed_directories=['<abs tenantRoot>']` — best-effort (DuckDB ≥1.2)
-5. Materialize `metrics` from tenant parquet under `tenantRoot`
+3. `LOAD parquet`
+4. `SET allowed_directories=['<abs tenantRoot>']` — required read boundary
+5. `CREATE VIEW metrics AS …` — lazy union over hot snapshot + tier parquet
+   (zero-copy; no materialization)
 6. `SET enable_external_access=false` + extension hardening knobs
 7. `SET lock_configuration=true`
 
 User SQL cannot re-enable external access or reach paths outside the tenant.
 Cross-tenant `read_parquet`, `ATTACH`, `COPY`, host reads, and writes fail.
-Defense-in-depth: only `SELECT`/`WITH` accepted upfront.
+Defense-in-depth: only `SELECT`/`WITH` accepted upfront; `SET`/`RESET`/`PRAGMA`
+rejected before execution. Tenant directories that are symlinks or resolve outside
+`DATA_DIR` are treated as unknown tenants (`404`).
+
+**Residual (within-tenant only):** catalog introspection (`duckdb_views()`,
+`information_schema`, etc.) may expose absolute parquet paths under the tenant
+root; this does not cross tenant boundaries.
 
 References: [DuckDB — Securing DuckDB](https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview);
 OWASP API1 BOLA.
