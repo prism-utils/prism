@@ -1,6 +1,6 @@
 # Spec: prism-store — project-agnostic Helm chart + capacity model
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-helm`
 - **Owner phase:** orchestrator → developer
@@ -53,16 +53,16 @@ Traefik/ESO/Grafana hard dependency — consumers layer those in their own repo.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `helm lint deploy/charts/prism-store` passes.
-- [ ] `helm template` with default values renders a runnable StatefulSet+Service+PVC(+probes+securityContext) with no consumer-specific (Traefik/ESO/Grafana) resources.
-- [ ] All store env from `cmd/prism-store` are wired as values with code-matching defaults; tokens via `secretKeyRef` (not inline).
-- [ ] SecurityContext: uid/gid/fsGroup 472, `readOnlyRootFilesystem: true`, `/tmp` emptyDir, `/data` writable PVC; probes on `/healthz`(15s)/`/readyz`(10s).
-- [ ] Default resources = ≤1k/s row (req 250m/512Mi, limit 2/2Gi); capacity table + formula in `values.yaml` comments and `docs/STORE.md` Sizing section.
-- [ ] Optional `networkPolicy` (default off) renders correctly when enabled; admin port restricted separately from ingest.
-- [ ] `examples/` overlay renders (gateway/secret/Grafana datasource) and is excluded from the base install.
-- [ ] `helm template` snapshot/golden test in `ci.yml`; a `chart` CI job runs `helm lint` + template + snapshot.
-- [ ] `Chart.yaml` valid semver; OCI publish step added to `release.yml` (tag-gated), mirroring the image publish.
-- [ ] `make lint test` still green; no Go behavior changed; `go build ./cmd/prism-store` passes.
+- [x] `helm lint deploy/charts/prism-store` passes.
+- [x] `helm template` with default values renders a runnable StatefulSet+Service+PVC(+probes+securityContext) with no consumer-specific (Traefik/ESO/Grafana) resources.
+- [x] All store env from `cmd/prism-store` are wired as values with code-matching defaults; tokens via `secretKeyRef` (not inline).
+- [x] SecurityContext: uid/gid/fsGroup 472, `readOnlyRootFilesystem: true`, `/tmp` emptyDir, `/data` writable PVC; probes on `/healthz`(15s)/`/readyz`(10s).
+- [x] Default resources = ≤1k/s row (req 250m/512Mi, limit 2/2Gi); capacity table + formula in `values.yaml` comments and `docs/STORE.md` Sizing section.
+- [x] Optional `networkPolicy` (default off) renders correctly when enabled; admin port restricted separately from ingest.
+- [x] `examples/` overlay renders (gateway/secret/Grafana datasource) and is excluded from the base install.
+- [x] `helm template` snapshot/golden test in `ci.yml`; a `chart` CI job runs `helm lint` + template + snapshot.
+- [x] `Chart.yaml` valid semver; OCI publish step added to `release.yml` (tag-gated), mirroring the image publish.
+- [x] `make lint test` still green; no Go behavior changed; `go build ./cmd/prism-store` passes.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
