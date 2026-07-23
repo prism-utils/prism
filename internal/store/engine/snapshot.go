@@ -49,6 +49,8 @@ func (e *Engine) exportHotSnapshot(tenant string) error {
 	}
 	final := filepath.Join(hotDir, hotSnapshotName)
 	selectSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY ts", hotCurrentTable)
+	te.mu.RLock()
+	defer te.mu.RUnlock()
 	if err := atomicCopyTo(te.db, selectSQL, final, e.cfg.RowGroupSize); err != nil {
 		return fmt.Errorf("engine: hot snapshot copy: %w", err)
 	}
