@@ -61,49 +61,53 @@ const (
 )
 
 type serverConfig struct {
-	listenAddr       string
-	adminListenAddr  string
-	flightAddr       string
-	dataDir          string
-	allowedArtifacts []string
-	maxBodyBytes     int64
-	ingestToken      string
-	adminToken       string
-	authMode         string
-	routePrefix      string
-	hotWindow        time.Duration
-	segmentsPerTier  int
-	maxSegmentBytes  int64
-	retentionDays    int
-	rollupSteps      string
-	maxTier          int
-	snapshotTick     time.Duration
-	flushTick        time.Duration
-	mergeTick        time.Duration
-	retentionTick    time.Duration
+	listenAddr        string
+	adminListenAddr   string
+	flightAddr        string
+	dataDir           string
+	allowedArtifacts  []string
+	maxBodyBytes      int64
+	ingestToken       string
+	adminToken        string
+	authMode          string
+	routePrefix       string
+	hotWindow         time.Duration
+	segmentsPerTier   int
+	maxSegmentBytes   int64
+	retentionDays     int
+	rollupSteps       string
+	maxTier           int
+	snapshotTick      time.Duration
+	flushTick         time.Duration
+	mergeTick         time.Duration
+	retentionTick     time.Duration
+	duckdbThreads     int
+	duckdbMemoryLimit string
 }
 
 func loadConfig() serverConfig {
 	c := serverConfig{
-		listenAddr:      envOr("LISTEN_ADDR", defaultListenAddr),
-		adminListenAddr: os.Getenv("ADMIN_LISTEN_ADDR"),
-		adminToken:      os.Getenv("ADMIN_TOKEN"),
-		flightAddr:      os.Getenv("FLIGHT_ADDR"),
-		dataDir:         envOr("DATA_DIR", defaultDataDir),
-		maxBodyBytes:    defaultMaxBodyBytes,
-		ingestToken:     os.Getenv("INGEST_TOKEN"),
-		authMode:        envOr("AUTH_MODE", defaultAuthMode),
-		routePrefix:     os.Getenv("ROUTE_PREFIX"),
-		hotWindow:       loadHotWindow(),
-		segmentsPerTier: envInt("SEGMENTS_PER_TIER", defaultSegmentsPerTier),
-		maxSegmentBytes: envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
-		retentionDays:   envInt("RETENTION_DAYS", defaultRetentionDays),
-		rollupSteps:     envOr("ROLLUP_STEPS", defaultRollupSteps),
-		maxTier:         envInt("MAX_TIER", defaultMaxTier),
-		snapshotTick:    time.Duration(envInt("HOT_SNAPSHOT_SECONDS", defaultHotSnapshotSec)) * time.Second,
-		flushTick:       time.Duration(envInt("FLUSH_TICK_SECONDS", defaultFlushTickSec)) * time.Second,
-		mergeTick:       time.Duration(envInt("MERGE_TICK_SECONDS", defaultMergeTickSec)) * time.Second,
-		retentionTick:   loadRetentionTick(),
+		listenAddr:        envOr("LISTEN_ADDR", defaultListenAddr),
+		adminListenAddr:   os.Getenv("ADMIN_LISTEN_ADDR"),
+		adminToken:        os.Getenv("ADMIN_TOKEN"),
+		flightAddr:        os.Getenv("FLIGHT_ADDR"),
+		dataDir:           envOr("DATA_DIR", defaultDataDir),
+		maxBodyBytes:      defaultMaxBodyBytes,
+		ingestToken:       os.Getenv("INGEST_TOKEN"),
+		authMode:          envOr("AUTH_MODE", defaultAuthMode),
+		routePrefix:       os.Getenv("ROUTE_PREFIX"),
+		hotWindow:         loadHotWindow(),
+		segmentsPerTier:   envInt("SEGMENTS_PER_TIER", defaultSegmentsPerTier),
+		maxSegmentBytes:   envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
+		retentionDays:     envInt("RETENTION_DAYS", defaultRetentionDays),
+		rollupSteps:       envOr("ROLLUP_STEPS", defaultRollupSteps),
+		maxTier:           envInt("MAX_TIER", defaultMaxTier),
+		snapshotTick:      time.Duration(envInt("HOT_SNAPSHOT_SECONDS", defaultHotSnapshotSec)) * time.Second,
+		flushTick:         time.Duration(envInt("FLUSH_TICK_SECONDS", defaultFlushTickSec)) * time.Second,
+		mergeTick:         time.Duration(envInt("MERGE_TICK_SECONDS", defaultMergeTickSec)) * time.Second,
+		retentionTick:     loadRetentionTick(),
+		duckdbThreads:     envIntZero("DUCKDB_THREADS"),
+		duckdbMemoryLimit: os.Getenv("DUCKDB_MEMORY_LIMIT"),
 	}
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
@@ -141,6 +145,15 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envIntZero(key string) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func envInt(key string, def int) int {
@@ -289,8 +302,10 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 
 	now := time.Now
 	eng := engine.New(engine.Config{
-		DataDir:   cfg.dataDir,
-		HotWindow: cfg.hotWindow,
+		DataDir:     cfg.dataDir,
+		HotWindow:   cfg.hotWindow,
+		Threads:     cfg.duckdbThreads,
+		MemoryLimit: cfg.duckdbMemoryLimit,
 	}, now)
 	defer func() { _ = eng.Close() }()
 

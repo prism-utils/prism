@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/elk-utilities/prism/bench/internal/caps"
 	"github.com/elk-utilities/prism/bench/internal/gen"
 )
 
@@ -15,6 +16,7 @@ type Config struct {
 	Tenant     string
 	ListenAddr string
 	StoreBin   string
+	Budget     caps.Budget
 }
 
 // Driver runs ingest and query workloads against prism-store.
@@ -33,6 +35,6 @@ type Driver interface {
 }
 
 // New returns a platform driver (CGO build uses DuckDB-backed implementation).
-func New(cfg Config) (Driver, error) {
+func New(cfg Config) (Driver, error) { //nolint:gocritic // Config matches existing driver constructor style.
 	return newDriver(cfg)
 }

@@ -32,6 +32,8 @@ type DockerSampler struct {
 	started time.Time
 	stopped time.Time
 	samples []dockerSample
+	prev    dockerCumulative
+	prevAt  time.Time
 }
 
 // NewDockerSampler returns a sampler for containerID using the Docker socket.
@@ -41,7 +43,7 @@ func NewDockerSampler(containerID string) (*DockerSampler, error) {
 		return nil, err
 	}
 	id := strings.TrimSpace(containerID)
-	statsURL := base + "/containers/" + id + "/stats?stream=false"
+	statsURL := base + "/containers/" + id + "/stats?stream=false&one-shot=true"
 	return &DockerSampler{
 		containerID: id,
 		interval:    defaultDockerInterval,
@@ -128,7 +130,7 @@ func (d *DockerSampler) loop(ctx context.Context) {
 	}
 }
 
-func (d *DockerSampler) fetchSample(ctx context.Context) (dockerSample, error) {
+func (d *DockerSampler) fetchDiffSample(ctx context.Context) (dockerSample, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.statsURL, nil)
 	if err != nil {
 		return dockerSample{}, err
@@ -145,19 +147,25 @@ func (d *DockerSampler) fetchSample(ctx context.Context) (dockerSample, error) {
 	if resp.StatusCode != http.StatusOK {
 		return dockerSample{}, fmt.Errorf("monitor: docker stats status %d", resp.StatusCode)
 	}
-	cpu, rss, rb, wb, ro, wo, blkio, err := parseDockerStatsSample(body)
+	cur, err := parseDockerStatsCumulative(body)
 	if err != nil {
 		return dockerSample{}, err
 	}
-	return dockerSample{
-		cpuCores: cpu,
-		rssBytes: rss,
-		readB:    rb,
-		writeB:   wb,
-		readOps:  ro,
-		writeOps: wo,
-		blkioOK:  blkio,
-	}, nil
+	now := time.Now()
+	d.mu.Lock()
+	wall := now.Sub(d.prevAt)
+	if d.prevAt.IsZero() {
+		wall = 0
+	}
+	sample := diffDockerSample(d.prev, cur, wall, now)
+	d.prev = cur
+	d.prevAt = now
+	d.mu.Unlock()
+	return sample, nil
+}
+
+func (d *DockerSampler) fetchSample(ctx context.Context) (dockerSample, error) {
+	return d.fetchDiffSample(ctx)
 }
 
 type dockerCLIFallback struct {

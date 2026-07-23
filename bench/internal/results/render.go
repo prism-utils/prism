@@ -24,6 +24,12 @@ type Environment struct {
 	LogsRows          int64     `json:"logs_rows"`
 	Scale             int       `json:"scale"`
 	MeasuredAt        time.Time `json:"measured_at"`
+	ResourceCPUs      float64   `json:"resource_cpus_per_system"`
+	ResourceMemMiB    int       `json:"resource_mem_mib_per_system"`
+	DuckDBThreads     int       `json:"duckdb_threads"`
+	DuckDBMemoryLimit string    `json:"duckdb_memory_limit"`
+	IdleWindowSec     float64   `json:"idle_window_sec"`
+	ChartPaths        []string  `json:"chart_paths,omitempty"`
 }
 
 // Workload is one timed benchmark result for a system.
@@ -69,8 +75,17 @@ func WriteMarkdown(path, body string) error {
 	return nil
 }
 
-// RenderMarkdown formats rep as a human-readable results document.
+// RenderMarkdown formats rep as human-readable markdown for bench/RESULTS.md.
 func RenderMarkdown(rep *Report) string {
+	return renderMarkdown(rep, true)
+}
+
+// RenderMarkdownRoot formats rep for embedding in the repository root README.md.
+func RenderMarkdownRoot(rep *Report) string {
+	return renderMarkdown(rep, false)
+}
+
+func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 	env := rep.Environment
 	var b strings.Builder
 	b.WriteString("# Benchmark: prism-store vs ClickHouse\n\n")
@@ -83,6 +98,13 @@ func RenderMarkdown(rep *Report) string {
 	fmt.Fprintf(&b, "| ClickHouse | %s |\n", env.ClickHouseVersion)
 	fmt.Fprintf(&b, "| DuckDB | %s |\n", env.DuckDBVersion)
 	fmt.Fprintf(&b, "| Dataset | %d metrics + %d logs rows (scale=%d) |\n", env.MetricsRows, env.LogsRows, env.Scale)
+	if env.ResourceCPUs > 0 {
+		fmt.Fprintf(&b, "| Resource cap (per system) | %.0f vCPU / %d MiB RAM |\n", env.ResourceCPUs, env.ResourceMemMiB)
+		fmt.Fprintf(&b, "| DuckDB threads / memory_limit | %d / %s |\n", env.DuckDBThreads, env.DuckDBMemoryLimit)
+	}
+	if env.IdleWindowSec > 0 {
+		fmt.Fprintf(&b, "| Idle baseline window | %.1f s before workloads |\n", env.IdleWindowSec)
+	}
 	fmt.Fprintf(&b, "| Git commit | `%s` |\n", env.GitCommit)
 	if !env.MeasuredAt.IsZero() {
 		fmt.Fprintf(&b, "| Measured | %s |\n", env.MeasuredAt.UTC().Format(time.RFC3339))
@@ -102,10 +124,10 @@ func RenderMarkdown(rep *Report) string {
 		fmt.Fprintf(&b, "| %s | %s | %s |\n", workloadLabel(name), formatWorkload(store), formatWorkload(ch))
 	}
 
-	b.WriteString("\n## Resource usage (sampled during timed window)\n\n")
+	b.WriteString("\n## Resource usage (dense series; per-phase aggregates)\n\n")
 	b.WriteString("| Workload | System | CPU mean / peak (cores) | Peak RSS (MiB) | Read+write (MiB) | MiB/s | IOPS |\n")
 	b.WriteString("|----------|--------|-------------------------|----------------|------------------|-------|------|\n")
-	for _, name := range []string{"ingest", "count", "aggregation", "logs_like"} {
+	for _, name := range []string{"idle", "ingest", "count", "aggregation", "logs_like"} {
 		for _, sys := range []string{"prism-store", "clickhouse"} {
 			w := findWorkload(rep.Workloads, name, sys)
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
@@ -113,7 +135,22 @@ func RenderMarkdown(rep *Report) string {
 				formatUsageCPU(w), formatUsageRSS(w), formatUsageIO(w), formatUsageMiBps(w), formatUsageIOPS(w))
 		}
 	}
-	b.WriteString("\nStore **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** samples the `prism-store` binary. ClickHouse samples the container cgroup.\n")
+	b.WriteString("\nStore **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms).\n")
+
+	if len(env.ChartPaths) > 0 {
+		b.WriteString("\n## Resource charts\n\n")
+		for _, p := range env.ChartPaths {
+			base := p
+			if i := strings.LastIndex(p, "/"); i >= 0 {
+				base = p[i+1:]
+			}
+			embed := p
+			if benchLocalCharts {
+				embed = chartEmbedForBenchResults(p)
+			}
+			fmt.Fprintf(&b, "### %s\n\n![%s](%s)\n\n", strings.TrimSuffix(base, ".svg"), base, embed)
+		}
+	}
 
 	b.WriteString("\n## Interpretation\n\n")
 	b.WriteString(interpret(rep))
@@ -121,6 +158,17 @@ func RenderMarkdown(rep *Report) string {
 	b.WriteString("```bash\nmake bench        # default scale (2M rows total)\nmake bench BENCH_SCALE=2\n```\n")
 	b.WriteString("\nSee [`bench/README.md`](README.md) for prerequisites and cleanup.\n")
 	return b.String()
+}
+
+func chartEmbedForBenchResults(storedPath string) string {
+	const prefix = "bench/charts/"
+	if strings.HasPrefix(storedPath, prefix) {
+		return strings.TrimPrefix(storedPath, "bench/")
+	}
+	if strings.HasPrefix(storedPath, "charts/") {
+		return storedPath
+	}
+	return storedPath
 }
 
 func interpret(rep *Report) string {
@@ -176,6 +224,8 @@ func workloadLabel(name string) string {
 	switch name {
 	case "logs_like":
 		return "logs LIKE"
+	case "idle":
+		return "idle (baseline)"
 	default:
 		return name
 	}

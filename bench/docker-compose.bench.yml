@@ -3,9 +3,14 @@ services:
     image: clickhouse/clickhouse-server:24.8
     environment:
       CLICKHOUSE_SKIP_USER_SETUP: "1"
+    cpus: ${BENCH_CPUS:-2}
+    mem_limit: ${BENCH_MEM_LIMIT:-1g}
     ports:
       - "8123:8123"
       - "9000:9000"
+    volumes:
+      - ${BENCH_CH_CONFIG_DIR:-bench/.work/clickhouse-config}/config.d/bench-caps.xml:/etc/clickhouse-server/config.d/bench-caps.xml:ro
+      - ${BENCH_CH_CONFIG_DIR:-bench/.work/clickhouse-config}/users.d/bench-caps.xml:/etc/clickhouse-server/users.d/bench-caps.xml:ro
     ulimits:
       nofile:
         soft: 262144

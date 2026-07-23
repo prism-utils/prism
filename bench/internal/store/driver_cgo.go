@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,7 @@ type cgoDriver struct {
 	logger *slog.Logger
 }
 
-func newDriver(cfg Config) (Driver, error) {
+func newDriver(cfg Config) (Driver, error) { //nolint:gocritic // Config matches existing driver constructor style.
 	if cfg.DataDir == "" {
 		return nil, fmt.Errorf("store: empty data dir")
 	}
@@ -70,7 +71,7 @@ func (d *cgoDriver) Start(ctx context.Context) error {
 		bin = "prism-store"
 	}
 	d.cmd = exec.CommandContext(ctx, bin, "serve") //nolint:gosec // operator-built binary path
-	d.cmd.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"LISTEN_ADDR="+d.cfg.ListenAddr,
 		"DATA_DIR="+d.cfg.DataDir,
 		"AUTH_MODE=none",
@@ -79,6 +80,15 @@ func (d *cgoDriver) Start(ctx context.Context) error {
 		"FLUSH_TICK_SECONDS=3600",
 		"MERGE_TICK_SECONDS=3600",
 	)
+	if d.cfg.Budget.IsSet() {
+		env = append(env,
+			"GOMAXPROCS="+strconv.Itoa(d.cfg.Budget.Threads()),
+			"GOMEMLIMIT="+d.cfg.Budget.GoMemLimit(),
+			"DUCKDB_THREADS="+strconv.Itoa(d.cfg.Budget.Threads()),
+			"DUCKDB_MEMORY_LIMIT="+d.cfg.Budget.DuckDBMemoryLimit(),
+		)
+	}
+	d.cmd.Env = env
 	d.cmd.Stdout = os.Stderr
 	d.cmd.Stderr = os.Stderr
 	if err := d.cmd.Start(); err != nil {
@@ -122,10 +132,15 @@ func (d *cgoDriver) openEngine() error {
 	if d.eng != nil {
 		return nil
 	}
-	d.eng = engine.New(engine.Config{
+	engCfg := engine.Config{
 		DataDir:   d.cfg.DataDir,
 		HotWindow: time.Hour,
-	}, time.Now)
+	}
+	if d.cfg.Budget.IsSet() {
+		engCfg.Threads = d.cfg.Budget.Threads()
+		engCfg.MemoryLimit = d.cfg.Budget.DuckDBMemoryLimit()
+	}
+	d.eng = engine.New(engCfg, time.Now)
 	d.runner = lifecycle.NewRunner(lifecycle.Config{
 		DataDir:         d.cfg.DataDir,
 		SegmentsPerTier: 6,

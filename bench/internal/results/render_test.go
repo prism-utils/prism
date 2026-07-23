@@ -41,6 +41,29 @@ func TestRenderMarkdown_containsWorkloadTable(t *testing.T) {
 	require.True(t, strings.Contains(doc, "ingest") && strings.Contains(doc, "count"))
 }
 
+func TestRenderMarkdown_benchResultsChartPaths(t *testing.T) {
+	doc := results.RenderMarkdown(&results.Report{
+		Environment: results.Environment{
+			ChartPaths: []string{
+				"bench/charts/cpu-cores.svg",
+				"bench/charts/memory-rss.svg",
+			},
+		},
+	})
+	require.Contains(t, doc, "![cpu-cores.svg](charts/cpu-cores.svg)")
+	require.Contains(t, doc, "![memory-rss.svg](charts/memory-rss.svg)")
+	require.NotContains(t, doc, "](bench/charts/")
+}
+
+func TestRenderMarkdownRoot_keepsBenchChartPaths(t *testing.T) {
+	doc := results.RenderMarkdownRoot(&results.Report{
+		Environment: results.Environment{
+			ChartPaths: []string{"bench/charts/cpu-cores.svg"},
+		},
+	})
+	require.Contains(t, doc, "![cpu-cores.svg](bench/charts/cpu-cores.svg)")
+}
+
 func TestRenderMarkdown_resourceUsageWithAndWithoutIOPS(t *testing.T) {
 	ro, wo := uint64(500), uint64(300)
 	withIOPS := monitor.Usage{
