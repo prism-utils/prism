@@ -3,7 +3,9 @@ package engine
 import (
 	"container/list"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -90,7 +92,9 @@ func (e *Engine) Ingest(tenant string, body io.Reader) (int64, error) {
 		SELECT "__name__", labels, value, timestamp_ms, CAST(? AS TIMESTAMP) AS ts
 		FROM read_parquet('%s')
 	`, hotCurrentTable, escapePath(tmp))
+	te.mu.Lock()
 	res, err := te.db.ExecContext(context.Background(), q, ts)
+	te.mu.Unlock()
 	if err != nil {
 		return 0, fmt.Errorf("engine: insert: %w", err)
 	}
@@ -144,6 +148,8 @@ func (e *Engine) flushTenant(tenant string) error {
 	if err != nil {
 		return err
 	}
+	te.mu.Lock()
+	defer te.mu.Unlock()
 	if _, err := te.db.ExecContext(context.Background(), fmt.Sprintf(`
 		DROP TABLE IF EXISTS %s;
 		ALTER TABLE %s RENAME TO %s;
@@ -174,7 +180,7 @@ func (e *Engine) flushTenant(tenant string) error {
 	if err := os.MkdirAll(l0Dir, 0o750); err != nil {
 		return err
 	}
-	final := filepath.Join(l0Dir, fmt.Sprintf("%d.parquet", e.clock().UnixNano()))
+	final := filepath.Join(l0Dir, segmentName(e.clock()))
 	selectSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY ts", hotPrevTable)
 	if err := atomicCopyTo(te.db, selectSQL, final, e.cfg.RowGroupSize); err != nil {
 		return fmt.Errorf("engine: copy L0: %w", err)
@@ -198,6 +204,8 @@ func (e *Engine) HotRowCount(tenant string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	te.mu.RLock()
+	defer te.mu.RUnlock()
 	var n int64
 	err = te.db.QueryRowContext(context.Background(), fmt.Sprintf("SELECT COUNT(*) FROM %s", hotCurrentTable)).Scan(&n)
 	if tableMissing(errString(err)) {
@@ -212,6 +220,8 @@ func (e *Engine) QueryHotTs(tenant string) ([]time.Time, error) {
 	if err != nil {
 		return nil, err
 	}
+	te.mu.RLock()
+	defer te.mu.RUnlock()
 	rows, err := te.db.QueryContext(context.Background(), fmt.Sprintf("SELECT ts FROM %s ORDER BY ts", hotCurrentTable))
 	if err != nil {
 		if tableMissing(err.Error()) {
@@ -232,12 +242,28 @@ func (e *Engine) QueryHotTs(tenant string) ([]time.Time, error) {
 }
 
 // DB returns the tenant DuckDB handle for read/query integration (caller must not close).
+// The handle is unsynchronized: a read issued directly on it while the background
+// lifecycle is flushing can observe the hot table mid-rename. Reads that run
+// concurrently with writes should instead use the read-locked accessor.
 func (e *Engine) DB(tenant string) (*sql.DB, error) {
 	te, err := e.open(tenant)
 	if err != nil {
 		return nil, err
 	}
 	return te.db, nil
+}
+
+// WithRead runs fn against the tenant database under a shared read lock, so a
+// query is serialized against writes (ingest and the flush rename dance) while
+// still allowing other concurrent readers.
+func (e *Engine) WithRead(tenant string, fn func(*sql.DB) error) error {
+	te, err := e.open(tenant)
+	if err != nil {
+		return err
+	}
+	te.mu.RLock()
+	defer te.mu.RUnlock()
+	return fn(te.db)
 }
 
 // Close evicts all open tenant databases.
@@ -275,6 +301,20 @@ func (e *Engine) open(tenant string) (*tenantEntry, error) {
 type tenantEntry struct {
 	db   *sql.DB
 	path string
+	// mu serializes access to the embedded database: a flush is a multi-statement
+	// catalog sequence (rename the hot table aside, recreate it), so a write must
+	// hold this exclusively while reads take it shared. Overlapping a write with
+	// any other operation lets a statement observe the table mid-rename.
+	mu sync.RWMutex
+}
+
+// segmentName builds a collision-free L0 filename. The ingest instant orders
+// segments by time, and a random suffix keeps two flushes that land within the
+// same clock resolution from overwriting each other's output on rename.
+func segmentName(now time.Time) string {
+	var buf [4]byte
+	_, _ = rand.Read(buf[:])
+	return fmt.Sprintf("%d-%s.parquet", now.UnixNano(), hex.EncodeToString(buf[:]))
 }
 
 func openTenant(dataDir, tenant string) (*tenantEntry, error) {
@@ -288,6 +328,10 @@ func openTenant(dataDir, tenant string) (*tenantEntry, error) {
 		return nil, fmt.Errorf("engine: open duckdb: %w", err)
 	}
 	db := sql.OpenDB(connector)
+	// Pin the tenant store to a single connection: it is a single writer, and
+	// routing statements across pooled connections lets a reader observe a
+	// catalog snapshot from before a committed write on another connection.
+	db.SetMaxOpenConns(1)
 	return &tenantEntry{db: db, path: path}, nil
 }
 
