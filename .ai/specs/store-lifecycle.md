@@ -1,6 +1,6 @@
 # Spec: prism-store — compaction (Lucene tiered merge) + rollups + retention + metering + tickers
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-lifecycle`
 - **Owner phase:** orchestrator → developer
@@ -51,16 +51,16 @@ store self-manages its on-disk tiers end to end (ingest→hot→L0→L1…→ret
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] **Planner:** 6 same-level L0 segments → one `MergeAction` to L1; sealed (`≥ MaxSegmentBytes`) segments never chosen; output cap shrinks the set; **no cascade** (one action/pass); deterministic — ported `planner_test.go` cases green.
-- [ ] **Executor:** merging 6 L0 → 1 L1 file, rows **ordered by ts**, **source files deleted** only after the output lands; `StatSegment`/`ScanTier` correct — ported `executor_test.go` green.
-- [ ] **Rollups:** after an L1+ merge, `rollups/{1m,5m,1h}/…parquet` exist and their `avg/min/max/count/sum` per (bucket,name) **equal the raw aggregates** (`AggregateRaw`) — ported `rollup_test.go` green.
-- [ ] **Retention:** a 16-day-old segment is deleted, a 15-day-old segment is **kept**; expired rollups removed on the same clock — ported `retention_test.go` green.
-- [ ] **Metering:** a merge increments `.metering.json` `compactionCpuSeconds`; `TenantOnDiskBytes` sums tiers/rollups/hot/duckdb and **excludes** legacy `metrics-raw/` + dotfiles — ported `metering_test.go` green.
-- [ ] **Tickers:** four independent tickers wired in `cmd/prism-store serve`, started and cleanly stopped on shutdown; a lifecycle test drives ingest→flush→(6×)→merge→rollup end to end and asserts a gap-free L1 + rollups.
-- [ ] New env parsed with documented defaults; `docs/CONFIG.md` + `docs/STORE.md` updated (incl. the metering wall-clock note).
-- [ ] `internal/store/layout` removes the `escapePath`/`tierDir` duplication in the new packages.
-- [ ] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
-- [ ] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
+- [x] **Planner:** 6 same-level L0 segments → one `MergeAction` to L1; sealed (`≥ MaxSegmentBytes`) segments never chosen; output cap shrinks the set; **no cascade** (one action/pass); deterministic — ported `planner_test.go` cases green.
+- [x] **Executor:** merging 6 L0 → 1 L1 file, rows **ordered by ts**, **source files deleted** only after the output lands; `StatSegment`/`ScanTier` correct — ported `executor_test.go` green.
+- [x] **Rollups:** after an L1+ merge, `rollups/{1m,5m,1h}/…parquet` exist and their `avg/min/max/count/sum` per (bucket,name) **equal the raw aggregates** (`AggregateRaw`) — ported `rollup_test.go` green.
+- [x] **Retention:** a 16-day-old segment is deleted, a 15-day-old segment is **kept**; expired rollups removed on the same clock — ported `retention_test.go` green.
+- [x] **Metering:** a merge increments `.metering.json` `compactionCpuSeconds`; `TenantOnDiskBytes` sums tiers/rollups/hot/duckdb and **excludes** legacy `metrics-raw/` + dotfiles — ported `metering_test.go` green.
+- [x] **Tickers:** four independent tickers wired in `cmd/prism-store serve`, started and cleanly stopped on shutdown; a lifecycle test drives ingest→flush→(6×)→merge→rollup end to end and asserts a gap-free L1 + rollups.
+- [x] New env parsed with documented defaults; `docs/CONFIG.md` + `docs/STORE.md` updated (incl. the metering wall-clock note).
+- [x] `internal/store/layout` removes the `escapePath`/`tierDir` duplication in the new packages.
+- [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
+- [x] `make lint test` green; `CGO_ENABLED=0 go build ./cmd/prism` passes; `go build ./cmd/prism-store` passes.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
