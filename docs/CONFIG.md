@@ -724,6 +724,7 @@ via environment variables (no YAML config file).
 | `SQL_API_ENABLED` | `true` | When `false`, arbitrary SQL route `POST /{ns}/sql` is not registered. |
 | `SQL_API_MAX_ROWS` | `100000` | Maximum rows per SQL response (`truncated` when exceeded). |
 | `SQL_API_TIMEOUT_SECONDS` | `30` | Per-query timeout for `POST /{ns}/sql`. |
+| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum POST `/sql` JSON body size (1 MiB). |
 | `DUCKDB_MEMORY_LIMIT` | _(empty)_ | DuckDB memory cap for engine and SQL sandbox when set. |
 | `ADMIN_LISTEN_ADDR` | _(empty — off)_ | When set, binds `/admin/*`, `/stats`, and query on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
 | `ADMIN_TOKEN` | _(empty — off)_ | Static bearer token for admin-plane routes (`/admin/*`, `/stats`, query on admin bind). Constant-time compare; unset = open (use network isolation). Superseded when `AUTHZ_POLICY_FILE` is set. |

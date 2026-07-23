@@ -221,6 +221,7 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 | `SQL_API_ENABLED` | `true` | When `false`, `POST /{ns}/sql` is not registered. |
 | `SQL_API_MAX_ROWS` | `100000` | Maximum rows returned per SQL request (truncates with `"truncated": true`). |
 | `SQL_API_TIMEOUT_SECONDS` | `30` | Per-query timeout for arbitrary SQL. |
+| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum POST `/sql` JSON body size (1 MiB). |
 | `DUCKDB_MEMORY_LIMIT` | _(empty)_ | DuckDB `memory_limit` for engine and SQL sandbox when set. |
 | `RUN_JOBS` | `true` | When `false`, disables all background maintenance (hot snapshot, flush, merge, rollups, retention). Ingest and query still run; hot data will not flush or compact and retention will not delete. |
 | `ADMIN_LISTEN_ADDR` | _(empty)_ | When set, binds admin/stats/query on a second HTTP server (see below) |
@@ -466,8 +467,10 @@ OWASP API1 BOLA.
 |---|---|---|
 | `SQL_API_MAX_ROWS` | `100000` | Server cap; `min(request.max_rows, cap)` |
 | `SQL_API_TIMEOUT_SECONDS` | `30` | Query timeout (context cancel) |
+| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum JSON request body (1 MiB) |
 | `SQL_API_ENABLED` | `true` | Register route when `true` |
 | `DUCKDB_MEMORY_LIMIT` | _(empty)_ | Sandbox memory cap when set |
+| `DUCKDB_THREADS` | _(empty)_ | Sandbox thread cap when set |
 
 ### Auth
 

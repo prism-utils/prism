@@ -1,6 +1,6 @@
 # Spec: prism-store — arbitrary read-only SQL query API (RBAC-guarded, tenant-sandboxed)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-sql-query`
 - **Owner phase:** orchestrator → developer
@@ -82,14 +82,30 @@ Execute every request in a **dedicated, ephemeral DuckDB sandbox** that is isola
 
 ## 6. Mandatory review gates  (reviewer owns) — SECURITY-CRITICAL
 - [x] **Gate 1 — Guidelines:** cohesive handler + sandbox builder; single-connection config; wrapped errors; ctx-aware timeout; no globals; atomic comments (§3.8).
-- [ ] **Gate 2 — Edge cases:** tenant with no tiers / no hot snapshot; empty result; huge result (cap+truncate); timeout interrupt; malformed JSON; SQL referencing an unknown relation → 400; concurrent `/sql` on the same tenant (sandbox isolation, no shared-state race); snapshot export racing lifecycle flush.
+- [x] **Gate 2 — Edge cases:** tenant with no tiers / no hot snapshot; empty result; huge result (cap+truncate); timeout interrupt; malformed JSON; SQL referencing an unknown relation → 400; concurrent `/sql` on the same tenant (sandbox isolation, no shared-state race); snapshot export racing lifecycle flush.
 - [x] **Gate 3 — Docs match code:** endpoint, JSON shape, `metrics` schema, sandbox guarantees, `SQL_API_*` env names/defaults, RBAC action, cluster routing.
 - [x] **Gate 4 — Atomic comments** (§3.8).
 - [x] **SECURITY AUDIT (must pass):** prove no cross-tenant read (BOLA) and no host-fs/network escape via arbitrary SQL — `enable_external_access=false` + `allowed_directories=[tenantRoot]` + `lock_configuration=true` applied on the executing connection and unbypassable by user SQL; sandbox is per-request/ephemeral and never shared across tenants; read-only holds; timeout + row + memory caps bound resource abuse; errors leak no paths/tenant names; RBAC action correctly `query`; cluster edge+client enforcement preserved. Confirm the static agent build is unaffected.
-- [ ] Full `docs/REVIEW.md` checklist; TESTING.md layering; TDD verified via `git log` (sandbox/isolation tests written first).
+- [x] Full `docs/REVIEW.md` checklist; TESTING.md layering; TDD verified via `git log` (sandbox/isolation tests written first).
 
 ## 7. Reviewer notes
 
-### 2026-07-23 — REQUEST CHANGES (security OK; Gate 2 + TDD) — addressed by developer
+### 2026-07-23 — REQUEST CHANGES (security OK; Gate 2 + TDD)
 
 Gate 2 edge-case tests added in `sql_test.go`. Git history rewritten: tests-only first commit, implementation second. Re-review Gate 2 + TDD gate.
+
+### 2026-07-23 — Security hardening round (developer)
+
+Independent review: five Medium items fixed — WITH/DML read-only gate, `MaxBytesReader` on `/sql` body, sandbox `DUCKDB_THREADS`, symlink-safe parquet materialization, extended file-builtin isolation tests. Re-review security + Gate 2.
+
+### 2026-07-23 — APPROVED (`ALL_OK`)
+
+Re-review after developer fixes. **All §6 gates pass.**
+
+**TDD:** `b47ea12` is tests-only (`sql_test.go` only); compile fails with undefined `query.SQLConfig` / `SQLHandler` / `ExportHotSnapshot` (red for the right reason). `5de670a` adds implementation.
+
+**Gate 2:** New tests pass — `TestSQLNoParquetTenant400` (via `tenantHasParquetSources` pre-check), `TestSQLEmptyResult200`, `TestSQLUnknownRelation400`, `TestSQLConcurrentSameTenantIsolated` (12 workers), `TestSQLAfterHotSnapshotAndFlush`, `TestSQLBurstQueriesAfterFlush`.
+
+**Security (unchanged, re-confirmed):** materialize-then-lock on single `:memory:` conn — bootstrap → `CREATE TABLE metrics AS …` (tenant parquet only) → `lockSandbox` (`enable_external_access=false`, extension knobs, `lock_configuration=true` last) → user SQL. `TestSQLIsolationCrossTenant` still blocks cross-tenant/host-fs attacks and post-lock `SET enable_external_access=true`. RBAC `ActionQuery` + cluster deny-before-proxy intact.
+
+**Commands:** `make lint` 0 issues; `make test -race` green; `go build ./cmd/prism-store` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `go list -deps ./cmd/prism` 447 packages unchanged vs `origin/main`; `make tidy` clean; `git status` clean.

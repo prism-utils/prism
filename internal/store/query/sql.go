@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,10 +23,14 @@ import (
 )
 
 const (
-	defaultSQLMaxRows  = 100_000
-	defaultSQLTimeout  = 30 * time.Second
-	sandboxMetricsView = "metrics"
+	defaultSQLMaxRows      = 100_000
+	defaultSQLTimeout      = 30 * time.Second
+	defaultSQLMaxBodyBytes = 1 << 20 // 1 MiB
+	sandboxMetricsView     = "metrics"
 )
+
+// DefaultSQLMaxBodyBytes is the default POST /sql JSON body cap.
+const DefaultSQLMaxBodyBytes = defaultSQLMaxBodyBytes
 
 var (
 	errEmptySQL         = errors.New("query: empty sql")
@@ -37,11 +42,13 @@ var (
 
 // SQLConfig holds arbitrary SQL API settings.
 type SQLConfig struct {
-	DataDir     string
-	RoutePrefix string
-	MaxRows     int
-	Timeout     time.Duration
-	MemoryLimit string
+	DataDir      string
+	RoutePrefix  string
+	MaxRows      int
+	Timeout      time.Duration
+	MemoryLimit  string
+	Threads      int
+	MaxBodyBytes int64
 }
 
 // SQLRoutePattern returns the ServeMux pattern for POST /{ns}/sql.
@@ -78,6 +85,9 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultSQLTimeout
 	}
+	if cfg.MaxBodyBytes <= 0 {
+		cfg.MaxBodyBytes = defaultSQLMaxBodyBytes
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.PathValue("ns")
 		if !storeingest.ValidateTenant(ns) {
@@ -86,8 +96,14 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		}
 
 		var req SQLRequest
-		dec := json.NewDecoder(r.Body)
+		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
+		dec := json.NewDecoder(body)
 		if err := dec.Decode(&req); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(w, "bad query", http.StatusBadRequest)
+				return
+			}
 			http.Error(w, "bad query", http.StatusBadRequest)
 			return
 		}
@@ -117,6 +133,9 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			http.Error(w, "query failed", http.StatusInternalServerError)
 			return
 		}
+		if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+			absRoot = resolved
+		}
 		absRoot = filepath.Clean(absRoot)
 
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Timeout)
@@ -145,7 +164,10 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			rowCap = *req.MaxRows
 		}
 
-		result, err := runSandboxQuery(ctx, absRoot, req.SQL, rowCap, cfg.MemoryLimit)
+		result, err := runSandboxQuery(ctx, absRoot, req.SQL, rowCap, sandboxLimits{
+			MemoryLimit: cfg.MemoryLimit,
+			Threads:     cfg.Threads,
+		})
 		if err != nil {
 			if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
 				errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
@@ -176,8 +198,8 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 	})
 }
 
-func runSandboxQuery(ctx context.Context, tenantRoot, userSQL string, rowCap int, memoryLimit string) (*SQLResponse, error) {
-	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, memoryLimit)
+func runSandboxQuery(ctx context.Context, tenantRoot, userSQL string, rowCap int, limits sandboxLimits) (*SQLResponse, error) {
+	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
 		return nil, fmt.Errorf("query: open sandbox: %w", err)
 	}
@@ -236,7 +258,7 @@ func runSandboxQuery(ctx context.Context, tenantRoot, userSQL string, rowCap int
 	return out, nil
 }
 
-func openSandboxConn(ctx context.Context, tenantRoot, memoryLimit string) (*sql.Conn, func(), error) {
+func openSandboxConn(ctx context.Context, tenantRoot string, limits sandboxLimits) (*sql.Conn, func(), error) {
 	connector, err := duckdb.NewConnector(":memory:", nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query: duckdb connector: %w", err)
@@ -249,7 +271,7 @@ func openSandboxConn(ctx context.Context, tenantRoot, memoryLimit string) (*sql.
 		_ = connector.Close()
 		return nil, nil, fmt.Errorf("query: sandbox conn: %w", err)
 	}
-	if err := applySandboxBootstrap(ctx, conn, tenantRoot, memoryLimit); err != nil {
+	if err := applySandboxBootstrap(ctx, conn, tenantRoot, limits); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		_ = connector.Close()
@@ -263,10 +285,18 @@ func openSandboxConn(ctx context.Context, tenantRoot, memoryLimit string) (*sql.
 	return conn, cleanup, nil
 }
 
-func applySandboxBootstrap(ctx context.Context, conn *sql.Conn, tenantRoot, memoryLimit string) error {
+type sandboxLimits struct {
+	MemoryLimit string
+	Threads     int
+}
+
+func applySandboxBootstrap(ctx context.Context, conn *sql.Conn, tenantRoot string, limits sandboxLimits) error {
 	var steps []string
-	if memoryLimit != "" {
-		steps = append(steps, fmt.Sprintf("SET memory_limit='%s'", escapeSQLLiteral(memoryLimit)))
+	if limits.Threads > 0 {
+		steps = append(steps, fmt.Sprintf("SET threads=%d", limits.Threads))
+	}
+	if limits.MemoryLimit != "" {
+		steps = append(steps, fmt.Sprintf("SET memory_limit='%s'", escapeSQLLiteral(limits.MemoryLimit)))
 	}
 	steps = append(steps,
 		"SET max_temp_directory_size='0B'",
@@ -311,25 +341,28 @@ func isUnknownConfig(err error) bool {
 }
 
 func sandboxMetricsUnionSQL(tenantRoot string) (string, error) {
+	absRoot, err := filepath.Abs(tenantRoot)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolved
+	}
+	absRoot = filepath.Clean(absRoot)
+
+	paths, err := collectSafeParquetPaths(absRoot, tenantRoot)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return "", errNoParquetSources
+	}
 	var parts []string
-	snapshot := filepath.Join(tenantRoot, hotSnapshotRel)
-	if _, err := os.Stat(snapshot); err == nil {
+	for _, p := range paths {
 		parts = append(parts, fmt.Sprintf(
 			`SELECT "__name__", labels, value, timestamp_ms, ts FROM read_parquet('%s')`,
-			layout.ToSlash(snapshot),
+			layout.ToSlash(p),
 		))
-	}
-	for tier := 0; tier < maxTier; tier++ {
-		glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
-		if matches, _ := filepath.Glob(glob); len(matches) > 0 {
-			parts = append(parts, fmt.Sprintf(
-				`SELECT "__name__", labels, value, timestamp_ms, ts FROM read_parquet('%s')`,
-				layout.ToSlash(glob),
-			))
-		}
-	}
-	if len(parts) == 0 {
-		return "", errNoParquetSources
 	}
 	union := strings.Join(parts, " UNION ALL ")
 	sqlText := union
@@ -348,11 +381,241 @@ func validateReadOnlySQL(raw string) error {
 	if strings.Contains(s, ";") {
 		return errMultiStatement
 	}
-	upper := strings.ToUpper(s)
-	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
+	s = stripStringLiterals(s)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return errEmptySQL
+	}
+	if containsForbiddenKeyword(s) {
 		return errNonSelect
 	}
-	return nil
+	upper := strings.ToUpper(s)
+	switch {
+	case strings.HasPrefix(upper, "SELECT"):
+		return nil
+	case strings.HasPrefix(upper, "WITH"):
+		main, err := mainQueryAfterWith(s)
+		if err != nil {
+			return err
+		}
+		if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(main)), "SELECT") {
+			return errNonSelect
+		}
+		return nil
+	default:
+		return errNonSelect
+	}
+}
+
+var forbiddenSQLKeywords = []string{
+	"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "ATTACH",
+	"COPY", "INSTALL", "LOAD", "PRAGMA", "EXPORT", "CALL", "SET",
+}
+
+func containsForbiddenKeyword(s string) bool {
+	upper := strings.ToUpper(s)
+	for _, kw := range forbiddenSQLKeywords {
+		if sqlKeywordPresent(upper, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func sqlKeywordPresent(s, kw string) bool {
+	idx := 0
+	for {
+		i := strings.Index(s[idx:], kw)
+		if i < 0 {
+			return false
+		}
+		i += idx
+		before := i == 0 || !isSQLIdentChar(s[i-1])
+		after := i+len(kw) >= len(s) || !isSQLIdentChar(s[i+len(kw)])
+		if before && after {
+			return true
+		}
+		idx = i + len(kw)
+	}
+}
+
+func isSQLIdentChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+func mainQueryAfterWith(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if len(s) < 4 || !strings.EqualFold(s[:4], "with") {
+		return "", errNonSelect
+	}
+	i := 4
+	i = skipSQLSpace(s, i)
+	for i < len(s) {
+		i = skipSQLIdent(s, i)
+		i = skipSQLSpace(s, i)
+		if i+2 > len(s) || !strings.EqualFold(s[i:i+2], "as") {
+			return "", errNonSelect
+		}
+		i += 2
+		i = skipSQLSpace(s, i)
+		if i >= len(s) || s[i] != '(' {
+			return "", errNonSelect
+		}
+		var err error
+		i, err = skipBalancedParens(s, i)
+		if err != nil {
+			return "", err
+		}
+		i = skipSQLSpace(s, i)
+		if i < len(s) && s[i] == ',' {
+			i++
+			i = skipSQLSpace(s, i)
+			continue
+		}
+		break
+	}
+	return strings.TrimSpace(s[i:]), nil
+}
+
+func skipSQLSpace(s string, i int) int {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+func skipSQLIdent(s string, i int) int {
+	if i < len(s) && (s[i] == '"' || s[i] == '`') {
+		quote := s[i]
+		i++
+		for i < len(s) && s[i] != quote {
+			i++
+		}
+		if i < len(s) {
+			i++
+		}
+		return i
+	}
+	for i < len(s) && isSQLIdentChar(s[i]) {
+		i++
+	}
+	return i
+}
+
+func skipBalancedParens(s string, start int) (int, error) {
+	if start >= len(s) || s[start] != '(' {
+		return start, errNonSelect
+	}
+	depth := 0
+	for i := start; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i + 1, nil
+			}
+		}
+	}
+	return len(s), errNonSelect
+}
+
+func stripStringLiterals(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\'' {
+			i++
+			for i < len(s) {
+				if s[i] == '\'' {
+					if i+1 < len(s) && s[i+1] == '\'' {
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+				i++
+			}
+			b.WriteByte(' ')
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func collectSafeParquetPaths(absTenantRoot, tenantRoot string) ([]string, error) {
+	root, err := filepath.EvalSymlinks(absTenantRoot)
+	if err != nil {
+		root = absTenantRoot
+	}
+	root = filepath.Clean(root)
+
+	var paths []string
+	snapshot := filepath.Join(tenantRoot, hotSnapshotRel)
+	if ok, err := safeTenantParquetFile(root, snapshot); err != nil {
+		return nil, err
+	} else if ok {
+		paths = append(paths, snapshot)
+	}
+	for tier := 0; tier < maxTier; tier++ {
+		glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
+		matches, err := filepath.Glob(glob)
+		if err != nil {
+			return nil, err
+		}
+		for _, match := range matches {
+			ok, err := safeTenantParquetFile(root, match)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				paths = append(paths, match)
+			}
+		}
+	}
+	return paths, nil
+}
+
+func safeTenantParquetFile(absTenantRoot, path string) (bool, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return false, nil
+	}
+	if !fi.Mode().IsRegular() {
+		return false, nil
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, err
+	}
+	abs, err := filepath.Abs(real)
+	if err != nil {
+		return false, err
+	}
+	if !pathUnderTenantRoot(absTenantRoot, abs) {
+		return false, nil
+	}
+	return true, nil
+}
+
+func pathUnderTenantRoot(absTenantRoot, absPath string) bool {
+	root := filepath.Clean(absTenantRoot)
+	path := filepath.Clean(absPath)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func stripSQLComments(s string) string {
@@ -433,7 +696,7 @@ func jsonCell(v any) any {
 }
 
 // SQLConfigFromEnv reads SQL API limits from the process environment.
-func SQLConfigFromEnv(dataDir, routePrefix, memoryLimit string) SQLConfig {
+func SQLConfigFromEnv(dataDir, routePrefix, memoryLimit string, threads int) SQLConfig {
 	maxRows := defaultSQLMaxRows
 	if v := os.Getenv("SQL_API_MAX_ROWS"); v != "" {
 		if n, err := parsePositiveInt(v); err == nil {
@@ -446,12 +709,20 @@ func SQLConfigFromEnv(dataDir, routePrefix, memoryLimit string) SQLConfig {
 			timeout = time.Duration(n) * time.Second
 		}
 	}
+	maxBody := int64(defaultSQLMaxBodyBytes)
+	if v := os.Getenv("SQL_API_MAX_BODY_BYTES"); v != "" {
+		if n, err := parsePositiveInt64(v); err == nil {
+			maxBody = n
+		}
+	}
 	return SQLConfig{
-		DataDir:     dataDir,
-		RoutePrefix: routePrefix,
-		MaxRows:     maxRows,
-		Timeout:     timeout,
-		MemoryLimit: memoryLimit,
+		DataDir:      dataDir,
+		RoutePrefix:  routePrefix,
+		MaxRows:      maxRows,
+		Timeout:      timeout,
+		MemoryLimit:  memoryLimit,
+		Threads:      threads,
+		MaxBodyBytes: maxBody,
 	}
 }
 
@@ -497,6 +768,15 @@ func tenantHasParquetSources(ctx context.Context, eng *engine.Engine, dataDir, t
 		return true, nil
 	}
 	return false, nil
+}
+
+func parsePositiveInt64(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("not positive int64")
+	}
+	return n, nil
 }
 
 func parsePositiveInt(s string) (int, error) {
