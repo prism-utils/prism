@@ -43,7 +43,7 @@ func NewDockerSampler(containerID string) (*DockerSampler, error) {
 		return nil, err
 	}
 	id := strings.TrimSpace(containerID)
-	statsURL := base + "/containers/" + id + "/stats?stream=false"
+	statsURL := base + "/containers/" + id + "/stats?stream=false&one-shot=true"
 	return &DockerSampler{
 		containerID: id,
 		interval:    defaultDockerInterval,

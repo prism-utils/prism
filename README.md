@@ -143,33 +143,33 @@ make bench BENCH_SCALE=2
 
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.49s · 1,339,588 rows/s | 2.03s · 984,933 rows/s |
-| count | 0.5 / 0.7 / 0.4 | 1.6 / 1.9 / 1.3 |
-| aggregation | 12.9 / 14.9 / 12.0 | 10.3 / 31.8 / 8.7 |
-| logs LIKE | 68.8 / 69.4 / 68.3 | 39.0 / 44.0 / 36.3 |
+| ingest | 1.48s · 1,349,593 rows/s | 2.06s · 971,603 rows/s |
+| count | 0.7 / 1.4 / 0.5 | 1.6 / 2.1 / 1.4 |
+| aggregation | 13.2 / 16.6 / 12.9 | 10.4 / 32.2 / 10.3 |
+| logs LIKE | 72.8 / 254.5 / 70.5 | 46.8 / 55.6 / 42.9 |
 
 **Resource usage** (dense continuous sampling; idle baseline row; store queries sample the embedded DuckDB engine in `prism-bench`; process I/O/IOPS **`n/a`** on macOS; **Docker Desktop often reports container blkio as 0** — use native Linux Docker for meaningful ClickHouse I/O/IOPS):
 
 | Workload | System | CPU mean / peak | Peak RSS | I/O | IOPS |
 |----------|--------|-----------------|----------|-----|------|
-| idle (baseline) | prism-store | 0.00 / 0.00 cores | 22.4 MiB | n/a | n/a |
-| idle (baseline) | ClickHouse | 0.05 / 0.09 cores | 241.0 MiB | 0.2 MiB | 0 |
-| ingest | prism-store | 0.10 / 2.00 cores | 92.1 MiB | n/a | n/a |
-| ingest | ClickHouse | 0.15 / 0.45 cores | 371.2 MiB | 27.3 MiB | 0 |
-| count | prism-store | 0.10 / 0.59 cores | 583.2 MiB | n/a | n/a |
-| count | ClickHouse | 0.06 / 0.11 cores | 349.9 MiB | n/a | n/a |
-| aggregation | prism-store | 0.15 / 1.95 cores | 586.7 MiB | n/a | n/a |
-| aggregation | ClickHouse | 0.08 / 0.16 cores | 327.8 MiB | n/a | n/a |
-| logs LIKE | prism-store | 0.52 / 2.07 cores | 598.5 MiB | n/a | n/a |
-| logs LIKE | ClickHouse | 0.28 / 0.46 cores | 358.6 MiB | 0.4 MiB | 0 |
+| idle (baseline) | prism-store | 0.00 / 0.00 cores | 22.3 MiB | n/a | n/a |
+| idle (baseline) | ClickHouse | 0.08 / 1.46 cores | 248.6 MiB | 0.2 MiB | 0 |
+| ingest | prism-store | 0.04 / 1.82 cores | 99.0 MiB | n/a | n/a |
+| ingest | ClickHouse | 0.10 / 1.00 cores | 398.2 MiB | 0.6 MiB | 0 |
+| count | prism-store | 0.37 / 0.89 cores | 581.6 MiB | n/a | n/a |
+| count | ClickHouse | 0.11 / 0.47 cores | 398.5 MiB | n/a | n/a |
+| aggregation | prism-store | 0.80 / 1.94 cores | 585.4 MiB | n/a | n/a |
+| aggregation | ClickHouse | 0.50 / 1.47 cores | 402.0 MiB | n/a | n/a |
+| logs LIKE | prism-store | 1.12 / 3.25 cores | 604.2 MiB | n/a | n/a |
+| logs LIKE | ClickHouse | 0.59 / 1.99 cores | 401.5 MiB | 0.3 MiB | 0 |
 
 **Charts** (same run): [`bench/charts/cpu-cores.svg`](bench/charts/cpu-cores.svg), [`bench/charts/memory-rss.svg`](bench/charts/memory-rss.svg), [`bench/charts/disk-io.svg`](bench/charts/disk-io.svg)
 
 **Interpretation:** Metrics **count** and **aggregation** scan the full ingested
 table on both systems (no `ts` range pruning) — apples-to-apples over the same N
 rows. On this laptop prism-store leads **ingest** and **count** (p50). ClickHouse
-wins **aggregation** (p50 10.3 ms vs 12.9 ms) and **logs LIKE** (p50 39.0 ms vs
-68.8 ms) with fair tuning (`tokenbf_v1` skip index, typed schema, batched inserts).
+wins **aggregation** (p50 10.4 ms vs 13.2 ms) and **logs LIKE** (p50 46.8 ms vs
+72.8 ms) with fair tuning (`tokenbf_v1` skip index, typed schema, batched inserts).
 Logs LIKE uses the same dataset-`ts` window on both sides. Store logs `LIKE` is
 **engine-level** (DuckDB over a logs-shaped Parquet tier) — not a shipping logs API.
 Both systems ran under the same **2 vCPU / 1 GiB** envelope so neither could allocate the full host.

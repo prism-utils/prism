@@ -3,6 +3,7 @@ package results
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"os"
 	"time"
 
@@ -60,11 +61,15 @@ func writeTimelineChart(path, title, yLabel string, store, clickhouse []monitor.
 	p.Y.Label.Text = yLabel
 	p.Legend.Top = true
 
+	yMin, yMax := seriesYRange(store, clickhouse, y)
+	p.Y.Min = yMin
+	p.Y.Max = yMax
+
 	for _, ph := range phases {
 		if ph.End.Before(ph.Start) {
 			continue
 		}
-		addPhaseBand(p, t0, ph)
+		addPhaseBand(p, t0, ph, yMin, yMax)
 	}
 
 	if pts, ok := toXY(store, t0, y); ok {
@@ -103,6 +108,38 @@ func writeTimelineChart(path, title, yLabel string, store, clickhouse []monitor.
 	return nil
 }
 
+func seriesYRange(store, clickhouse []monitor.SamplePoint, y func(monitor.SamplePoint) float64) (float64, float64) {
+	minY := math.MaxFloat64
+	maxY := -math.MaxFloat64
+	for _, p := range store {
+		v := y(p)
+		if v < minY {
+			minY = v
+		}
+		if v > maxY {
+			maxY = v
+		}
+	}
+	for _, p := range clickhouse {
+		v := y(p)
+		if v < minY {
+			minY = v
+		}
+		if v > maxY {
+			maxY = v
+		}
+	}
+	if minY > maxY {
+		return 0, 1
+	}
+	span := maxY - minY
+	pad := span * 0.08
+	if pad == 0 {
+		pad = 0.1
+	}
+	return minY - pad, maxY + pad
+}
+
 func chartOrigin(store, clickhouse []monitor.SamplePoint, phases []monitor.PhaseSpan) time.Time {
 	var t0 time.Time
 	for _, p := range store {
@@ -135,13 +172,18 @@ func toXY(points []monitor.SamplePoint, t0 time.Time, y func(monitor.SamplePoint
 	return out, true
 }
 
-func addPhaseBand(p *plot.Plot, t0 time.Time, ph monitor.PhaseSpan) {
+func addPhaseBand(p *plot.Plot, t0 time.Time, ph monitor.PhaseSpan, yMin, yMax float64) {
 	x0 := ph.Start.Sub(t0).Seconds()
 	x1 := ph.End.Sub(t0).Seconds()
 	if x1 <= x0 {
 		return
 	}
-	rect, err := plotter.NewPolygon(plotter.XYs{{X: x0, Y: p.Y.Min}, {X: x1, Y: p.Y.Min}, {X: x1, Y: p.Y.Max}, {X: x0, Y: p.Y.Max}})
+	rect, err := plotter.NewPolygon(plotter.XYs{
+		{X: x0, Y: yMin},
+		{X: x1, Y: yMin},
+		{X: x1, Y: yMax},
+		{X: x0, Y: yMax},
+	})
 	if err != nil {
 		return
 	}

@@ -36,6 +36,13 @@ func TestWriteCPUChart_producesWellFormedSVG(t *testing.T) {
 	text := string(b)
 	require.True(t, strings.HasPrefix(text, "<?xml") || strings.HasPrefix(text, "<svg") || strings.Contains(text, "<svg"))
 	require.Contains(t, text, "svg")
+	requirePhaseBandVisible(t, text)
+}
+
+func requirePhaseBandVisible(t *testing.T, svg string) {
+	t.Helper()
+	require.Contains(t, svg, "fill-opacity", "SVG must contain a phase-band polygon with partial fill opacity")
+	require.Greater(t, strings.Count(svg, "Z\" style=\"fill:"), 1, "SVG must contain filled band polygons beyond the white background")
 }
 
 func TestWriteMemoryChart_producesNonEmptySVG(t *testing.T) {

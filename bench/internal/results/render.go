@@ -75,8 +75,17 @@ func WriteMarkdown(path, body string) error {
 	return nil
 }
 
-// RenderMarkdown formats rep as a human-readable results document.
+// RenderMarkdown formats rep as human-readable markdown for bench/RESULTS.md.
 func RenderMarkdown(rep *Report) string {
+	return renderMarkdown(rep, true)
+}
+
+// RenderMarkdownRoot formats rep for embedding in the repository root README.md.
+func RenderMarkdownRoot(rep *Report) string {
+	return renderMarkdown(rep, false)
+}
+
+func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 	env := rep.Environment
 	var b strings.Builder
 	b.WriteString("# Benchmark: prism-store vs ClickHouse\n\n")
@@ -135,7 +144,11 @@ func RenderMarkdown(rep *Report) string {
 			if i := strings.LastIndex(p, "/"); i >= 0 {
 				base = p[i+1:]
 			}
-			fmt.Fprintf(&b, "### %s\n\n![%s](%s)\n\n", strings.TrimSuffix(base, ".svg"), base, p)
+			embed := p
+			if benchLocalCharts {
+				embed = chartEmbedForBenchResults(p)
+			}
+			fmt.Fprintf(&b, "### %s\n\n![%s](%s)\n\n", strings.TrimSuffix(base, ".svg"), base, embed)
 		}
 	}
 
@@ -145,6 +158,17 @@ func RenderMarkdown(rep *Report) string {
 	b.WriteString("```bash\nmake bench        # default scale (2M rows total)\nmake bench BENCH_SCALE=2\n```\n")
 	b.WriteString("\nSee [`bench/README.md`](README.md) for prerequisites and cleanup.\n")
 	return b.String()
+}
+
+func chartEmbedForBenchResults(storedPath string) string {
+	const prefix = "bench/charts/"
+	if strings.HasPrefix(storedPath, prefix) {
+		return strings.TrimPrefix(storedPath, "bench/")
+	}
+	if strings.HasPrefix(storedPath, "charts/") {
+		return storedPath
+	}
+	return storedPath
 }
 
 func interpret(rep *Report) string {

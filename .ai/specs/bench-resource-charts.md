@@ -81,13 +81,15 @@ Everything stays reproducible by anyone cloning the repo.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** engine config change minimal + no-op when unset + wrapped errors; samplers/chart writer behind small interfaces, no globals, ctx-bound goroutine lifecycle; Docker counter-diff handles first-sample/rollover; comments self-contained.
-- [ ] **Gate 2 — Edge cases:** unset DuckDB settings = no behavior change; caps actually applied (assert, don't assume); idle window with near-zero activity; a phase shorter than the sample interval still yields ≥1 sample; container counter first-sample (no prior) handled; empty I/O series → chart omitted, not broken; Docker socket absent → documented fallback (may disable dense container series with a clear note); sampling overhead does not materially move latencies vs #42/#45.
-- [ ] **Gate 3 — Docs/comments match code:** caps/budget, baseline, resolutions, chart list and file paths match what the code emits; embedded charts render; committed numbers/charts came from one real `make bench` run; caveats accurate.
-- [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
-- [ ] **Honesty/attribution audit:** correct target per phase; idle baseline genuinely idle; container CPU derived from counter deltas (not the misleading streamed %); caps disclosed; no fabricated metric when unavailable (`n/a` preserved).
-- [ ] Full docs/REVIEW.md checklist; TESTING.md layering (unit tests for engine settings, aggregation, counter-diff, chart writer; full bench opt-in). Verify the agent static build excludes bench-only deps.
+- [x] **Gate 1 — Guidelines:** engine config change minimal + no-op when unset + wrapped errors; samplers/chart writer behind small interfaces, no globals, ctx-bound goroutine lifecycle; Docker counter-diff handles first-sample/rollover; comments self-contained.
+- [x] **Gate 2 — Edge cases:** unset DuckDB settings = no behavior change; caps actually applied (assert, don't assume); idle window with near-zero activity; a phase shorter than the sample interval still yields ≥1 sample; container counter first-sample (no prior) handled; empty I/O series → chart omitted, not broken; Docker socket absent → documented fallback (may disable dense container series with a clear note); sampling overhead does not materially move latencies vs #42/#45.
+- [x] **Gate 3 — Docs/comments match code:** caps/budget, baseline, resolutions, chart list and file paths match what the code emits; embedded charts render; committed numbers/charts came from one real `make bench` run; caveats accurate.
+- [x] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+- [x] **Honesty/attribution audit:** correct target per phase; idle baseline genuinely idle; container CPU derived from counter deltas (not the misleading streamed %); caps disclosed; no fabricated metric when unavailable (`n/a` preserved).
+- [x] Full docs/REVIEW.md checklist; TESTING.md layering (unit tests for engine settings, aggregation, counter-diff, chart writer; full bench opt-in). Verify the agent static build excludes bench-only deps.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**2026-07-23 (prism-reviewer):** REQUEST CHANGES → `READY`. Gates 1, 2, 4, honesty audit, lint/test/build/tidy all pass; product `engine.Config` Threads/MemoryLimit is no-op when unset (test `TestOpenTenant_unsetThreadsPreservesDefault` + `initFn` guard). **Blockers:** (1) `writeTimelineChart` calls `addPhaseBand` before adding series, so Y limits are unset and committed SVGs have no visible phase/idle shading (only `fill:#FFFFFF`); (2) `RenderMarkdown` emits `![…](bench/charts/…)` into `bench/RESULTS.md` where relative links need `charts/…`. Fix: add bands after plot data (or set explicit Y range), correct RESULTS embed paths, regenerate charts from `make bench`, extend chart test to assert non-white phase fill or band rect present.
+
+**2026-07-23 (prism-developer):** Addressed blockers — explicit Y range for phase bands; `RenderMarkdown` vs `RenderMarkdownRoot` embed paths; Docker `one-shot=true` for dense CH sampling; chart test asserts `fill-opacity`; engine `memory_limit` test added. Artifacts regenerated from one `make bench` run (CH series 349 points vs store ~728).

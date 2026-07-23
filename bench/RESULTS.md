@@ -15,8 +15,8 @@ Measured on this host with `make bench` (default small profile).
 | Resource cap (per system) | 2 vCPU / 1024 MiB RAM |
 | DuckDB threads / memory_limit | 2 / 1024MB |
 | Idle baseline window | 5.0 s before workloads |
-| Git commit | `fa7cb26` |
-| Measured | 2026-07-23T10:25:56Z |
+| Git commit | `dac1523` |
+| Measured | 2026-07-23T10:32:05Z |
 
 ## Correctness gates
 
@@ -28,25 +28,25 @@ Logs `LIKE '%deadline exceeded%'` count: store **10,000**, ClickHouse **10,000**
 
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.49s · 1339588 rows/s | 2.03s · 984933 rows/s |
-| count | 0.5 / 0.7 / 0.4 | 1.6 / 1.9 / 1.3 |
-| aggregation | 12.9 / 14.9 / 12.0 | 10.3 / 31.8 / 8.7 |
-| logs LIKE | 68.8 / 69.4 / 68.3 | 39.0 / 44.0 / 36.3 |
+| ingest | 1.48s · 1349593 rows/s | 2.06s · 971603 rows/s |
+| count | 0.7 / 1.4 / 0.5 | 1.6 / 2.1 / 1.4 |
+| aggregation | 13.2 / 16.6 / 12.9 | 10.4 / 32.2 / 10.3 |
+| logs LIKE | 72.8 / 254.5 / 70.5 | 46.8 / 55.6 / 42.9 |
 
 ## Resource usage (dense series; per-phase aggregates)
 
 | Workload | System | CPU mean / peak (cores) | Peak RSS (MiB) | Read+write (MiB) | MiB/s | IOPS |
 |----------|--------|-------------------------|----------------|------------------|-------|------|
-| idle (baseline) | prism-store | 0.00 / 0.00 | 22.4 | n/a | n/a | n/a |
-| idle (baseline) | ClickHouse | 0.05 / 0.09 | 241.0 | 0.2 | 0.0 | 0 |
-| ingest | prism-store | 0.10 / 2.00 | 92.1 | n/a | n/a | n/a |
-| ingest | ClickHouse | 0.15 / 0.45 | 371.2 | 27.3 | 3.9 | 0 |
-| count | prism-store | 0.10 / 0.59 | 583.2 | n/a | n/a | n/a |
-| count | ClickHouse | 0.06 / 0.11 | 349.9 | n/a | n/a | n/a |
-| aggregation | prism-store | 0.15 / 1.95 | 586.7 | n/a | n/a | n/a |
-| aggregation | ClickHouse | 0.08 / 0.16 | 327.8 | n/a | n/a | n/a |
-| logs LIKE | prism-store | 0.52 / 2.07 | 598.5 | n/a | n/a | n/a |
-| logs LIKE | ClickHouse | 0.28 / 0.46 | 358.6 | 0.4 | 0.2 | 0 |
+| idle (baseline) | prism-store | 0.00 / 0.00 | 22.3 | n/a | n/a | n/a |
+| idle (baseline) | ClickHouse | 0.08 / 1.46 | 248.6 | 0.2 | 0.0 | 0 |
+| ingest | prism-store | 0.04 / 1.82 | 99.0 | n/a | n/a | n/a |
+| ingest | ClickHouse | 0.10 / 1.00 | 398.2 | 0.6 | 0.0 | 0 |
+| count | prism-store | 0.37 / 0.89 | 581.6 | n/a | n/a | n/a |
+| count | ClickHouse | 0.11 / 0.47 | 398.5 | n/a | n/a | n/a |
+| aggregation | prism-store | 0.80 / 1.94 | 585.4 | n/a | n/a | n/a |
+| aggregation | ClickHouse | 0.50 / 1.47 | 402.0 | n/a | n/a | n/a |
+| logs LIKE | prism-store | 1.12 / 3.25 | 604.2 | n/a | n/a | n/a |
+| logs LIKE | ClickHouse | 0.59 / 1.99 | 401.5 | 0.3 | 0.4 | 0 |
 
 Store **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms).
 
@@ -54,15 +54,15 @@ Store **count**, **aggregation**, and **logs LIKE** sample the benchmark process
 
 ### cpu-cores
 
-![cpu-cores.svg](bench/charts/cpu-cores.svg)
+![cpu-cores.svg](charts/cpu-cores.svg)
 
 ### memory-rss
 
-![memory-rss.svg](bench/charts/memory-rss.svg)
+![memory-rss.svg](charts/memory-rss.svg)
 
 ### disk-io
 
-![disk-io.svg](bench/charts/disk-io.svg)
+![disk-io.svg](charts/disk-io.svg)
 
 
 ## Interpretation
@@ -77,10 +77,10 @@ The store metrics path uses real HTTP Parquet ingest, hot→L0 flush, tier compa
 
 ClickHouse uses MergeTree with `LowCardinality` dimensions, day partitioning, batched inserts (50k rows), and a `tokenbf_v1` skip index on `message`.
 
-- **ingest**: prism-store leads on ingest throughput (1339588 vs 984933 rows/s).
-- **count**: prism-store p50 0.5 ms vs ClickHouse 1.6 ms.
-- **aggregation**: ClickHouse p50 10.3 ms beats prism-store 12.9 ms on this host.
-- **logs_like**: ClickHouse p50 39.0 ms beats prism-store 68.8 ms on this host.
+- **ingest**: prism-store leads on ingest throughput (1349593 vs 971603 rows/s).
+- **count**: prism-store p50 0.7 ms vs ClickHouse 1.6 ms.
+- **aggregation**: ClickHouse p50 10.4 ms beats prism-store 13.2 ms on this host.
+- **logs_like**: ClickHouse p50 46.8 ms beats prism-store 72.8 ms on this host.
 ## Reproduce
 
 ```bash
