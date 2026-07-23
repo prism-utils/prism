@@ -118,6 +118,20 @@ spec:
               value: "30"
             - name: SQL_API_MAX_BODY_BYTES
               value: "1048576"
+            - name: QUERY_HOT_ONLY
+              value: "false"
+            - name: RUN_JOBS
+              value: "true"
+            - name: MAX_OPEN_TENANTS
+              value: "32"
+            - name: SQL_API_QUEUE_ENABLED
+              value: "false"
+            - name: SQL_API_MAX_INFLIGHT
+              value: "4"
+            - name: SQL_API_MAX_QUEUE
+              value: "64"
+            - name: SQL_API_QUEUE_TIMEOUT_MS
+              value: "5000"
           livenessProbe:
             httpGet:
               path: /healthz

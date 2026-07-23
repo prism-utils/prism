@@ -3,6 +3,7 @@ package rollup
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,9 +64,15 @@ type Builder struct {
 	connector *duckdb.Connector
 }
 
+// BuilderConfig holds DuckDB caps for rollup COPY workers.
+type BuilderConfig struct {
+	Threads     int
+	MemoryLimit string
+}
+
 // NewBuilder creates a rollup builder.
-func NewBuilder(dataDir, tenant string, steps []Step) (*Builder, error) {
-	connector, err := duckdb.NewConnector("", nil)
+func NewBuilder(dataDir, tenant string, steps []Step, cfg BuilderConfig) (*Builder, error) {
+	connector, err := duckdb.NewConnector("", rollupInitFn(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -197,6 +204,30 @@ func AggregateRaw(db *sql.DB, paths []string, interval string) (map[string]AggRo
 		out[r.Key()] = r
 	}
 	return out, rows.Err()
+}
+
+func rollupInitFn(cfg BuilderConfig) func(driver.ExecerContext) error {
+	if cfg.Threads <= 0 && cfg.MemoryLimit == "" {
+		return nil
+	}
+	threads := cfg.Threads
+	memLimit := cfg.MemoryLimit
+	return func(exec driver.ExecerContext) error {
+		ctx := context.Background()
+		if threads > 0 {
+			q := fmt.Sprintf("SET threads=%d", threads)
+			if _, err := exec.ExecContext(ctx, q, nil); err != nil {
+				return fmt.Errorf("rollup: set threads: %w", err)
+			}
+		}
+		if memLimit != "" {
+			q := fmt.Sprintf("SET memory_limit='%s'", strings.ReplaceAll(memLimit, "'", "''"))
+			if _, err := exec.ExecContext(ctx, q, nil); err != nil {
+				return fmt.Errorf("rollup: set memory_limit: %w", err)
+			}
+		}
+		return nil
+	}
 }
 
 // AggRow is one rollup aggregate bucket for tests.

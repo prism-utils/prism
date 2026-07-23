@@ -30,7 +30,7 @@ func BenchmarkQueryAggregateCompactedTenant(b *testing.B) {
 	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: hotWindow}, clock)
 	b.Cleanup(func() { _ = eng.Close() })
 
-	runner := lifecycle.NewRunner(lifecycle.Config{
+	runner := lifecycle.NewRunner(&lifecycle.Config{
 		DataDir:         dataDir,
 		SegmentsPerTier: 6,
 		MaxSegmentBytes: 1 << 30,

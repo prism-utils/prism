@@ -181,7 +181,7 @@ func (d *cgoDriver) openEngine() error {
 		engCfg.MemoryLimit = d.cfg.Budget.DuckDBMemoryLimit()
 	}
 	d.eng = engine.New(engCfg, time.Now)
-	d.runner = lifecycle.NewRunner(lifecycle.Config{
+	d.runner = lifecycle.NewRunner(&lifecycle.Config{
 		DataDir:         d.cfg.DataDir,
 		SegmentsPerTier: 6,
 		MaxSegmentBytes: 512 << 20,

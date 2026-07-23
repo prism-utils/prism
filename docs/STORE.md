@@ -17,6 +17,28 @@ lands sub-issue by sub-issue; this page describes the target shape.
 agents, lands them into per-tenant DuckDB hot catalogs, maintains tiered Parquet
 segments, materializes rollups, and exposes read-only query endpoints.
 
+### Features
+
+| Area | Capability |
+|---|---|
+| **Ingest** | HTTP `POST /{ns}/ingest/{artifact}` (Parquet windows) and optional Arrow Flight `DoPut` when `FLIGHT_ADDR` is set — shared validation chain, lands in `hot_current`. |
+| **Hot window** | Time-bounded ingest buffer (`HOT_WINDOW_*`); rolled to `hot_prev`, flushed to L0 on schedule (`FLUSH_TICK_SECONDS`) or opportunistically on ingest. |
+| **Hot snapshot** | Near-real-time export of `hot_current` to `hot/current.parquet` (`HOT_SNAPSHOT_SECONDS`). |
+| **Tiered storage** | Immutable Parquet segments `L0`…`L{n}` (`MAX_TIER`); Lucene-style merge compaction when `SEGMENTS_PER_TIER` reached. |
+| **Merges** | Background tier merges (`MERGE_TICK_SECONDS`); honors `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT`. |
+| **Rollups** | Downsampled Parquet under `rollups/{step}/` after L1+ merges (`ROLLUP_STEPS`); same DuckDB caps as merges. |
+| **Retention** | Deletes expired tier segments and rollups (`RETENTION_DAYS`, retention ticker). |
+| **Structured query** | `GET /{ns}/query?start=&end=&step=` — union over hot + tiers + rollups; optional hot-only (`QUERY_HOT_ONLY`). |
+| **Arbitrary SQL** | `POST /{ns}/sql` — read-only SQL in a per-request sandbox; JSON (default) or Arrow IPC stream on the **same route** via `Accept`. |
+| **SQL queue** | Optional in-flight limiter (`SQL_API_QUEUE_ENABLED`, default off) with `429` + `Retry-After` backpressure on data nodes. |
+| **RBAC** | Optional JWT/OIDC + deny-by-default YAML policy (`AUTHZ_POLICY_FILE`); fixed roles `reader` / `writer` / `admin`. |
+| **Cluster modes** | `MODE=standalone` (all-in-one), `client` (owned tenants + local engine), `cluster` (stateless coordinator proxy). |
+| **Metering / stats** | `GET /stats?ns=` — frozen billing JSON + on-disk bytes and compaction CPU seconds. |
+| **Reader/writer split** | `RUN_JOBS=false` disables background maintenance on a node (query/ingest only). |
+| **Tenant engine LRU** | `MAX_OPEN_TENANTS` caps resident per-tenant DuckDB handles. |
+
+Memory sizing: [`MEMORY.md`](MEMORY.md). Full env reference: [`CONFIG.md`](CONFIG.md) §14.
+
 ### Deployment modes (`MODE`)
 
 Bootstrap **`MODE`** selects one of three roles (default **`standalone`**):
@@ -44,7 +66,7 @@ the full path + query string via `httputil.ReverseProxy`.
 
 When **`AUTHZ_POLICY_FILE`** is set, RBAC is enforced on HTTP data and admin
 routes in **all** modes (standalone, client, cluster coordinator, and client
-leaves). See [RBAC](#rbac-jwtoidc--per-tenant-roles) below.
+leaves). See [RBAC](#rbac) below.
 
 **Future / out of scope:** routing ingest, admin, `/stats`, or `/ensure`
 through the coordinator; scatter-gather across clients; dynamic service
@@ -52,52 +74,66 @@ discovery; per-client mTLS; health-aware routing and failover.
 
 ---
 
-## RBAC (JWT/OIDC + per-tenant roles)
+## RBAC
 
-Threat model: **OWASP BOLA** (cross-tenant access) and privilege escalation.
-Identity is a verified **JWT** (OIDC/JWKS); authorization is a **deny-by-default
-YAML policy** with fixed roles, hot-reloaded from a mounted file.
+Self-contained guide for operators and integrators. RBAC is **optional** — set
+`AUTHZ_POLICY_FILE` to enable; leave unset for legacy static-token auth.
 
-### Precedence vs `AUTH_MODE`
+### When RBAC is on
 
-When **`AUTHZ_POLICY_FILE`** is set, RBAC is **authoritative** on HTTP query,
-ingest, ensure, and stats routes — static `ADMIN_TOKEN` / `INGEST_TOKEN` gates
-are not used for those routes. When the policy file is unset, behavior is
-unchanged (legacy `AUTH_MODE` + tokens).
+HTTP query, ingest, ensure, stats, and `/sql` routes require:
 
-**Arrow Flight is HTTP-only for RBAC.** JWT/RBAC middleware does not protect
-Flight `DoPut`. When RBAC is enabled and `FLIGHT_ADDR` is set, startup **fails**
-if `AUTH_MODE=none` — operators must configure a non-`none` Flight auth mode
-(`bearer`, `mtls`, or `trusted-header`) or disable Flight. HTTP ingest under
-RBAC uses JWT; Flight keeps the operator-configured `AUTH_MODE` independently.
+1. A verified **JWT** in `Authorization: Bearer <token>`.
+2. A **binding** in the mounted policy file granting the requested **action** on
+   the path **tenant** (`ns`).
 
-### Identity (`internal/store/auth`)
+Static `ADMIN_TOKEN` / `INGEST_TOKEN` gates are **not** used on those HTTP
+routes when RBAC is enabled. `AUTH_MODE` still governs **Arrow Flight** independently.
 
-- Bearer JWT in `Authorization: Bearer <token>`.
-- Signature verified against JWKS from OIDC discovery (`OIDC_ISSUER`), static
-  file (`OIDC_JWKS_FILE`), or URL (`OIDC_JWKS_URL`).
-- Validates `iss`, `aud` (`OIDC_AUDIENCE`, comma-separated), `exp`/`nbf`/`iat`.
-- Principal = non-empty `sub`. Client identity headers (`X-Tenant`, `X-User`, …)
-  are **ignored**.
+### Identity (JWT / OIDC)
 
-### Authorization (`internal/store/authz`)
+Configuration (all required when RBAC is on except JWKS source):
 
-Fixed roles:
-
-| Role | Actions |
+| Env | Purpose |
 |---|---|
-| `reader` | `query` |
-| `writer` | `ingest` |
-| `admin` | `query`, `ingest`, `ensure`, `stats` |
+| `OIDC_ISSUER` | Expected JWT `iss`; used for OIDC discovery when JWKS file/URL unset. |
+| `OIDC_AUDIENCE` | Comma-separated accepted `aud` values (bind k8s SA tokens to this audience). |
+| `OIDC_JWKS_URL` | Optional static JWKS URL instead of discovery. |
+| `OIDC_JWKS_FILE` | Optional mounted JWKS JSON (air-gapped / Vault-rendered). |
 
-Policy file (YAML):
+Verification behavior:
+
+- Signature checked against JWKS (discovery, URL, or file).
+- Validates `iss`, `aud`, `exp` / `nbf` / `iat`.
+- **`alg=none` and algorithm-confusion (e.g. HMAC vs RSA) tokens are rejected.**
+- Principal = non-empty JWT `sub` claim.
+- Identity headers (`X-Tenant`, `X-User`, …) are **ignored** — only the JWT counts.
+
+Missing or invalid JWT → **`401 unauthorized`**.
+
+### Roles and HTTP actions
+
+Three fixed roles; custom roles are not supported.
+
+| Role | HTTP actions |
+|---|---|
+| `reader` | `query` — `GET /{ns}/query`, `POST /{ns}/sql` |
+| `writer` | `ingest` — `POST /{ns}/ingest/{artifact}` |
+| `admin` | `query`, `ingest`, `ensure`, `stats` — all of the above plus `POST /admin/tenants/{ns}/ensure` and `GET /stats` |
+
+A principal with `reader` on tenant A cannot ingest, ensure, or read stats for A.
+A `writer` cannot query. Only `admin` covers provisioning and billing stats.
+
+### Policy file format
+
+Deny-by-default YAML mounted at `AUTHZ_POLICY_FILE`:
 
 ```yaml
 bindings:
-  - subject: "system:serviceaccount:teamA:ingest"
+  - subject: "system:serviceaccount:team-a:ingest"
     role: writer
     tenants: ["team-a"]
-  - subject: "alice@corp"
+  - subject: "alice@corp.example"
     role: reader
     tenants: ["team-a", "team-b"]
   - subject: "platform-admin"
@@ -105,46 +141,90 @@ bindings:
     tenants: ["*"]
 ```
 
-- `tenants: ["*"]` grants the role on all tenants (operator blast radius).
-- Invalid policy at **startup** → process exit. Invalid policy on **reload** →
-  keep last-good policy and log (never fail-open).
-- Hot reload: poll file mtime every `AUTHZ_RELOAD_SECONDS` (default 15s).
+- **`subject`** — must match JWT `sub` exactly.
+- **`role`** — `reader`, `writer`, or `admin` only.
+- **`tenants`** — list of namespace strings, or `["*"]` for all tenants (high blast radius).
+
+Invalid policy at **startup** → process exit. Invalid policy on **reload** → keep
+last-good policy and log (never fail-open).
+
+**Hot reload:** poll file mtime every `AUTHZ_RELOAD_SECONDS` (default `15`).
 
 ### HTTP status semantics (anti-enumeration)
 
-| Condition | Status |
-|---|---|
-| Missing / invalid JWT | `401 unauthorized` |
-| Authenticated but not authorized for tenant | `404 unknown tenant` (same body as unknown tenant) |
-| Authorized for tenant but role lacks action | `403 forbidden` |
+| Condition | Status | Body |
+|---|---|---|
+| Missing / invalid JWT | `401` | `unauthorized` |
+| Authenticated, no binding for tenant | `404` | `unknown tenant` |
+| Bound for tenant, role lacks action | `403` | `forbidden` |
+
+Unauthorized tenants return the **same** `404` body as a malformed or unknown
+tenant (`unknown tenant`) — byte-identical across handlers, cluster router, and
+client guard. This blocks tenant enumeration (OWASP BOLA).
 
 ### `/stats` scoping
 
-When RBAC is on: `GET /stats?ns=X` requires `stats` on `X` (else `404`).
-`GET /stats` without `ns` aggregates only tenants the principal has `stats`
-on (`*`-admin sees all; scoped admin sees its tenants; non-admin → `403`).
+- `GET /stats?ns=X` — requires `stats` action on `X`; else `404` or `403` as above.
+- `GET /stats` (no `ns`) — aggregates only tenants the principal may `stats` on;
+  `*`-admin sees all; principals with no `stats` scope → `403`.
+
+### Arrow Flight (fail-fast)
+
+RBAC middleware covers **HTTP only**. Flight `DoPut` keeps operator `AUTH_MODE`
+(`bearer`, `mtls`, `trusted-header`).
+
+If `AUTHZ_POLICY_FILE` is set **and** `FLIGHT_ADDR` is set **and**
+`AUTH_MODE=none`, startup **fails** with an explicit error. Operators must either:
+
+- Configure non-`none` Flight auth, or
+- Disable Flight (`FLIGHT_ADDR` unset).
+
+HTTP ingest under RBAC always uses JWT regardless of `AUTH_MODE`.
 
 ### Cluster defense-in-depth
 
-- **Coordinator:** authenticate + authorize **before** routing; denied tenants
-  return `401`/`403`/`404` with **no upstream contact**; forward the original JWT.
-- **Client:** re-verify JWT and re-authorize in addition to `OwnedTenantGuard`.
+| Layer | Behavior |
+|---|---|
+| **Coordinator** (`MODE=cluster`) | Authenticate + authorize **before** reverse-proxy; denied tenants get `401`/`403`/`404` with **no upstream contact**; forwards original JWT. No engine, ingest, jobs, or `/sql` queue on the coordinator. |
+| **Client** (`MODE=client`) | Re-verify JWT and re-authorize; **`OwnedTenantGuard`** returns `404` for tenants not in `CLIENT_TENANTS` before the engine runs. |
 
-### Kubernetes wiring
+### Kubernetes integration
 
-1. Mount a **ConfigMap** (or Vault Agent-rendered file) at e.g.
-   `/etc/prism/rbac/policy.yaml` and set `AUTHZ_POLICY_FILE`.
-2. Use a **projected ServiceAccount token** with audience bound to
-   `OIDC_AUDIENCE` (matches your IdP / API server issuer config).
-3. Set `OIDC_ISSUER` (or `OIDC_JWKS_URL` / `OIDC_JWKS_FILE`) and
-   `OIDC_AUDIENCE`. The chart exposes optional values (default off).
+1. Mount policy YAML (ConfigMap or Vault Agent template) and set
+   `AUTHZ_POLICY_FILE=/etc/prism/rbac/policy.yaml`.
+2. Issue **projected ServiceAccount tokens** with `audience` matching
+   `OIDC_AUDIENCE` (align with API server `--service-account-issuer`).
+3. Set `OIDC_ISSUER` to the cluster issuer URL, or mount JWKS via
+   `OIDC_JWKS_FILE` when discovery is unavailable.
+4. Bind each workload's SA `sub` (`system:serviceaccount:ns:name`) in the policy.
 
-### Vault wiring
+Example pod env fragment:
 
-1. Vault Agent renders the policy YAML and a short-lived JWT into a shared
-   `emptyDir` mount.
-2. Point `AUTHZ_POLICY_FILE` and configure OIDC env to trust Vault's JWKS /
-   issuer for the rendered token.
+```yaml
+env:
+  - name: AUTHZ_POLICY_FILE
+    value: /etc/prism/rbac/policy.yaml
+  - name: OIDC_ISSUER
+    value: https://kubernetes.default.svc.cluster.local
+  - name: OIDC_AUDIENCE
+    value: prism-store
+volumeMounts:
+  - name: rbac-policy
+    mountPath: /etc/prism/rbac
+    readOnly: true
+```
+
+### Vault / secrets integration
+
+1. **Policy file** — Vault Agent (or CSI provider) renders `policy.yaml` into a
+   shared volume; point `AUTHZ_POLICY_FILE` at the rendered path.
+2. **JWKS** — render static JWKS to a file (`OIDC_JWKS_FILE`) or expose a
+   Vault OIDC/JWT auth JWKS URL (`OIDC_JWKS_URL`).
+3. **Client tokens** — workloads obtain short-lived JWTs from Vault (or k8s SA
+   tokens) with `aud` matching `OIDC_AUDIENCE`; rotate by updating bindings or
+   token TTL, not store restarts.
+4. On policy rotation, rely on hot reload; on JWKS rotation, update the mounted
+   file or URL — verifier picks up keys on next validation.
 
 ---
 
@@ -192,45 +272,19 @@ Flight bearer auth mirrors HTTP via gRPC metadata `authorization`.
 
 ## Configuration (environment)
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `LISTEN_ADDR` | `:8080` | HTTP bind address |
-| `FLIGHT_ADDR` | _(empty)_ | Flight `DoPut` bind address; empty disables Flight |
-| `DATA_DIR` | `/data` | Shared data root for all tenants |
-| `ALLOWED_ARTIFACTS` | `metrics-raw` | Comma-separated ingest artifact types |
-| `MAX_BODY_BYTES` | `268435456` | Max HTTP ingest body (256 MiB) |
-| `INGEST_TOKEN` | _(empty)_ | Static bearer token for `AUTH_MODE=bearer` |
-| `AUTH_MODE` | `none` | `none` \| `bearer` \| `mtls` \| `trusted-header` |
-| `ROUTE_PREFIX` | _(empty)_ | Optional ingest path prefix |
-| `HOT_WINDOW_SECONDS` | _(unset)_ | Hot-window duration in seconds (overrides minutes when set) |
-| `HOT_WINDOW_MINUTES` | `10` | Hot-window duration in minutes when seconds unset |
-| `MaxOpenTenants` | `32` | Bounded LRU of open per-tenant DuckDB handles |
-| `RowGroupSize` | `1000000` | Parquet row-group size for flush, snapshot, and merge COPY |
-| `SEGMENTS_PER_TIER` | `6` | Lucene-style merge trigger: minimum live segments at a tier before compaction |
-| `MAX_SEGMENT_BYTES` | `2147483648` | Seal threshold (2 GiB); segments at or above this size are never merge inputs |
-| `RETENTION_DAYS` | `15` | Delete tier segments and rollups whose max timestamp is strictly before `now − N days` |
-| `ROLLUP_STEPS` | `1m,5m,1h` | Comma-separated downsampling intervals materialized after L1+ merges |
-| `MAX_TIER` | `8` | Highest tier directory scanned (`L0`…`L8`) |
-| `HOT_SNAPSHOT_SECONDS` | `15` | Hot snapshot export ticker interval |
-| `FLUSH_TICK_SECONDS` | `30` | Hot→L0 flush ticker interval |
-| `MERGE_TICK_SECONDS` | `60` | Tier merge ticker interval (at most one merge action per tenant per tick) |
-| `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies |
-| `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset |
-| `E2E_EXPOSE_QUERY_SQL` | _(empty)_ | When `1`, query JSON includes generated SQL (e2e/regression only) |
-| `QUERY_HOT_ONLY` | `false` | When `true`, HTTP query unions only `hot_current`/`hot_prev` (no tier or rollup Parquet reads). Grafana `print-view-sql` is unchanged. |
-| `SQL_API_ENABLED` | `true` | When `false`, `POST /{ns}/sql` is not registered. |
-| `SQL_API_MAX_ROWS` | `100000` | Maximum rows returned per SQL request (truncates with `"truncated": true`). |
-| `SQL_API_TIMEOUT_SECONDS` | `30` | Per-query timeout for arbitrary SQL. |
-| `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum POST `/sql` JSON body size (1 MiB). |
-| `DUCKDB_MEMORY_LIMIT` | _(empty)_ | DuckDB `memory_limit` for engine and SQL sandbox when set. |
-| `RUN_JOBS` | `true` | When `false`, disables all background maintenance (hot snapshot, flush, merge, rollups, retention). Ingest and query still run; hot data will not flush or compact and retention will not delete. |
-| `ADMIN_LISTEN_ADDR` | _(empty)_ | When set, binds admin/stats/query on a second HTTP server (see below) |
-| `ADMIN_TOKEN` | _(empty)_ | Static bearer token for admin-plane routes when set |
-| `MODE` | `standalone` | Deployment role: `standalone`, `client`, or `cluster` (see Role § above) |
-| `CLIENT_TENANTS` | _(empty)_ | Owned tenants for `client` mode (comma-separated) |
-| `CLUSTER_CLIENTS` | _(empty)_ | Tenant→client base URL map for `cluster` mode (`tenant=http://host:port,...`) |
+All `prism-store` environment variables are documented in
+[`CONFIG.md`](CONFIG.md) §14 (authoritative table). Memory model and sizing:
+[`MEMORY.md`](MEMORY.md).
 
-See [`CONFIG.md`](CONFIG.md) §14 for the full `prism-store` env reference.
+Notable groups:
+
+- **Listen / routing:** `LISTEN_ADDR`, `ADMIN_LISTEN_ADDR`, `ROUTE_PREFIX`, `MODE`, `CLIENT_TENANTS`, `CLUSTER_CLIENTS`
+- **Ingest / Flight:** `DATA_DIR`, `ALLOWED_ARTIFACTS`, `MAX_BODY_BYTES`, `FLIGHT_ADDR`, `AUTH_MODE`, `INGEST_TOKEN`
+- **Hot / lifecycle:** `HOT_WINDOW_*`, tickers, `SEGMENTS_PER_TIER`, `MAX_SEGMENT_BYTES`, `RETENTION_*`, `ROLLUP_STEPS`, `MAX_TIER`, `RUN_JOBS`
+- **Query / SQL:** `QUERY_HOT_ONLY`, `SQL_API_*`, `SQL_API_QUEUE_*`, `E2E_EXPOSE_QUERY_SQL`
+- **DuckDB governance:** `DUCKDB_THREADS`, `DUCKDB_MEMORY_LIMIT`, `MAX_OPEN_TENANTS`
+- **RBAC:** `AUTHZ_POLICY_FILE`, `OIDC_*`, `AUTHZ_RELOAD_SECONDS`
+- **Legacy admin token:** `ADMIN_TOKEN` (RBAC off only)
 
 ---
 
@@ -293,7 +347,10 @@ On first tenant open (once per tenant, gated by `.legacy-import-done`):
 
 ### Tenant LRU
 
-Open DuckDB handles are cached in a bounded LRU (default 32 tenants, `MaxOpenTenants`). Eviction closes the oldest connection. A single mutex guards the LRU and the per-tenant `flushAt` schedule map. `Close()` evicts all handles.
+Open DuckDB handles are cached in a bounded LRU sized by `MAX_OPEN_TENANTS`
+(default `32`). Eviction closes the oldest connection. A single mutex guards the
+LRU and the per-tenant `flushAt` schedule map. `Close()` evicts all handles.
+Each open tenant engine uses `SetMaxOpenConns(1)`.
 
 ### On-disk permissions
 
@@ -314,7 +371,8 @@ Background work runs in one goroutine with four independent tickers started from
 
 ### Tiered compaction (`internal/store/merge`)
 
-Lucene **TieredMergePolicy** analogue over immutable Parquet tiers:
+Lucene **TieredMergePolicy** analogue over immutable Parquet tiers. Merge DuckDB
+connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store config.
 
 - **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs.
 - **Trigger:** when a tier has ≥ `SEGMENTS_PER_TIER` (default 6) live segments, the planner groups by size level (floor-rounded log scale), picks the first time-adjacent contiguous run (gap ≤ one segment span), and shrinks the candidate set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`.
@@ -325,7 +383,12 @@ Path helpers live in `internal/store/layout` (`TierDir`, `RollupDir`, `ToSlash`)
 
 ### Rollups (`internal/store/rollup`)
 
-After a merge promotes to **L1 or above**, the store materializes downsampled Parquet under `rollups/{step}/` for each step in `ROLLUP_STEPS` (default `1m,5m,1h`). Schema: `bucket`, `"__name__"`, `avg`, `min`, `max`, `count`, `sum` from `time_bucket(step, ts)` grouped by bucket and name. L0 merges do not build rollups (avoids rework on volatile data).
+After a merge promotes to **L1 or above**, the store materializes downsampled
+Parquet under `rollups/{step}/` for each step in `ROLLUP_STEPS` (default
+`1m,5m,1h`). Schema: `bucket`, `"__name__"`, `avg`, `min`, `max`, `count`, `sum`
+from `time_bucket(step, ts)` grouped by bucket and name. L0 merges do not build
+rollups (avoids rework on volatile data). Rollup DuckDB workers apply the same
+`DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT` as the engine and merges.
 
 ### Retention
 
@@ -496,8 +559,31 @@ OWASP API1 BOLA.
 | `SQL_API_TIMEOUT_SECONDS` | `30` | Query timeout (context cancel) |
 | `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum JSON request body (1 MiB) |
 | `SQL_API_ENABLED` | `true` | Register route when `true` |
-| `DUCKDB_MEMORY_LIMIT` | _(empty)_ | Sandbox memory cap when set |
-| `DUCKDB_THREADS` | _(empty)_ | Sandbox thread cap when set |
+| `DUCKDB_MEMORY_LIMIT` | _(empty)_ | Sandbox (and engine) memory cap when set |
+| `DUCKDB_THREADS` | _(empty)_ | Sandbox (and engine) thread cap when `> 0` |
+| `SQL_API_QUEUE_ENABLED` | `false` | Enable in-flight limiter (data nodes only) |
+| `SQL_API_MAX_INFLIGHT` | `4` | Max concurrent `/sql` when queue on |
+| `SQL_API_MAX_QUEUE` | `64` | Max waiters when queue on |
+| `SQL_API_QUEUE_TIMEOUT_MS` | `5000` | Max wait for slot; then `429` |
+
+#### In-flight queue (optional)
+
+When `SQL_API_QUEUE_ENABLED=true` on a **data node** (standalone or client —
+**not** the cluster coordinator), middleware order is:
+
+**auth → `OwnedTenantGuard` → limiter → `SQLHandler`**
+
+Cheap auth/guard rejections do not consume a slot. At most
+`SQL_API_MAX_INFLIGHT` requests execute concurrently; additional requests wait up
+to `SQL_API_QUEUE_TIMEOUT_MS` for a slot, with at most `SQL_API_MAX_QUEUE`
+waiters. When the wait queue is full, wait times out, or the client cancels →
+**`429 Too Many Requests`**, body `too many concurrent queries`, header
+**`Retry-After: 1`**.
+
+Default **off** — zero behavior change from prior releases. One shared limiter
+serves public and admin HTTP planes on the same process.
+
+Sizing: see [`MEMORY.md`](MEMORY.md) (`MAX_INFLIGHT × DUCKDB_THREADS ≈ cores`).
 
 ### Auth
 
@@ -593,6 +679,9 @@ Graceful shutdown: `SIGINT` / `SIGTERM` → `Shutdown` with a 10s timeout.
 Measured on prod node `sunset` (`metrics-raw`, zstd Parquet). Use these ratios — not
 a flat “10 MB per 5k/s” rule (that understates DuckDB hot-window memory by ~100×).
 
+For DuckDB instance caps, `/sql` queue sizing, and the reader/writer split see
+[`MEMORY.md`](MEMORY.md).
+
 | Signal | Measurement |
 |--------|-------------|
 | Idle | ~0.0004 cores, ~8 MiB RSS |
@@ -632,6 +721,8 @@ installed by the base chart.
 
 ## Related docs
 
+- [`MEMORY.md`](MEMORY.md) — memory model, DuckDB caps, `/sql` queue sizing.
 - [`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md) — artifact taxonomy and Parquet schemas.
+- [`CONFIG.md`](CONFIG.md) §14 — complete env reference.
 - [`DESIGN.md`](DESIGN.md) §15 — ADR (naming, monorepo layout, CGO decision).
 - [`MIGRATION.md`](MIGRATION.md) — `prism-proxy` → `prism-store` cutover plan + env map (#30).

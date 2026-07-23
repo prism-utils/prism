@@ -33,7 +33,7 @@ func TestLifecycleIngestFlushMergeRollupsAndRetention(t *testing.T) {
 	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: hotWindow}, clock)
 	t.Cleanup(func() { _ = eng.Close() })
 
-	runner := NewRunner(Config{
+	runner := NewRunner(&Config{
 		DataDir:         dataDir,
 		SegmentsPerTier: 6,
 		MaxSegmentBytes: 1 << 30,
@@ -184,7 +184,7 @@ func TestRetentionRollupFiles(t *testing.T) {
 	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
 	t.Cleanup(func() { _ = eng.Close() })
 
-	runner := NewRunner(Config{
+	runner := NewRunner(&Config{
 		DataDir:       dataDir,
 		RetentionDays: 15,
 		RollupSteps:   "1m",
@@ -215,7 +215,7 @@ func TestTickRetentionSecondPassNoError(t *testing.T) {
 	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
 	t.Cleanup(func() { _ = eng.Close() })
 
-	runner := NewRunner(Config{
+	runner := NewRunner(&Config{
 		DataDir:       dataDir,
 		RetentionDays: 15,
 		MaxTier:       8,

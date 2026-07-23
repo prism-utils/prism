@@ -479,7 +479,7 @@ func TestQueryRetentionExpiredRangeEmpty(t *testing.T) {
 	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
 	t.Cleanup(func() { _ = eng.Close() })
 
-	runner := lifecycle.NewRunner(lifecycle.Config{
+	runner := lifecycle.NewRunner(&lifecycle.Config{
 		DataDir:       dataDir,
 		RetentionDays: 15,
 		MaxTier:       8,

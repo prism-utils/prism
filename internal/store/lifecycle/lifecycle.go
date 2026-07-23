@@ -21,6 +21,8 @@ type Config struct {
 	RetentionDays   int
 	RollupSteps     string
 	MaxTier         int
+	Threads         int
+	MemoryLimit     string
 }
 
 // Runner executes flush, merge, and retention on a ticker schedule.
@@ -31,14 +33,18 @@ type Runner struct {
 }
 
 // NewRunner builds a lifecycle runner.
-func NewRunner(cfg Config, eng *engine.Engine, now func() time.Time) *Runner {
+func NewRunner(cfg *Config, eng *engine.Engine, now func() time.Time) *Runner {
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	c := *cfg
 	if now == nil {
 		now = time.Now
 	}
-	if cfg.MaxTier <= 0 {
-		cfg.MaxTier = 8
+	if c.MaxTier <= 0 {
+		c.MaxTier = 8
 	}
-	return &Runner{cfg: cfg, eng: eng, clock: now}
+	return &Runner{cfg: c, eng: eng, clock: now}
 }
 
 // TickHotSnapshot exports near-real-time hot parquet snapshots for Grafana.
@@ -72,7 +78,8 @@ func (r *Runner) TickMerge() error {
 }
 
 func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
-	segs, err := merge.ScanAllTiers(r.cfg.DataDir, tenant, r.cfg.MaxTier)
+	caps := merge.DuckDBCaps{Threads: r.cfg.Threads, MemoryLimit: r.cfg.MemoryLimit}
+	segs, err := merge.ScanAllTiers(r.cfg.DataDir, tenant, r.cfg.MaxTier, caps)
 	if err != nil {
 		return err
 	}
@@ -81,7 +88,12 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 		return nil
 	}
 	action := actions[0]
-	x, err := merge.NewExecutor(merge.ExecutorConfig{DataDir: r.cfg.DataDir, Tenant: tenant})
+	x, err := merge.NewExecutor(merge.ExecutorConfig{
+		DataDir:     r.cfg.DataDir,
+		Tenant:      tenant,
+		Threads:     r.cfg.Threads,
+		MemoryLimit: r.cfg.MemoryLimit,
+	})
 	if err != nil {
 		return err
 	}
@@ -98,7 +110,10 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 		}
 	}
 	if action.DestTier >= 1 {
-		rb, err := rollup.NewBuilder(r.cfg.DataDir, tenant, rollup.ParseSteps(r.cfg.RollupSteps))
+		rb, err := rollup.NewBuilder(r.cfg.DataDir, tenant, rollup.ParseSteps(r.cfg.RollupSteps), rollup.BuilderConfig{
+			Threads:     r.cfg.Threads,
+			MemoryLimit: r.cfg.MemoryLimit,
+		})
 		if err != nil {
 			return err
 		}
@@ -125,7 +140,9 @@ func (r *Runner) TickRetention() error {
 	cutoff := now.Add(-time.Duration(retDays) * 24 * time.Hour)
 
 	for _, tenant := range tenants {
-		segs, err := merge.ScanAllTiers(r.cfg.DataDir, tenant, r.cfg.MaxTier)
+		segs, err := merge.ScanAllTiers(r.cfg.DataDir, tenant, r.cfg.MaxTier, merge.DuckDBCaps{
+			Threads: r.cfg.Threads, MemoryLimit: r.cfg.MemoryLimit,
+		})
 		if err != nil {
 			return err
 		}

@@ -25,7 +25,7 @@ func TestRunBackgroundLoopStopsOnContextCancel(t *testing.T) {
 	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, time.Now)
 	t.Cleanup(func() { _ = eng.Close() })
 
-	runner := lifecycle.NewRunner(lifecycle.Config{
+	runner := lifecycle.NewRunner(&lifecycle.Config{
 		DataDir: dataDir,
 		MaxTier: 8,
 	}, eng, time.Now)
@@ -104,7 +104,7 @@ func TestVersionOutput(t *testing.T) {
 
 func TestNewServeMuxRoutes(t *testing.T) {
 	dir := t.TempDir()
-	mux := newServeMux(&serverConfig{dataDir: dir}, nil, nil, planeCombined, nil, nil)
+	mux := newServeMux(&serverConfig{dataDir: dir}, nil, nil, planeCombined, nil, nil, nil)
 
 	for _, path := range []string{"/healthz", "/readyz"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
@@ -145,6 +145,46 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	if !cfg.runJobs {
 		t.Fatalf("runJobs = false, want true by default")
+	}
+	if cfg.sqlAPIQueueEnabled {
+		t.Fatal("sqlAPIQueueEnabled = true, want false by default")
+	}
+	if cfg.sqlAPIMaxInFlight != 4 {
+		t.Fatalf("sqlAPIMaxInFlight = %d, want 4", cfg.sqlAPIMaxInFlight)
+	}
+	if cfg.sqlAPIMaxQueue != 64 {
+		t.Fatalf("sqlAPIMaxQueue = %d, want 64", cfg.sqlAPIMaxQueue)
+	}
+	if cfg.sqlAPIQueueTimeout != 5*time.Second {
+		t.Fatalf("sqlAPIQueueTimeout = %v, want 5s", cfg.sqlAPIQueueTimeout)
+	}
+	if cfg.maxOpenTenants != 32 {
+		t.Fatalf("maxOpenTenants = %d, want 32", cfg.maxOpenTenants)
+	}
+}
+
+func TestLoadConfigSQLQueueFromEnv(t *testing.T) {
+	clearStoreEnv(t)
+	t.Setenv("SQL_API_QUEUE_ENABLED", "true")
+	t.Setenv("SQL_API_MAX_INFLIGHT", "8")
+	t.Setenv("SQL_API_MAX_QUEUE", "128")
+	t.Setenv("SQL_API_QUEUE_TIMEOUT_MS", "3000")
+	t.Setenv("MAX_OPEN_TENANTS", "16")
+	cfg := loadConfig()
+	if !cfg.sqlAPIQueueEnabled {
+		t.Fatal("sqlAPIQueueEnabled = false, want true")
+	}
+	if cfg.sqlAPIMaxInFlight != 8 {
+		t.Fatalf("sqlAPIMaxInFlight = %d, want 8", cfg.sqlAPIMaxInFlight)
+	}
+	if cfg.sqlAPIMaxQueue != 128 {
+		t.Fatalf("sqlAPIMaxQueue = %d, want 128", cfg.sqlAPIMaxQueue)
+	}
+	if cfg.sqlAPIQueueTimeout != 3*time.Second {
+		t.Fatalf("sqlAPIQueueTimeout = %v, want 3s", cfg.sqlAPIQueueTimeout)
+	}
+	if cfg.maxOpenTenants != 16 {
+		t.Fatalf("maxOpenTenants = %d, want 16", cfg.maxOpenTenants)
 	}
 }
 
@@ -200,6 +240,8 @@ func clearStoreEnv(t *testing.T) {
 		"LISTEN_ADDR", "DATA_DIR", "FLIGHT_ADDR", "ALLOWED_ARTIFACTS",
 		"MAX_BODY_BYTES", "INGEST_TOKEN", "AUTH_MODE", "ROUTE_PREFIX",
 		"QUERY_HOT_ONLY", "RUN_JOBS", "MODE", "CLIENT_TENANTS", "CLUSTER_CLIENTS",
+		"SQL_API_QUEUE_ENABLED", "SQL_API_MAX_INFLIGHT", "SQL_API_MAX_QUEUE",
+		"SQL_API_QUEUE_TIMEOUT_MS", "MAX_OPEN_TENANTS", "DUCKDB_THREADS", "DUCKDB_MEMORY_LIMIT",
 	} {
 		t.Setenv(k, "")
 	}
