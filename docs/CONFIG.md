@@ -18,6 +18,7 @@ knobs see [`DESIGN.md`](DESIGN.md).
 - [11. `prism collect` (Arrow Flight receiver)](#11-prism-collect-arrow-flight-receiver)
 - [12. Shipped example configs](#12-shipped-example-configs)
 - [13. Full annotated example](#13-full-annotated-example)
+- [14. `prism-store` (ingest receiver)](#14-prism-store-ingest-receiver)
 
 ---
 
@@ -689,3 +690,56 @@ Validate it before running:
 ```bash
 PRISM_METRICS_URL=… PRISM_OUT=… PRISM_LOG=… prism validate -config prism.yaml
 ```
+
+---
+
+## 14. `prism-store` (ingest receiver)
+
+`cmd/prism-store` is the durable store server. Ingest is configured entirely
+via environment variables (no YAML config file).
+
+| Variable | Default | Description |
+|---|---|---|
+| `LISTEN_ADDR` | `:8080` | HTTP bind address (`/healthz`, `/readyz`, ingest). |
+| `FLIGHT_ADDR` | _(empty — off)_ | When set, binds an Arrow Flight `DoPut` receiver on this address. |
+| `DATA_DIR` | `/data` | Shared data root for all tenants. |
+| `ALLOWED_ARTIFACTS` | `metrics-raw` | Comma-separated artifact types accepted on ingest routes. |
+| `MAX_BODY_BYTES` | `268435456` | Maximum HTTP ingest body size (256 MiB). |
+| `INGEST_TOKEN` | _(empty)_ | Static bearer token when `AUTH_MODE=bearer`. |
+| `AUTH_MODE` | `none` | Pluggable auth: `none`, `bearer`, `mtls`, `trusted-header`. |
+| `ROUTE_PREFIX` | _(empty)_ | Optional path prefix prepended to ingest routes (e.g. `/prism-proxy`). |
+
+### HTTP routes
+
+| Method | Path | Success | Failure |
+|---|---|---|---|
+| `GET` | `/healthz` | `200` body `ok\n` | — |
+| `GET` | `/readyz` | `200` body `ready\n` | `503` when `DATA_DIR` is not writable |
+| `POST` | `<ROUTE_PREFIX>/{tenant}/ingest/{artifact}` | `204 No Content` | see validation chain below |
+
+When `ROUTE_PREFIX` is empty the ingest path is `/{tenant}/ingest/{artifact}`.
+
+### Ingest validation chain (HTTP and Flight)
+
+Applied in order; the first failure wins:
+
+1. **Auth** — mode-dependent (`401 unauthorized` / `403 forbidden` on tenant mismatch)
+2. **Tenant** — must match `internal/store/tenant` validators (`404 unknown tenant`)
+3. **Artifact** — well-formed and listed in `ALLOWED_ARTIFACTS` (`404 unknown artifact type`)
+4. **Body size** — HTTP only, via `http.MaxBytesReader` (`413 window too large`)
+5. **Land** — `engine.Ingest`; empty body is a no-op (`204`)
+
+### Auth modes
+
+| Mode | Identity source | Path tenant rule |
+|---|---|---|
+| `none` | none (path tenant is authoritative) | no extra check |
+| `bearer` | `Authorization: Bearer <INGEST_TOKEN>` (constant-time compare) | no per-tenant identity |
+| `mtls` | TLS client certificate CN | CN must equal path tenant (`403` on mismatch) |
+| `trusted-header` | `X-Tenant` request header | header must equal path tenant (`403` on mismatch) |
+
+Flight `DoPut` uses the same chain: tenant and artifact come from the
+`FlightDescriptor` path `[tenant, artifact, …]`; bearer auth uses gRPC metadata
+`authorization: Bearer <token>`.
+
+Graceful shutdown: `SIGINT` / `SIGTERM` → HTTP `Shutdown` (10s) and Flight stop.

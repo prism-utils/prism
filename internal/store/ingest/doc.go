@@ -1,3 +1,3 @@
-// Package ingest accepts HTTP-parquet window uploads and lands them as immutable
-// Parquet files under each tenant partition on the shared data volume.
+// Package ingest accepts HTTP-parquet and Arrow Flight window uploads and lands
+// them into the store engine hot catalog with pluggable tenant authentication.
 package ingest
