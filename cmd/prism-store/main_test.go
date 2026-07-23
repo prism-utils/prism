@@ -104,7 +104,7 @@ func TestVersionOutput(t *testing.T) {
 
 func TestNewServeMuxRoutes(t *testing.T) {
 	dir := t.TempDir()
-	mux := newServeMux(&serverConfig{dataDir: dir}, nil, nil, planeCombined)
+	mux := newServeMux(&serverConfig{dataDir: dir}, nil, nil, planeCombined, nil)
 
 	for _, path := range []string{"/healthz", "/readyz"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
@@ -199,7 +199,7 @@ func clearStoreEnv(t *testing.T) {
 	for _, k := range []string{
 		"LISTEN_ADDR", "DATA_DIR", "FLIGHT_ADDR", "ALLOWED_ARTIFACTS",
 		"MAX_BODY_BYTES", "INGEST_TOKEN", "AUTH_MODE", "ROUTE_PREFIX",
-		"QUERY_HOT_ONLY", "RUN_JOBS",
+		"QUERY_HOT_ONLY", "RUN_JOBS", "MODE", "CLIENT_TENANTS", "CLUSTER_CLIENTS",
 	} {
 		t.Setenv(k, "")
 	}

@@ -90,7 +90,7 @@ func TestRunServeDualShutdownStopsBothServers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(ctx, cfg, logger)
+		done <- runServe(ctx, cfg, logger, nil)
 	}()
 
 	waitHTTPReady(t, "http://"+publicAddr)
@@ -129,7 +129,7 @@ func TestRunServePublicListenAddrInUse(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(ctx, cfg, logger)
+		done <- runServe(ctx, cfg, logger, nil)
 	}()
 
 	select {
@@ -166,7 +166,7 @@ func TestRunServeAdminListenAddrInUse(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(ctx, cfg, logger)
+		done <- runServe(ctx, cfg, logger, nil)
 	}()
 
 	select {
