@@ -1,6 +1,6 @@
 # Spec: prism-store — naming + repository-design ADR + compiling skeleton
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-skeleton`
 - **Owner phase:** orchestrator → developer
@@ -68,12 +68,12 @@ sub-issues (#23–#29) have a home. It blocks all of them (paths/names).
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md): factory/config patterns where relevant, no globals, slog only, atomic comments; skeleton packages are leaf and don't import `pipeline`/each other beyond the documented reuse.
-- [ ] **Gate 2 — Tests cover edge cases** (tenant validator boundaries; readyz unwritable dir; version output).
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (ADR, STORE.md, README/AGENTS/TASKS reflect exactly what landed; no forward-referencing of unbuilt behavior as if present).
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8).
-- [ ] Full docs/REVIEW.md checklist passes.
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md): factory/config patterns where relevant, no globals, slog only, atomic comments; skeleton packages are leaf and don't import `pipeline`/each other beyond the documented reuse.
+- [x] **Gate 2 — Tests cover edge cases** (tenant validator boundaries; readyz unwritable dir; version output).
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (ADR, STORE.md, README/AGENTS/TASKS reflect exactly what landed; no forward-referencing of unbuilt behavior as if present).
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8).
+- [x] Full docs/REVIEW.md checklist passes.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**APPROVE** (2026-07-22). Scope matches #22: ADR §15, compiling no-op `cmd/prism-store`, shared `internal/version`, tenant validators, doc-only `internal/store/**` stubs — no ingest/engine/query/DuckDB/`go-duckdb`. History: `afb05f7 test(store)` precedes `b771aa3 feat(store)`. `make lint test` green (golangci-lint 0 issues; `CGO_ENABLED=1 go test -race ./...` all ok). Builds: `CGO_ENABLED=0 go build ./cmd/prism` exit 0; `go build ./cmd/prism-store` exit 0; `go vet ./...` exit 0. Handlers/tests match spec (healthz `ok\n`, readyz writability 200/`ready\n` vs 503, ReadHeaderTimeout 15s, Shutdown 10s, `cmd/prism` version test unchanged).
