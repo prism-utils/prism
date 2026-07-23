@@ -15,7 +15,7 @@ func TestWriteCPUChart_producesWellFormedSVG(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	base := time.Unix(1700000000, 0).UTC()
-	phases := []PhaseSpan{
+	phases := []monitor.PhaseSpan{
 		{Name: monitor.PhaseIdle, Start: base, End: base.Add(5 * time.Second)},
 		{Name: monitor.PhaseIngest, Start: base.Add(5 * time.Second), End: base.Add(20 * time.Second)},
 	}
@@ -42,7 +42,7 @@ func TestWriteMemoryChart_producesNonEmptySVG(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	base := time.Unix(1700000000, 0).UTC()
-	phases := []PhaseSpan{{Name: monitor.PhaseIdle, Start: base, End: base.Add(5 * time.Second)}}
+	phases := []monitor.PhaseSpan{{Name: monitor.PhaseIdle, Start: base, End: base.Add(5 * time.Second)}}
 	store := []monitor.SamplePoint{{At: base, Phase: monitor.PhaseIdle, RSSBytes: 100 << 20}}
 	ch := []monitor.SamplePoint{{At: base, Phase: monitor.PhaseIdle, RSSBytes: 80 << 20}}
 	path := filepath.Join(dir, "mem.svg")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -30,6 +31,8 @@ type Config struct {
 	HotWindow      time.Duration
 	MaxOpenTenants int
 	RowGroupSize   int
+	Threads        int
+	MemoryLimit    string
 }
 
 // Engine manages lazy-open DuckDB databases per tenant namespace.
@@ -282,7 +285,7 @@ func (e *Engine) open(tenant string) (*tenantEntry, error) {
 	if ent, ok := e.lru.get(tenant); ok {
 		return ent, nil
 	}
-	ent, err := openTenant(e.cfg.DataDir, tenant)
+	ent, err := openTenant(e.cfg.DataDir, tenant, e.cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -317,13 +320,34 @@ func segmentName(now time.Time) string {
 	return fmt.Sprintf("%d-%s.parquet", now.UnixNano(), hex.EncodeToString(buf[:]))
 }
 
-func openTenant(dataDir, tenant string) (*tenantEntry, error) {
+func openTenant(dataDir, tenant string, cfg Config) (*tenantEntry, error) {
 	dir := filepath.Join(dataDir, tenant)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, "engine.duckdb")
-	connector, err := duckdb.NewConnector(path, nil)
+	var initFn func(driver.ExecerContext) error
+	if cfg.Threads > 0 || cfg.MemoryLimit != "" {
+		threads := cfg.Threads
+		memLimit := cfg.MemoryLimit
+		initFn = func(exec driver.ExecerContext) error {
+			ctx := context.Background()
+			if threads > 0 {
+				q := fmt.Sprintf("SET threads=%d", threads)
+				if _, err := exec.ExecContext(ctx, q, nil); err != nil {
+					return fmt.Errorf("engine: set threads: %w", err)
+				}
+			}
+			if memLimit != "" {
+				q := fmt.Sprintf("SET memory_limit='%s'", strings.ReplaceAll(memLimit, "'", "''"))
+				if _, err := exec.ExecContext(ctx, q, nil); err != nil {
+					return fmt.Errorf("engine: set memory_limit: %w", err)
+				}
+			}
+			return nil
+		}
+	}
+	connector, err := duckdb.NewConnector(path, initFn)
 	if err != nil {
 		return nil, fmt.Errorf("engine: open duckdb: %w", err)
 	}

@@ -51,15 +51,15 @@ func TestParseDockerStatsSample_math(t *testing.T) {
 func TestAggregateDockerSamples_deltaIO(t *testing.T) {
 	u := aggregateDockerSamples([]dockerSample{
 		{cpuCores: 1.0, rssBytes: 100, readB: 1000, writeB: 2000, readOps: 10, writeOps: 5, blkioOK: true},
-		{cpuCores: 2.5, rssBytes: 200, readB: 5000, writeB: 8000, readOps: 50, writeOps: 25, blkioOK: true},
+		{cpuCores: 2.5, rssBytes: 200, readB: 4000, writeB: 6000, readOps: 50, writeOps: 25, blkioOK: true},
 	}, 2.0)
 	require.InDelta(t, 1.75, u.CPUCoresMean, 0.01)
 	require.InDelta(t, 2.5, u.CPUCoresPeak, 0.01)
 	require.Equal(t, uint64(200), u.RSSPeakBytes)
-	require.Equal(t, uint64(4000), u.ReadBytes)
-	require.Equal(t, uint64(6000), u.WriteBytes)
+	require.Equal(t, uint64(5000), u.ReadBytes)
+	require.Equal(t, uint64(8000), u.WriteBytes)
 	require.True(t, u.IOAvailable())
 	iops, ok := u.IOPS()
 	require.True(t, ok)
-	require.InDelta(t, 30.0, iops, 0.01)
+	require.InDelta(t, 45.0, iops, 0.01)
 }

@@ -49,11 +49,73 @@ type dockerSample struct {
 	blkioOK  bool
 }
 
-// parseDockerStatsSample extracts one CPU/mem/blkio sample from a stats JSON body.
-func parseDockerStatsSample(body []byte) (cpuCores float64, rssBytes uint64, readB, writeB, readOps, writeOps uint64, blkioOK bool, err error) {
+type dockerCumulative struct {
+	cpuTotalUsageNS uint64
+	rssBytes        uint64
+	readB           uint64
+	writeB          uint64
+	readOps         uint64
+	writeOps        uint64
+	blkioOK         bool
+}
+
+// parseDockerStatsCumulative extracts cumulative counters from one stats JSON body.
+func parseDockerStatsCumulative(body []byte) (dockerCumulative, error) {
 	var st dockerStatsPayload
 	if err := json.Unmarshal(body, &st); err != nil {
-		return 0, 0, 0, 0, 0, 0, false, fmt.Errorf("monitor: docker stats json: %w", err)
+		return dockerCumulative{}, fmt.Errorf("monitor: docker stats json: %w", err)
+	}
+	cur := dockerCumulative{
+		cpuTotalUsageNS: st.CPUStats.CPUUsage.TotalUsage,
+		rssBytes:        st.MemoryStats.Usage,
+	}
+	for _, e := range st.BlkioStats.IoServiceBytesRecursive {
+		cur.blkioOK = true
+		switch strings.ToLower(e.Op) {
+		case "read":
+			cur.readB += e.Value
+		case "write":
+			cur.writeB += e.Value
+		}
+	}
+	for _, e := range st.BlkioStats.IoServicedRecursive {
+		cur.blkioOK = true
+		switch strings.ToLower(e.Op) {
+		case "read":
+			cur.readOps += e.Value
+		case "write":
+			cur.writeOps += e.Value
+		}
+	}
+	return cur, nil
+}
+
+// diffDockerSample converts cumulative counter deltas into per-interval usage.
+func diffDockerSample(prev, cur dockerCumulative, wall time.Duration, at time.Time) dockerSample {
+	s := dockerSample{at: at, rssBytes: cur.rssBytes, blkioOK: cur.blkioOK}
+	if wall > 0 && cur.cpuTotalUsageNS >= prev.cpuTotalUsageNS && prev.cpuTotalUsageNS > 0 {
+		deltaNS := cur.cpuTotalUsageNS - prev.cpuTotalUsageNS
+		s.cpuCores = float64(deltaNS) / float64(wall.Nanoseconds())
+	}
+	if cur.blkioOK {
+		s.readB = deltaU64(cur.readB, prev.readB)
+		s.writeB = deltaU64(cur.writeB, prev.writeB)
+		s.readOps = deltaU64(cur.readOps, prev.readOps)
+		s.writeOps = deltaU64(cur.writeOps, prev.writeOps)
+	}
+	return s
+}
+
+// parseDockerStatsSample extracts one CPU/mem/blkio sample from a stats JSON body
+// using Docker-provided precpu_stats (legacy one-shot path).
+func parseDockerStatsSample(body []byte) (cpuCores float64, rssBytes uint64, readB, writeB, readOps, writeOps uint64, blkioOK bool, err error) {
+	cur, err := parseDockerStatsCumulative(body)
+	if err != nil {
+		return 0, 0, 0, 0, 0, 0, false, err
+	}
+	var st dockerStatsPayload
+	if err := json.Unmarshal(body, &st); err != nil {
+		return 0, 0, 0, 0, 0, 0, false, err
 	}
 	cpuDelta := float64(st.CPUStats.CPUUsage.TotalUsage - st.PreCPUStats.CPUUsage.TotalUsage)
 	sysDelta := float64(st.CPUStats.SystemCPUUsage - st.PreCPUStats.SystemCPUUsage)
@@ -67,29 +129,7 @@ func parseDockerStatsSample(body []byte) (cpuCores float64, rssBytes uint64, rea
 		}
 		cpuCores = (cpuDelta / sysDelta) * float64(cpus)
 	}
-	rssBytes = st.MemoryStats.Usage
-	for _, e := range st.BlkioStats.IoServiceBytesRecursive {
-		blkioOK = true
-		switch strings.ToLower(e.Op) {
-		case "read":
-			readB += e.Value
-		case "write":
-			writeB += e.Value
-		}
-	}
-	for _, e := range st.BlkioStats.IoServicedRecursive {
-		blkioOK = true
-		switch strings.ToLower(e.Op) {
-		case "read":
-			readOps += e.Value
-		case "write":
-			writeOps += e.Value
-		}
-	}
-	if len(st.BlkioStats.IoServiceBytesRecursive) > 0 {
-		blkioOK = true
-	}
-	return cpuCores, rssBytes, readB, writeB, readOps, writeOps, blkioOK, nil
+	return cpuCores, cur.rssBytes, cur.readB, cur.writeB, cur.readOps, cur.writeOps, cur.blkioOK, nil
 }
 
 // aggregateDockerSamples folds per-poll samples into Usage over the full window.
@@ -109,15 +149,16 @@ func aggregateDockerSamples(samples []dockerSample, windowSec float64) Usage {
 			peakRSS = s.rssBytes
 		}
 	}
-	start := samples[0]
-	end := samples[len(samples)-1]
-	readB := deltaU64(end.readB, start.readB)
-	writeB := deltaU64(end.writeB, start.writeB)
-	readOps := deltaU64(end.readOps, start.readOps)
-	writeOps := deltaU64(end.writeOps, start.writeOps)
+	var readB, writeB, readOps, writeOps uint64
+	for _, s := range samples {
+		readB += s.readB
+		writeB += s.writeB
+		readOps += s.readOps
+		writeOps += s.writeOps
+	}
 	duration := windowSec
 	if duration <= 0 && len(samples) > 1 {
-		duration = end.at.Sub(start.at).Seconds()
+		duration = samples[len(samples)-1].at.Sub(samples[0].at).Seconds()
 	}
 	blkioOK := false
 	for _, s := range samples {

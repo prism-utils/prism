@@ -1,6 +1,6 @@
 # Spec: benchmark — idle baseline + dense resource time-series charts + minimal resource caps
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/bench-resource-charts`
 - **Owner phase:** orchestrator → developer
@@ -69,15 +69,15 @@ Everything stays reproducible by anyone cloning the repo.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `engine.Config` gains `Threads`/`MemoryLimit`, applied at DuckDB open; **no-op when unset** (existing engine tests unchanged); a new test asserts the settings take effect (e.g. `SELECT current_setting('threads')` == configured) and that unset preserves defaults. `cmd/prism-store` reads `DUCKDB_THREADS`/`DUCKDB_MEMORY_LIMIT`.
-- [ ] Compose caps ClickHouse (`cpus`+`mem_limit`) and a mounted `config.d` caps `max_threads`/memory to the same budget; the store binary + embedded engine are capped to the same budget; caps recorded in `results.json` env.
-- [ ] Idle baseline sampled before workloads for both systems and rendered as a baseline row + chart region.
-- [ ] Continuous phase-tagged sampling across the whole run: process targets ~20–50 ms; container by counter-diffing the Docker API ~50–100 ms; raw series written to `bench/results-timeseries.*`.
-- [ ] Charts (`bench/charts/*.svg`) for CPU + memory (+ I/O where non-empty) with phase bands + idle region, embedded in `README.md` and `bench/RESULTS.md`; per-phase aggregate tables retained and recomputed from the dense series.
-- [ ] `bench/README.md` + `README.md` document caps, baseline, sampling resolutions + counter-diff rationale, chart artifacts, and the retained caveats.
-- [ ] `make bench` re-run on this host; all artifacts (json, timeseries, RESULTS.md, charts, README) regenerated from the SAME run; correctness gates (metrics count-equality, LIKE-equality) still pass.
-- [ ] Bench-only deps: `CGO_ENABLED=0 go build ./cmd/prism` passes and imports NEITHER the plot lib NOR gopsutil (verify import graph); `go build ./cmd/prism-store` passes; `make tidy` clean.
-- [ ] `make lint test` (`-race`) green; sampler + chart-writer unit-tested (dense-series aggregation, idle window, chart file written & non-empty/well-formed SVG, counter-diff CPU math); goroutines stop cleanly (no leaks); no committed datasets (charts + small results artifacts are the intended committed outputs).
+- [x] `engine.Config` gains `Threads`/`MemoryLimit`, applied at DuckDB open; **no-op when unset** (existing engine tests unchanged); a new test asserts the settings take effect (e.g. `SELECT current_setting('threads')` == configured) and that unset preserves defaults. `cmd/prism-store` reads `DUCKDB_THREADS`/`DUCKDB_MEMORY_LIMIT`.
+- [x] Compose caps ClickHouse (`cpus`+`mem_limit`) and a mounted `config.d` caps `max_threads`/memory to the same budget; the store binary + embedded engine are capped to the same budget; caps recorded in `results.json` env.
+- [x] Idle baseline sampled before workloads for both systems and rendered as a baseline row + chart region.
+- [x] Continuous phase-tagged sampling across the whole run: process targets ~20–50 ms; container by counter-diffing the Docker API ~50–100 ms; raw series written to `bench/results-timeseries.*`.
+- [x] Charts (`bench/charts/*.svg`) for CPU + memory (+ I/O where non-empty) with phase bands + idle region, embedded in `README.md` and `bench/RESULTS.md`; per-phase aggregate tables retained and recomputed from the dense series.
+- [x] `bench/README.md` + `README.md` document caps, baseline, sampling resolutions + counter-diff rationale, chart artifacts, and the retained caveats.
+- [x] `make bench` re-run on this host; all artifacts (json, timeseries, RESULTS.md, charts, README) regenerated from the SAME run; correctness gates (metrics count-equality, LIKE-equality) still pass.
+- [x] Bench-only deps: `CGO_ENABLED=0 go build ./cmd/prism` passes and imports NEITHER the plot lib NOR gopsutil (verify import graph); `go build ./cmd/prism-store` passes; `make tidy` clean.
+- [x] `make lint test` (`-race`) green; sampler + chart-writer unit-tested (dense-series aggregation, idle window, chart file written & non-empty/well-formed SVG, counter-diff CPU math); goroutines stop cleanly (no leaks); no committed datasets (charts + small results artifacts are the intended committed outputs).
 
 ## 6. Mandatory review gates  (reviewer owns)
 

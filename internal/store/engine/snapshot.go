@@ -75,7 +75,7 @@ func (e *Engine) importLegacyMetricsRaw(tenant string) error {
 		return err
 	}
 
-	te, err := openTenant(e.cfg.DataDir, tenant)
+	te, err := openTenant(e.cfg.DataDir, tenant, e.cfg)
 	if err != nil {
 		return err
 	}
