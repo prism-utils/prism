@@ -12,7 +12,8 @@ type Artifacts struct {
 	chartDirName string
 }
 
-// ArtifactPaths returns absolute write paths and repo-relative chart prefixes for profile ("" baseline, "api" RBAC).
+// ArtifactPaths returns absolute write paths and repo-relative chart prefixes for profile
+// ("" baseline, "api" RBAC JSON, "api-arrow" RBAC Arrow transport).
 func ArtifactPaths(repoRoot, profile string) Artifacts {
 	bench := filepath.Join(repoRoot, "bench")
 	suffix := ""

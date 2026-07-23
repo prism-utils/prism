@@ -468,6 +468,14 @@ func (d *cgoDriver) ScanMetricsArrowAPI(ctx context.Context, sqlText string) (in
 	return int64(len(rows)), nil
 }
 
+func (d *cgoDriver) ScanMetricsJSONAPI(ctx context.Context, sqlText string) (int64, error) {
+	out, err := d.postSQL(ctx, sqlText)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(out.Rows)), nil
+}
+
 func (d *cgoDriver) postSQLArrow(ctx context.Context, sqlText string) ([][]any, error) {
 	url := d.BaseURL() + "/" + d.cfg.Tenant + "/sql"
 	body, err := json.Marshal(map[string]string{"sql": sqlText})
@@ -536,8 +544,15 @@ func arrowBenchCellAt(rec arrow.RecordBatch, col, row int64) any {
 		return arr.Value(int(row))
 	case *array.String:
 		return arr.Value(int(row))
+	case *array.Timestamp:
+		return arr.Value(int(row))
 	default:
-		return fmt.Sprint(colArr)
+		// Per-element marshal value; never stringify the whole column array (that
+		// would be O(rows) per cell → O(rows^2) over a large scan).
+		if m, ok := colArr.(interface{ GetOneForMarshal(int) any }); ok {
+			return m.GetOneForMarshal(int(row))
+		}
+		return nil
 	}
 }
 

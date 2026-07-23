@@ -64,6 +64,52 @@ func TestRenderMarkdownRoot_keepsBenchChartPaths(t *testing.T) {
 	require.Contains(t, doc, "![cpu-cores.svg](bench/charts/cpu-cores.svg)")
 }
 
+func TestRenderMarkdown_apiArrowProfile(t *testing.T) {
+	doc := results.RenderMarkdown(&results.Report{
+		Environment: results.Environment{
+			Profile:     "api-arrow",
+			OS:          "linux",
+			Arch:        "amd64",
+			CPUModel:    "test",
+			RAMGiB:      8,
+			MetricsRows: 1000,
+			LogsRows:    1000,
+			ChartPaths:  []string{"bench/charts-api-arrow/cpu-cores.svg", "bench/charts-api-arrow/memory-rss.svg"},
+		},
+		MetricsCountClickHouse: 1000,
+		MetricsCountStore:      1000,
+		LikeCountStore:         10,
+		LikeCountClickHouse:    10,
+		Workloads: []results.Workload{
+			{Name: "count", System: "prism-store", P50Ms: 50, P95Ms: 55, MinMs: 48},
+			{Name: "count", System: "clickhouse", P50Ms: 2, P95Ms: 3, MinMs: 1},
+			{Name: "scan_json", System: "prism-store", P50Ms: 400, P95Ms: 420, MinMs: 390,
+				Usage: &monitor.Usage{CPUCoresMean: 1.0, CPUCoresPeak: 2.0, RSSPeakBytes: 500 * 1024 * 1024, DurationSec: 1}},
+			{Name: "scan_arrow", System: "prism-store", P50Ms: 200, P95Ms: 210, MinMs: 190,
+				Usage: &monitor.Usage{CPUCoresMean: 0.8, CPUCoresPeak: 1.5, RSSPeakBytes: 200 * 1024 * 1024, DurationSec: 1}},
+		},
+	})
+	require.Contains(t, doc, "Arrow transport profile (RBAC on)")
+	require.Contains(t, doc, "scan_json")
+	require.Contains(t, doc, "scan_arrow")
+	require.Contains(t, doc, "JSON vs Arrow")
+	require.Contains(t, doc, "![cpu-cores.svg](charts-api-arrow/cpu-cores.svg)")
+	require.Contains(t, doc, "![memory-rss.svg](charts-api-arrow/memory-rss.svg)")
+	require.Contains(t, doc, "make bench-api-arrow")
+	require.Contains(t, doc, "500.0") // scan_json peak RSS MiB
+	require.Contains(t, doc, "200.0") // scan_arrow peak RSS MiB
+}
+
+func TestRenderMarkdownRoot_apiArrowChartPaths(t *testing.T) {
+	doc := results.RenderMarkdownRoot(&results.Report{
+		Environment: results.Environment{
+			Profile:    "api-arrow",
+			ChartPaths: []string{"bench/charts-api-arrow/cpu-cores.svg"},
+		},
+	})
+	require.Contains(t, doc, "![cpu-cores.svg](bench/charts-api-arrow/cpu-cores.svg)")
+}
+
 func TestRenderMarkdown_resourceUsageWithAndWithoutIOPS(t *testing.T) {
 	ro, wo := uint64(500), uint64(300)
 	withIOPS := monitor.Usage{

@@ -244,6 +244,51 @@ overhead against ClickHouse's fast path.
 
 Full tables + caveats: [`bench/RESULTS-api.md`](bench/RESULTS-api.md). Reproduce: `make bench-api`.
 
+### Arrow transport profile — attached (2026-07-23, `make bench-api-arrow`)
+
+This profile measures store **count** and **aggregation** over HTTP `/sql` with **Arrow IPC**
+transport (lazy-view sandbox + streaming), plus a **JSON-vs-Arrow scan** on the same SQL to
+isolate transport memory and latency — all with RBAC/JWT on every request. It attaches
+beside the JSON `-api` profile above; neither replaces the embedded baseline.
+
+**Latency** (p50 / p95 / min ms; ingest: wall + rows/s; Apple M1 Pro, 2 vCPU / 1024 MiB cap, DuckDB v1.4.1):
+
+| Workload | prism-store (Arrow) | ClickHouse (native) |
+|----------|---------------------|---------------------|
+| ingest | 1.16s · 1,719,589 rows/s | 1.90s · 1,051,625 rows/s |
+| count | 124.6 / 126.0 / 122.5 | 1.3 / 2.3 / 1.0 |
+| aggregation | 137.7 / 139.0 / 135.0 | 9.8 / 29.3 / 8.9 |
+| logs LIKE | 43.9 / 46.7 / 42.9 | 34.3 / 74.0 / 34.0 |
+
+**Scan transport** (store only, same `SELECT … LIMIT 100000` — not vs ClickHouse):
+
+| Transport | p50 / p95 / min (ms) | wire size | rows |
+|-----------|----------------------|-----------|------|
+| JSON | 350.1 / 359.7 / 347.0 | ~8.8 MiB | 100,000 |
+| Arrow | 172.9 / 173.9 / 161.0 | ~5.3 MiB | 100,000 |
+
+**Resource usage** (peak RSS; scan phases isolate JSON-vs-Arrow):
+
+| Workload | System | CPU mean / peak (cores) | Peak RSS (MiB) |
+|----------|--------|-------------------------|----------------|
+| count (Arrow) | prism-store | 1.14 / 2.06 | 413.7 |
+| aggregation (Arrow) | prism-store | 0.98 / 1.86 | 426.1 |
+| scan (JSON) | prism-store | 0.83 / 2.04 | 541.3 |
+| scan (Arrow) | prism-store | 1.03 / 1.90 | 553.4 |
+
+**Impact.** Versus the JSON `-api` profile above (~280–300 ms count/agg, ~471–483 MiB peak
+RSS), the combined lazy-view sandbox (#54) + Arrow transport (#55) roughly **halves count/agg
+latency** (280→125 ms count, ~300→138 ms aggregation). On the 100k-row scan, **Arrow is ~2×
+faster than JSON (173 vs 350 ms) on a ~40% smaller wire** (5.3 vs 8.8 MiB), and never buffers
+the full result in Go (bounded per-batch streaming). Peak RSS for the scan is comparable across
+transports because the DuckDB scan over the parquet-backed view — not result serialization —
+dominates memory at this scale; the transport's memory win is in bounded client/serialization
+buffers rather than engine RSS.
+
+**Charts** (same run): [`bench/charts-api-arrow/cpu-cores.svg`](bench/charts-api-arrow/cpu-cores.svg), [`bench/charts-api-arrow/memory-rss.svg`](bench/charts-api-arrow/memory-rss.svg), [`bench/charts-api-arrow/disk-io.svg`](bench/charts-api-arrow/disk-io.svg)
+
+Full tables + caveats: [`bench/RESULTS-api-arrow.md`](bench/RESULTS-api-arrow.md). Reproduce: `make bench-api-arrow`.
+
 ## Requirements
 
 - Go 1.25+ (build/test only; the shipped agent artifact is a static binary).

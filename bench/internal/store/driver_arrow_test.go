@@ -84,7 +84,12 @@ func TestDriverArrowAPIRoundTrip(t *testing.T) {
 
 	require.NoError(t, sd.AggregateMetricsArrowAPI(ctx))
 
-	scanRows, err := sd.ScanMetricsArrowAPI(ctx, `SELECT "__name__", value FROM metrics LIMIT 100`)
+	scanSQL := `SELECT "__name__", labels, value, ts FROM metrics LIMIT 100`
+	scanArrow, err := sd.ScanMetricsArrowAPI(ctx, scanSQL)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), scanRows)
+	require.Equal(t, int64(100), scanArrow)
+
+	scanJSON, err := sd.ScanMetricsJSONAPI(ctx, scanSQL)
+	require.NoError(t, err)
+	require.Equal(t, scanArrow, scanJSON)
 }

@@ -27,6 +27,16 @@ func TestArtifactPaths_apiProfile(t *testing.T) {
 	require.Equal(t, "bench/charts-api/cpu-cores.svg", results.ChartRel(&p, "cpu-cores.svg"))
 }
 
+func TestArtifactPaths_apiArrowProfile(t *testing.T) {
+	p := results.ArtifactPaths("/repo", "api-arrow")
+	require.Equal(t, "/repo/bench/results-api-arrow.json", p.JSON)
+	require.Equal(t, "/repo/bench/RESULTS-api-arrow.md", p.Markdown)
+	require.Equal(t, "/repo/bench/results-timeseries-api-arrow.json", p.Timeseries)
+	require.Equal(t, "/repo/bench/charts-api-arrow", p.ChartsDir)
+	require.Equal(t, "bench/charts-api-arrow/", p.ChartsPrefix)
+	require.Equal(t, "bench/charts-api-arrow/cpu-cores.svg", results.ChartRel(&p, "cpu-cores.svg"))
+}
+
 func TestRenderMarkdown_apiProfile(t *testing.T) {
 	doc := results.RenderMarkdown(&results.Report{
 		Environment: results.Environment{

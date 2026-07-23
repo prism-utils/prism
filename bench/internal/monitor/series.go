@@ -13,6 +13,10 @@ const (
 	PhaseAggregation = "aggregation"
 	// PhaseLogsLike tags samples collected during logs LIKE queries.
 	PhaseLogsLike = "logs_like"
+	// PhaseScanJSON tags samples collected during large-result JSON transport scans.
+	PhaseScanJSON = "scan_json"
+	// PhaseScanArrow tags samples collected during large-result Arrow transport scans.
+	PhaseScanArrow = "scan_arrow"
 )
 
 // SamplePoint is one timestamped resource reading tagged with the active benchmark phase.
@@ -140,20 +144,40 @@ func Downsample(points []SamplePoint, maxPoints int) []SamplePoint {
 	return out
 }
 
-// StitchStoreSeries merges store-binary samples (idle/ingest) with benchmark-process samples (queries).
-func StitchStoreSeries(storeBin, benchProc []SamplePoint, spans []PhaseSpan) []SamplePoint {
+// StitchStoreSeries merges store-binary samples with benchmark-process samples for chart timelines.
+// storePhases lists phases attributed to the prism-store binary; remaining query phases use benchProc.
+func StitchStoreSeries(storeBin, benchProc []SamplePoint, spans []PhaseSpan, storePhases []string) []SamplePoint {
+	storeSet := make(map[string]struct{}, len(storePhases))
+	for _, ph := range storePhases {
+		storeSet[ph] = struct{}{}
+	}
 	out := make([]SamplePoint, 0, len(storeBin)+len(benchProc))
 	for _, p := range storeBin {
-		if phaseInSpan(p.At, PhaseIdle, spans) || phaseInSpan(p.At, PhaseIngest, spans) {
+		if phaseInAnySpan(p.At, storeSet, spans) {
 			out = append(out, p)
 		}
 	}
 	for _, p := range benchProc {
-		if phaseInSpan(p.At, PhaseCount, spans) || phaseInSpan(p.At, PhaseAggregation, spans) || phaseInSpan(p.At, PhaseLogsLike, spans) {
+		if p.Phase == "" {
+			continue
+		}
+		if _, ok := storeSet[p.Phase]; ok {
+			continue
+		}
+		if phaseInAnySpan(p.At, map[string]struct{}{p.Phase: {}}, spans) {
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+func phaseInAnySpan(at time.Time, phases map[string]struct{}, spans []PhaseSpan) bool {
+	for ph := range phases {
+		if phaseInSpan(at, ph, spans) {
+			return true
+		}
+	}
+	return false
 }
 
 func phaseInSpan(at time.Time, name string, spans []PhaseSpan) bool {

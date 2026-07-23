@@ -89,12 +89,18 @@ func RenderMarkdownRoot(rep *Report) string {
 func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 	env := rep.Environment
 	apiProfile := env.Profile == "api"
+	apiArrowProfile := env.Profile == "api-arrow"
 	var b strings.Builder
-	if apiProfile {
+	switch {
+	case apiArrowProfile:
+		b.WriteString("# Arrow transport profile (RBAC on)\n\n")
+		b.WriteString("Measured on this host with `make bench-api-arrow` — store queries over the RBAC-guarded HTTP SQL API with **Arrow IPC** transport for count/aggregation and a JSON-vs-Arrow scan comparison.\n\n")
+		b.WriteString("*prism-store count/aggregation use Arrow transport (`Accept: application/vnd.apache.arrow.stream`); scan phases compare JSON vs Arrow on the same SQL. ClickHouse uses its native protocol client; logs LIKE remains engine-level (no logs API). JWT/RBAC overhead applies to every store HTTP request.*\n\n")
+	case apiProfile:
 		b.WriteString("# Benchmark: prism-store (RBAC + HTTP `/sql`) vs ClickHouse\n\n")
 		b.WriteString("Measured on this host with `make bench-api` — queries over the RBAC-guarded HTTP SQL API.\n\n")
 		b.WriteString("*prism-store count/aggregation are end-to-end HTTP + JWT/RBAC + per-request sandbox (materialize-then-lock); ClickHouse uses its native protocol client; logs LIKE remains engine-level (no logs API).*\n\n")
-	} else {
+	default:
 		b.WriteString("# Benchmark: prism-store vs ClickHouse\n\n")
 		b.WriteString("Measured on this host with `make bench` (default small profile).\n\n")
 	}
@@ -124,18 +130,46 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 		formatInt(rep.LikeCountStore), formatInt(rep.LikeCountClickHouse))
 
 	b.WriteString("## Results (p50 / p95 / min ms; ingest: wall + rows/s)\n\n")
-	b.WriteString("| Workload | prism-store | ClickHouse |\n")
-	b.WriteString("|----------|-------------|------------|\n")
-	for _, name := range []string{"ingest", "count", "aggregation", "logs_like"} {
-		store := findWorkload(rep.Workloads, name, "prism-store")
-		ch := findWorkload(rep.Workloads, name, "clickhouse")
-		fmt.Fprintf(&b, "| %s | %s | %s |\n", workloadLabel(name), formatWorkload(store), formatWorkload(ch))
+	if apiArrowProfile {
+		b.WriteString("| Workload | prism-store (Arrow) | ClickHouse |\n")
+		b.WriteString("|----------|---------------------|------------|\n")
+		for _, name := range []string{"ingest", "count", "aggregation", "logs_like"} {
+			store := findWorkload(rep.Workloads, name, "prism-store")
+			ch := findWorkload(rep.Workloads, name, "clickhouse")
+			fmt.Fprintf(&b, "| %s | %s | %s |\n", workloadLabel(name), formatWorkload(store), formatWorkload(ch))
+		}
+		b.WriteString("\n**Scan transport comparison** (same SQL, store only — not vs ClickHouse):\n\n")
+		b.WriteString("| Transport | p50 / p95 / min (ms) | rows returned |\n")
+		b.WriteString("|-----------|----------------------|---------------|\n")
+		scanJSON := findWorkload(rep.Workloads, monitor.PhaseScanJSON, "prism-store")
+		scanArrow := findWorkload(rep.Workloads, monitor.PhaseScanArrow, "prism-store")
+		fmt.Fprintf(&b, "| JSON | %s | %s |\n", formatWorkload(scanJSON), formatScanRows(scanJSON))
+		fmt.Fprintf(&b, "| Arrow | %s | %s |\n", formatWorkload(scanArrow), formatScanRows(scanArrow))
+	} else {
+		b.WriteString("| Workload | prism-store | ClickHouse |\n")
+		b.WriteString("|----------|-------------|------------|\n")
+		for _, name := range []string{"ingest", "count", "aggregation", "logs_like"} {
+			store := findWorkload(rep.Workloads, name, "prism-store")
+			ch := findWorkload(rep.Workloads, name, "clickhouse")
+			fmt.Fprintf(&b, "| %s | %s | %s |\n", workloadLabel(name), formatWorkload(store), formatWorkload(ch))
+		}
 	}
 
 	b.WriteString("\n## Resource usage (dense series; per-phase aggregates)\n\n")
 	b.WriteString("| Workload | System | CPU mean / peak (cores) | Peak RSS (MiB) | Read+write (MiB) | MiB/s | IOPS |\n")
 	b.WriteString("|----------|--------|-------------------------|----------------|------------------|-------|------|\n")
-	for _, name := range []string{"idle", "ingest", "count", "aggregation", "logs_like"} {
+	resourcePhases := []string{"idle", "ingest", "count", "aggregation", "logs_like"}
+	if apiArrowProfile {
+		resourcePhases = append(resourcePhases, monitor.PhaseScanJSON, monitor.PhaseScanArrow)
+	}
+	for _, name := range resourcePhases {
+		if apiArrowProfile && (name == monitor.PhaseScanJSON || name == monitor.PhaseScanArrow) {
+			w := findWorkload(rep.Workloads, name, "prism-store")
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
+				workloadLabel(name), "prism-store",
+				formatUsageCPU(w), formatUsageRSS(w), formatUsageIO(w), formatUsageMiBps(w), formatUsageIOPS(w))
+			continue
+		}
 		for _, sys := range []string{"prism-store", "clickhouse"} {
 			w := findWorkload(rep.Workloads, name, sys)
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n",
@@ -143,10 +177,16 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 				formatUsageCPU(w), formatUsageRSS(w), formatUsageIO(w), formatUsageMiBps(w), formatUsageIOPS(w))
 		}
 	}
-	if apiProfile {
+	switch {
+	case apiArrowProfile:
+		b.WriteString("\n**API-Arrow profile:** store **count**, **aggregation**, **scan_json**, and **scan_arrow** sample the `prism-store` binary (HTTP `/sql` with JWT/RBAC). Store **logs LIKE** samples the benchmark process (embedded engine; server stopped). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms). **Scan phases** isolate JSON-vs-Arrow transport memory/latency on the same build — not a ClickHouse comparison.\n")
+	case apiProfile:
 		b.WriteString("\n**API profile:** store **count** and **aggregation** sample the `prism-store` binary (HTTP `/sql` with JWT/RBAC). Store **logs LIKE** samples the benchmark process (embedded engine; server stopped). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms).\n")
-	} else {
+	default:
 		b.WriteString("\nStore **count**, **aggregation**, and **logs LIKE** sample the benchmark process (embedded DuckDB engine). Store **ingest** and **idle** sample the `prism-store` binary. ClickHouse samples the container cgroup via cumulative counter diffs (~75 ms).\n")
+	}
+	if apiArrowProfile || apiProfile {
+		b.WriteString("\n**Caveats:** JWT verification and RBAC policy checks run on every store HTTP request. Container I/O/IOPS on Docker Desktop (macOS/Windows) frequently report blkio as 0 — meaningful container I/O needs a native Linux Docker host.\n")
 	}
 
 	if len(env.ChartPaths) > 0 {
@@ -158,26 +198,43 @@ func renderMarkdown(rep *Report, benchLocalCharts bool) string {
 			}
 			embed := p
 			if benchLocalCharts {
-				embed = chartEmbedForBenchResults(p, apiProfile)
+				embed = chartEmbedForBenchResults(p, env.Profile)
 			}
 			fmt.Fprintf(&b, "### %s\n\n![%s](%s)\n\n", strings.TrimSuffix(base, ".svg"), base, embed)
 		}
 	}
 
 	b.WriteString("\n## Interpretation\n\n")
-	b.WriteString(interpret(rep))
-	b.WriteString("\n## Reproduce\n\n")
-	if apiProfile {
-		b.WriteString("```bash\nmake bench-api        # default scale (2M rows total)\nmake bench-api BENCH_SCALE=2\n```\n")
+	if apiArrowProfile {
+		b.WriteString(interpretAPIArrow(rep))
 	} else {
+		b.WriteString(interpret(rep))
+	}
+	b.WriteString("\n## Reproduce\n\n")
+	switch {
+	case apiArrowProfile:
+		b.WriteString("```bash\nmake bench-api-arrow        # default scale (2M rows total)\nmake bench-api-arrow BENCH_SCALE=2\n```\n")
+	case apiProfile:
+		b.WriteString("```bash\nmake bench-api        # default scale (2M rows total)\nmake bench-api BENCH_SCALE=2\n```\n")
+	default:
 		b.WriteString("```bash\nmake bench        # default scale (2M rows total)\nmake bench BENCH_SCALE=2\n```\n")
 	}
 	b.WriteString("\nSee [`bench/README.md`](README.md) for prerequisites and cleanup.\n")
 	return b.String()
 }
 
-func chartEmbedForBenchResults(storedPath string, apiProfile bool) string {
-	if apiProfile {
+func chartEmbedForBenchResults(storedPath string, profile string) string {
+	switch profile {
+	case "api-arrow":
+		const prefix = "bench/charts-api-arrow/"
+		if strings.HasPrefix(storedPath, prefix) {
+			return strings.TrimPrefix(storedPath, "bench/")
+		}
+		if strings.HasPrefix(storedPath, "charts-api-arrow/") {
+			return storedPath
+		}
+		return storedPath
+	case "api":
 		const prefix = "bench/charts-api/"
 		if strings.HasPrefix(storedPath, prefix) {
 			return strings.TrimPrefix(storedPath, "bench/")
@@ -186,15 +243,55 @@ func chartEmbedForBenchResults(storedPath string, apiProfile bool) string {
 			return storedPath
 		}
 		return storedPath
-	}
-	const prefix = "bench/charts/"
-	if strings.HasPrefix(storedPath, prefix) {
-		return strings.TrimPrefix(storedPath, "bench/")
-	}
-	if strings.HasPrefix(storedPath, "charts/") {
+	default:
+		const prefix = "bench/charts/"
+		if strings.HasPrefix(storedPath, prefix) {
+			return strings.TrimPrefix(storedPath, "bench/")
+		}
+		if strings.HasPrefix(storedPath, "charts/") {
+			return storedPath
+		}
 		return storedPath
 	}
-	return storedPath
+}
+
+func interpretAPIArrow(rep *Report) string {
+	lines := []string{
+		"Both systems ingested the same seeded dataset with JWT auth on store ingest. Each query workload is warmed once before K=5 timed runs.",
+		"",
+		"**Count and aggregation** use the **Arrow IPC** transport over HTTP `/sql` (lazy-view sandbox + streaming). Compare against the attached JSON `-api` profile (~280–300 ms, ~471–483 MiB peak RSS on the same host class) to see the combined lazy-view (#54) + Arrow transport (#55) impact.",
+		"",
+		"**Scan JSON vs Arrow** runs the same `SELECT … LIMIT N` over both transports on one build — isolating transport memory/latency (JSON full-buffer vs Arrow streaming). This is **not** compared to ClickHouse.",
+		"",
+	}
+	for _, name := range []string{"ingest", "count", "aggregation", "logs_like"} {
+		store := findWorkload(rep.Workloads, name, "prism-store")
+		ch := findWorkload(rep.Workloads, name, "clickhouse")
+		if store == nil || ch == nil {
+			continue
+		}
+		switch name {
+		case "ingest":
+			if store.RowsPerSec > ch.RowsPerSec {
+				lines = append(lines, fmt.Sprintf("- **%s**: prism-store leads on ingest throughput (%.0f vs %.0f rows/s).", name, store.RowsPerSec, ch.RowsPerSec))
+			} else {
+				lines = append(lines, fmt.Sprintf("- **%s**: ClickHouse leads on ingest (%.0f vs %.0f rows/s).", name, ch.RowsPerSec, store.RowsPerSec))
+			}
+		default:
+			if store.P50Ms <= ch.P50Ms {
+				lines = append(lines, fmt.Sprintf("- **%s** (Arrow): prism-store p50 %.1f ms vs ClickHouse %.1f ms.", name, store.P50Ms, ch.P50Ms))
+			} else {
+				lines = append(lines, fmt.Sprintf("- **%s** (Arrow): ClickHouse p50 %.1f ms beats prism-store %.1f ms.", name, ch.P50Ms, store.P50Ms))
+			}
+		}
+	}
+	scanJSON := findWorkload(rep.Workloads, monitor.PhaseScanJSON, "prism-store")
+	scanArrow := findWorkload(rep.Workloads, monitor.PhaseScanArrow, "prism-store")
+	if scanJSON != nil && scanArrow != nil {
+		lines = append(lines, fmt.Sprintf("- **scan**: JSON p50 %.1f ms (peak RSS %s MiB) vs Arrow p50 %.1f ms (peak RSS %s MiB).",
+			scanJSON.P50Ms, formatUsageRSS(scanJSON), scanArrow.P50Ms, formatUsageRSS(scanArrow)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func interpret(rep *Report) string {
@@ -252,9 +349,20 @@ func workloadLabel(name string) string {
 		return "logs LIKE"
 	case "idle":
 		return "idle (baseline)"
+	case monitor.PhaseScanJSON:
+		return "scan (JSON transport)"
+	case monitor.PhaseScanArrow:
+		return "scan (Arrow transport)"
 	default:
 		return name
 	}
+}
+
+func formatScanRows(w *Workload) string {
+	if w == nil || w.Rows == 0 {
+		return "—"
+	}
+	return formatInt(w.Rows)
 }
 
 func formatWorkload(w *Workload) string {
