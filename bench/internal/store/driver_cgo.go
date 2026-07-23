@@ -346,6 +346,13 @@ func (d *cgoDriver) DuckDBVersion(ctx context.Context) (string, error) {
 	return v, err
 }
 
+func (d *cgoDriver) Pid() int {
+	if d.cmd != nil && d.cmd.Process != nil {
+		return d.cmd.Process.Pid
+	}
+	return 0
+}
+
 func duckTS(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05.999999")
 }

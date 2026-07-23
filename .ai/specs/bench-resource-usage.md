@@ -1,6 +1,6 @@
 # Spec: benchmark — resource-usage measurement (CPU / memory / disk I/O)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/bench-resource-usage`
 - **Owner phase:** orchestrator → developer
@@ -31,7 +31,7 @@ sampling for the embedded engine).
   - **Extend the results schema** (`bench/internal/results`): add a `Usage` field to `Workload` (all fields `omitempty`), render a **"Resource usage" table** per workload/system in `RESULTS.md` (CPU cores mean/peak, peak RSS MiB, read+write MiB and MiB/s, IOPS where available), and mirror a compact version in `README.md`. Renderer must handle missing/`n/a` metrics cleanly.
   - **Docs (`bench/README.md`)**: document the measurement method, the sampling interval, the per-workload target for each system, why per-container/per-process attribution is used instead of host-level `node_exporter` (host-level conflates both systems + OS), and the honest caveats:
     - store queries are sampled on the embedded-engine process (the benchmark process), not a separate server — that IS the store's model;
-    - per-process disk **IOPS** is available on **Linux** (`/proc/<pid>/io`); on macOS/Windows the process sampler reports CPU/mem and I/O where supported and marks IOPS `n/a` — so the canonical full-I/O comparison (both systems incl. IOPS) is captured on Linux, while CPU/mem are captured on any host. The ClickHouse container reports IOPS on all Docker platforms (Linux VM cgroup).
+    - per-process disk **IOPS** is available on **Linux** (`/proc/<pid>/io`); on macOS/Windows the process sampler reports CPU/mem and marks IOPS `n/a` — so the canonical full-I/O comparison (both systems incl. IOPS) is captured on Linux, while CPU/mem are captured on any host. The ClickHouse container reports IOPS on all Docker platforms (Linux VM cgroup).
   - **README benchmark section**: add the resource-usage table next to the latency table, keep the honest interpretation, and re-state the environment.
   - **Re-run `make bench`** and publish the real measured resource numbers alongside the timings.
 - **Out of scope:** containerizing prism-store (its query engine is embedded by design); Prometheus/node_exporter wiring (documented as intentionally not used — per-process/per-container attribution is more accurate and needs no extra services); changing the workloads themselves or the fairness methodology from PR #42.
@@ -58,14 +58,14 @@ sampling for the embedded engine).
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `bench/internal/monitor` provides `ProcSampler` and `DockerSampler` behind a common interface, each returning `Usage` with CPU (mean/peak cores), peak RSS, read/write bytes+ops, and duration; unit-tested (a synthetic CPU/alloc burn asserts non-zero CPU/RSS for the process sampler; a fake stats source or a live container asserts the Docker parser math).
-- [ ] `prism-bench` samples the correct target per workload (store binary for ingest; benchmark process for store queries; ClickHouse container for all CH workloads) over the timed window; store driver exposes its process id.
-- [ ] `Workload.Usage` added to the schema; `RESULTS.md` renders a resource-usage table; `results.json` carries the usage; `README.md` benchmark section shows a compact resource table.
-- [ ] Renderer handles absent metrics (`n/a`) without breaking alignment; `results.RenderMarkdown` unit-tested for a row with and without IOPS.
-- [ ] `bench/README.md` documents the method, interval, per-workload targets, the node_exporter rationale, and the macOS-IOPS + embedded-engine caveats.
-- [ ] `make bench` re-run on this host; `RESULTS.md`/`results.json`/`README.md` updated with the REAL measured CPU/mem/I/O numbers; latency tables + correctness gates unchanged and still pass.
-- [ ] `gopsutil` is bench-only: `CGO_ENABLED=0 go build ./cmd/prism` still passes and does NOT import gopsutil (verify the agent import graph); `go build ./cmd/prism-store` passes; `make tidy` clean.
-- [ ] `make lint test` (`-race`) green; no committed datasets/blobs; sampler goroutines stop cleanly (no leaks).
+- [x] `bench/internal/monitor` provides `ProcSampler` and `DockerSampler` behind a common interface, each returning `Usage` with CPU (mean/peak cores), peak RSS, read/write bytes+ops, and duration; unit-tested (a synthetic CPU/alloc burn asserts non-zero CPU/RSS for the process sampler; a fake stats source or a live container asserts the Docker parser math).
+- [x] `prism-bench` samples the correct target per workload (store binary for ingest; benchmark process for store queries; ClickHouse container for all CH workloads) over the timed window; store driver exposes its process id.
+- [x] `Workload.Usage` added to the schema; `RESULTS.md` renders a resource-usage table; `results.json` carries the usage; `README.md` benchmark section shows a compact resource table.
+- [x] Renderer handles absent metrics (`n/a`) without breaking alignment; `results.RenderMarkdown` unit-tested for a row with and without IOPS.
+- [x] `bench/README.md` documents the method, interval, per-workload targets, the node_exporter rationale, and the macOS-IOPS + embedded-engine caveats.
+- [x] `make bench` re-run on this host; `RESULTS.md`/`results.json`/`README.md` updated with the REAL measured CPU/mem/I/O numbers; latency tables + correctness gates unchanged and still pass.
+- [x] `gopsutil` is bench-only: `CGO_ENABLED=0 go build ./cmd/prism` still passes and does NOT import gopsutil (verify the agent import graph); `go build ./cmd/prism-store` passes; `make tidy` clean.
+- [x] `make lint test` (`-race`) green; no committed datasets/blobs; sampler goroutines stop cleanly (no leaks).
 
 ## 6. Mandatory review gates  (reviewer owns)
 

@@ -136,12 +136,27 @@ make bench BENCH_SCALE=2
 | DuckDB | v1.1.3 |
 | Dataset | 1,000,000 metrics + 1,000,000 logs |
 
+**Latency** (p50 / p95 / min ms; ingest: wall + rows/s):
+
 | Workload | prism-store | ClickHouse |
 |----------|-------------|------------|
-| ingest | 1.18s · 1,693,033 rows/s | 1.84s · 1,085,187 rows/s |
-| count (p50 / p95 / min ms) | 0.7 / 0.8 / 0.5 | 1.8 / 1.9 / 1.6 |
-| aggregation | 5.1 / 5.4 / 4.5 | 6.1 / 26.9 / 5.8 |
-| logs LIKE | 19.6 / 21.6 / 18.7 | 16.4 / 23.2 / 16.1 |
+| ingest | 1.14s · 1,759,572 rows/s | 1.62s · 1,235,686 rows/s |
+| count | 0.9 / 5.3 / 0.5 | 1.4 / 1.7 / 1.3 |
+| aggregation | 6.1 / 12.4 / 4.0 | 6.1 / 23.6 / 5.3 |
+| logs LIKE | 17.2 / 29.5 / 16.8 | 15.3 / 23.3 / 14.3 |
+
+**Resource usage** (sampled during each timed window; store queries sample the embedded DuckDB engine in `prism-bench`; process I/O/IOPS `n/a` on macOS):
+
+| Workload | System | CPU mean / peak | Peak RSS | I/O | IOPS |
+|----------|--------|-----------------|----------|-----|------|
+| ingest | prism-store | 0.48 / 2.27 cores | 96.5 MiB | n/a | n/a |
+| ingest | ClickHouse | 0.26 / 0.48 cores | 316.4 MiB | 0.0 MiB | 0 |
+| count | prism-store | 0.09 / 0.18 cores | 650.4 MiB | n/a | n/a |
+| count | ClickHouse | 0.05 / 0.05 cores | 362.7 MiB | 0.0 MiB | 0 |
+| aggregation | prism-store | 0.94 / 1.89 cores | 669.9 MiB | n/a | n/a |
+| aggregation | ClickHouse | 0.04 / 0.04 cores | 350.6 MiB | 0.0 MiB | 0 |
+| logs LIKE | prism-store | 1.92 / 3.85 cores | 695.8 MiB | n/a | n/a |
+| logs LIKE | ClickHouse | 0.06 / 0.06 cores | 394.1 MiB | 0.0 MiB | 0 |
 
 **Interpretation:** Metrics **count** and **aggregation** scan the full ingested
 table on both systems (no `ts` range pruning) — apples-to-apples over the same N
