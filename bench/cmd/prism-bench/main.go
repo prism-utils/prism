@@ -243,7 +243,12 @@ func runMain() error {
 	if err != nil {
 		return fmt.Errorf("clickhouse stream sampler: %w", err)
 	}
-	storeStream := monitor.NewProcStreamSampler(sd.Pid())
+	var storeStream *monitor.StreamSampler
+	if profile == "api" {
+		storeStream = monitor.NewProcStreamSamplerFunc(func() int { return sd.Pid() })
+	} else {
+		storeStream = monitor.NewProcStreamSampler(sd.Pid())
+	}
 	benchStream := monitor.NewProcStreamSampler(os.Getpid())
 
 	chStream.Start(runCtx)

@@ -37,6 +37,19 @@ func NewProcStreamSampler(pid int) *StreamSampler {
 	}
 }
 
+// NewProcStreamSamplerFunc polls the pid returned by pidFn on every sample.
+func NewProcStreamSamplerFunc(pidFn func() int) *StreamSampler {
+	ps := NewProcSamplerFunc(pidFn)
+	ps.interval = defaultProcStreamInterval
+	return &StreamSampler{
+		interval: defaultProcStreamInterval,
+		poll: func(ctx context.Context) (SamplePoint, error) {
+			return ps.pollOnce(ctx)
+		},
+		done: make(chan struct{}),
+	}
+}
+
 // NewDockerStreamSampler polls a container at ~50–100 ms using cumulative counter diffs.
 func NewDockerStreamSampler(containerID string) (*StreamSampler, error) {
 	ds, err := NewDockerSampler(containerID)
