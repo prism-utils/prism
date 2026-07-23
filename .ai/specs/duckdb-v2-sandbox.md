@@ -1,6 +1,6 @@
 # Spec: go-duckdb v2 (DuckDB ≥1.2) + zero-copy lazy-view SQL sandbox
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/duckdb-v2-sandbox`
 - **Owner phase:** orchestrator → developer → reviewer + security-review
