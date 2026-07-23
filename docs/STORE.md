@@ -458,7 +458,13 @@ order; **`lock_configuration=true` last**). Bundled DuckDB is **≥1.2** via
 
 User SQL cannot re-enable external access or reach paths outside the tenant.
 Cross-tenant `read_parquet`, `ATTACH`, `COPY`, host reads, and writes fail.
-Defense-in-depth: only `SELECT`/`WITH` accepted upfront.
+Defense-in-depth: only `SELECT`/`WITH` accepted upfront; `SET`/`RESET`/`PRAGMA`
+rejected before execution. Tenant directories that are symlinks or resolve outside
+`DATA_DIR` are treated as unknown tenants (`404`).
+
+**Residual (within-tenant only):** catalog introspection (`duckdb_views()`,
+`information_schema`, etc.) may expose absolute parquet paths under the tenant
+root; this does not cross tenant boundaries.
 
 References: [DuckDB — Securing DuckDB](https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview);
 OWASP API1 BOLA.
