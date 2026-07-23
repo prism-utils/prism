@@ -1,6 +1,6 @@
 # Spec: prism-store — reproducible benchmark vs ClickHouse
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-benchmark`
 - **Owner phase:** orchestrator → developer
@@ -90,34 +90,32 @@ reproduction steps. Both systems must be given a *fair* configuration
 
 ## 7. Reviewer notes
 
-**Verdict: CHANGES_REQUESTED** (2026-07-23). Reviewer re-ran `make lint`, `make test` (-race), `CGO_ENABLED=0 go build ./cmd/prism`, `go build ./cmd/prism-store`, and `make bench` — all green; numbers are real and shape matches README (store wins ingest/count/agg; ClickHouse wins logs LIKE).
+**Verdict: ALL_OK** (re-review 2026-07-23). Prior CHANGES_REQUESTED items verified fixed in `50439ca` / `806b205`.
 
-### ts-semantics fairness (critical — FAIL)
+### ts-semantics fairness (PASS)
 
-| Workload | Store filter | ClickHouse filter |
-|----------|--------------|-------------------|
-| count / aggregation | `query.Request{Start: storeIngestStart±1s, End: …}` → `WHERE ts >= ? AND ts < ?` on **ingest-time `ts`** stamped by `engine.Ingest` (`CAST(? AS TIMESTAMP) AS ts`) | `ds.QueryRange()` → first/last **dataset `ts`** (7-day span Jan 1–8 2026) → `WHERE ts >= ? AND ts < ?` |
-| logs LIKE | `ds.LogsQueryRange()` (dataset `ts`) — **fair** | same — **fair** |
+Metrics **count/aggregation** now full-table on both sides — no `ts` predicate. ClickHouse: `SELECT count()` / `GROUP BY __name__` from `bench_metrics`. Store: `buildFullMetricsUnionInner` unions `hot_current`, `hot_prev`, and tier `read_parquet` globs only (rollups excluded). Orchestrator asserts `storeMetricsCount == chMetricsCount == cfg.MetricsRows` before timing. Reviewer run: **1,000,000 = 1,000,000**. Logs LIKE unchanged — shared `ds.LogsQueryRange()` on both.
 
-Ingest stamps every metrics row with wall-clock `ts` inside a narrow window; ClickHouse stores generator `MetricRow.Ts` spread across days with day partitioning. Counts match (1M) but the store predicate selects a single ingest cluster while ClickHouse walks a multi-day primary-key range — timings are not comparable. Fix: align both systems on the same column/window, or exclude metrics count/agg from head-to-head and rewrite README/`interpret()`.
+### Gate 4 (PASS)
 
-### Literal SQL / bound params (PASS — bench artifact, not shipping bug)
+`driver_cgo.go` nolint now reads “inner SQL unions hot and tier parquet sources built by this driver” — no cross-component name.
 
-- **Metrics count/aggregation** use the shipping `query.Builder` with bound `?` params — no divergence from #26.
-- **Logs LIKE** (engine-level only) uses `fmt.Sprintf` literals for `read_parquet('…')`, `TIMESTAMP '…'`, and `LIKE '%%deadline exceeded%%'` because DuckDB cannot bind file paths (`engine.go` comment) and parameterized `LIKE` on `read_parquet` returns 0 in harness tests (`duckdb_like_test.go`). Substring/times are harness constants, not user input — acceptable for bench-only logs path; does not indicate a shipping query bug at scale.
+### Gate 3 / honesty (PASS)
 
-### ClickHouse tuning (PASS)
+`interpret()`, `bench/README.md`, and `README.md` describe full-table metrics scan, dataset-`ts` logs window, engine-level store logs path, ClickHouse logs LIKE win, and dual correctness gates. No misleading “identical time range” for metrics.
 
-MergeTree, `ORDER BY (ts, …)`, `LowCardinality`, no `Nullable`, `PARTITION BY toYYYYMMDD(ts)`, `tokenbf_v1` on `message`, 50k batched inserts, pinned `24.8` image — not a strawman.
-
-### Verification commands (reviewer)
+### Verification commands (re-review)
 
 | Command | Result |
 |---------|--------|
 | `make lint` | 0 issues |
 | `make test` | pass (-race) |
-| `CGO_ENABLED=0 go build ./cmd/prism` | pass |
+| `CGO_ENABLED=0 go build ./cmd/prism` | pass (no DuckDB/ClickHouse in agent) |
 | `go build ./cmd/prism-store` | pass |
-| `make bench` | pass (~10s); LIKE gate 10,000=10,000; teardown OK; p50 shape: store ingest/count/agg faster, ClickHouse logs LIKE faster |
+| `make bench` | pass (~12s); metrics gate 1,000,000=1,000,000; LIKE gate 10,000=10,000; teardown OK |
 
-Reviewer `make bench` p50 (M1 Pro 16 GiB): ingest store 1.19s / CH 1.84s; count 0.8 ms / 3.9 ms; aggregation 5.8 ms / 11.1 ms; logs LIKE 19.3 ms / 16.7 ms.
+Reviewer `make bench` p50 (M1 Pro 16 GiB): ingest store 1.17s / CH 1.84s; count 0.6 ms / 1.6 ms; aggregation 4.8 ms / 5.9 ms; logs LIKE 19.5 ms / 16.5 ms. Winner shape matches committed README/RESULTS (host variance only).
+
+---
+
+**Prior review (2026-07-23, CHANGES_REQUESTED):** metrics count/agg used ingest-time `ts` (store) vs dataset `ts` (ClickHouse); fixed by full-table methodology above.
