@@ -242,8 +242,9 @@ func (e *Engine) QueryHotTs(tenant string) ([]time.Time, error) {
 }
 
 // DB returns the tenant DuckDB handle for read/query integration (caller must not close).
-// Callers issuing reads concurrently with the background lifecycle must go through
-// WithRead so a query never observes the hot table mid-rename.
+// The handle is unsynchronized: a read issued directly on it while the background
+// lifecycle is flushing can observe the hot table mid-rename. Reads that run
+// concurrently with writes should instead use the read-locked accessor.
 func (e *Engine) DB(tenant string) (*sql.DB, error) {
 	te, err := e.open(tenant)
 	if err != nil {
