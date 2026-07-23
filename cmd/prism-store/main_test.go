@@ -2,15 +2,58 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/elk-utilities/prism/internal/store/engine"
+	"github.com/elk-utilities/prism/internal/store/lifecycle"
 	"github.com/elk-utilities/prism/internal/version"
+	"go.uber.org/goleak"
 )
+
+func TestRunBackgroundLoopStopsOnContextCancel(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	dataDir := t.TempDir()
+	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, time.Now)
+	t.Cleanup(func() { _ = eng.Close() })
+
+	runner := lifecycle.NewRunner(lifecycle.Config{
+		DataDir: dataDir,
+		MaxTier: 8,
+	}, eng, time.Now)
+
+	cfg := &serverConfig{
+		snapshotTick:  5 * time.Millisecond,
+		flushTick:     5 * time.Millisecond,
+		mergeTick:     5 * time.Millisecond,
+		retentionTick: 5 * time.Millisecond,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		RunBackgroundLoop(ctx, runner, cfg, logger)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("background loop did not exit after context cancel")
+	}
+}
 
 func TestHealthz(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
