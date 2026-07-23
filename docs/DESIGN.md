@@ -595,7 +595,7 @@ carry forward under the new binary and image name
   `internal/obs`, and `internal/version`. The store is the **consumer** side of
   the frozen output contract; the agent remains the producer.
 - **CGO / DuckDB.** The store links DuckDB via
-  `github.com/marcboeker/go-duckdb` (CGO). Its container image uses
+  `github.com/marcboeker/go-duckdb/v2` (CGO; bundled DuckDB ≥1.2). Its container image uses
   `debian:bookworm-slim` plus `libstdc++6`, running as uid/gid **472**. The
   **agent stays pure-static `CGO_ENABLED=0`** because it never imports
   `internal/store` or any CGO dependency.
@@ -654,11 +654,11 @@ keeps `AUTH_MODE`. Policy is read-only (mounted file); no API mutates bindings.
 ### Arbitrary read-only SQL API — tenant sandbox (2026-07)
 
 **Decision:** `POST /{ns}/sql` executes untrusted read-only SQL in a per-request
-in-memory DuckDB sandbox: export fresh hot snapshot, materialize a `metrics`
-relation from tenant parquet only, then apply DuckDB hardening
-(`enable_external_access=false`, extension knobs, `lock_configuration=true`;
-`allowed_directories=[tenantRoot]` when supported). RBAC action `query`; same
-admin plane and cluster routing as structured query.
+in-memory DuckDB sandbox: export fresh hot snapshot, expose `metrics` as a lazy
+**VIEW** over tenant parquet only (`allowed_directories=[tenantRoot]` enforced
+on DuckDB ≥1.2), then apply DuckDB hardening
+(`enable_external_access=false`, extension knobs, `lock_configuration=true`).
+RBAC action `query`; same admin plane and cluster routing as structured query.
 
 **References:** DuckDB Securing guide —
 https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview ;

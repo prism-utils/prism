@@ -1,6 +1,6 @@
 # Spec: go-duckdb v2 (DuckDB ≥1.2) + zero-copy lazy-view SQL sandbox
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/duckdb-v2-sandbox`
 - **Owner phase:** orchestrator → developer → reviewer + security-review
@@ -48,16 +48,16 @@ Replace materialize-then-lock with **allowed-dirs + lazy view** on the same dedi
   - perf/memory: eliminates the per-request full-table copy — DuckDB streams the aggregation from parquet, so peak RSS and latency for count/aggregation drop sharply. product: same airtight per-tenant isolation, now enforced by the engine's directory allowlist rather than by copying data.
 
 ## 5. Acceptance checklist (developer)
-- [ ] go-duckdb v2.4.3 in `go.mod`; all imports updated; `go mod tidy` clean; whole suite compiles.
-- [ ] A test asserts the bundled DuckDB `SELECT version()` is ≥ 1.2.
-- [ ] Sandbox uses `allowed_directories` (required, not best-effort) + `CREATE VIEW metrics` (no `CREATE TABLE`); external access disabled + config locked on the executing connection; view built before lock.
-- [ ] **Isolation tests still pass (critical):** cross-tenant `read_parquet`/`glob`/`parquet_metadata`/`parquet_schema`/`read_csv('/etc/passwd')`/`ATTACH`/`COPY TO` → 400; post-lock `SET enable_external_access=true` → error; `SELECT COUNT(*) FROM metrics` returns only this tenant's rows; symlink/out-of-root parquet excluded. Add an explicit test that user SQL `read_parquet('<abs path OUTSIDE tenantRoot>')` is denied by `allowed_directories`.
-- [ ] Correctness parity: COUNT(*) / GROUP BY avg over `metrics` match the engine union (existing parity tests) and the pre-upgrade JSON results.
-- [ ] Edge tests still green (no-parquet→400, empty result, unknown relation→400, concurrent same-tenant, burst-after-flush, timeout, row cap, `SQL_API_ENABLED=false`→404) + RBAC tests (reader 200 / writer 403 / unbound 404 / no-JWT 401) + cluster deny-before-proxy.
-- [ ] Whole store suite green under `-race`: `internal/store/{engine,merge,rollup,query,lifecycle,ingest,stats,cluster,...}` + e2e. Investigate any DuckDB 1.1.3→≥1.2 behavior diffs and fix in-code (no test weakening).
-- [ ] `go build ./cmd/prism-store ./bench/...` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok + `go list -deps ./cmd/prism` unchanged; helm golden unaffected (no env change) — if `make` has a golden check, run it.
-- [ ] Docs updated (STORE.md, DESIGN.md) to the lazy-view sandbox + DuckDB version bump.
-- [ ] `make lint test` green; `git status` clean; no committed blobs/secrets.
+- [x] go-duckdb v2.4.3 in `go.mod`; all imports updated; `go mod tidy` clean; whole suite compiles.
+- [x] A test asserts the bundled DuckDB `SELECT version()` is ≥ 1.2.
+- [x] Sandbox uses `allowed_directories` (required, not best-effort) + `CREATE VIEW metrics` (no `CREATE TABLE`); external access disabled + config locked on the executing connection; view built before lock.
+- [x] **Isolation tests still pass (critical):** cross-tenant `read_parquet`/`glob`/`parquet_metadata`/`parquet_schema`/`read_csv('/etc/passwd')`/`ATTACH`/`COPY TO` → 400; post-lock `SET enable_external_access=true` → error; `SELECT COUNT(*) FROM metrics` returns only this tenant's rows; symlink/out-of-root parquet excluded. Add an explicit test that user SQL `read_parquet('<abs path OUTSIDE tenantRoot>')` is denied by `allowed_directories`.
+- [x] Correctness parity: COUNT(*) / GROUP BY avg over `metrics` match the engine union (existing parity tests) and the pre-upgrade JSON results.
+- [x] Edge tests still green (no-parquet→400, empty result, unknown relation→400, concurrent same-tenant, burst-after-flush, timeout, row cap, `SQL_API_ENABLED=false`→404) + RBAC tests (reader 200 / writer 403 / unbound 404 / no-JWT 401) + cluster deny-before-proxy.
+- [x] Whole store suite green under `-race`: `internal/store/{engine,merge,rollup,query,lifecycle,ingest,stats,cluster,...}` + e2e. Investigate any DuckDB 1.1.3→≥1.2 behavior diffs and fix in-code (no test weakening).
+- [x] `go build ./cmd/prism-store ./bench/...` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok + `go list -deps ./cmd/prism` unchanged; helm golden unaffected (no env change) — if `make` has a golden check, run it.
+- [x] Docs updated (STORE.md, DESIGN.md) to the lazy-view sandbox + DuckDB version bump.
+- [x] `make lint test` green; `git status` clean; no committed blobs/secrets.
 
 ## 6. Mandatory review gates (reviewer) — SECURITY-CRITICAL
 - [ ] Gate 1 — Guidelines: minimal, idiomatic v2 migration; single-connection sandbox; wrapped errors; atomic comments (§3.8).
@@ -69,3 +69,10 @@ Replace materialize-then-lock with **allowed-dirs + lazy view** on the same dedi
 
 ## 7. Reviewer notes
 _(empty until first review)_
+
+## 8. Developer notes
+- go-duckdb v2 keeps `NewConnector(dsn, connInitFn)`; `nil` connInitFn still works. Import path is `/v2`; v2 pulls `duckdb-go-bindings` platform packages.
+- Bundled DuckDB on this toolchain: `v1.4.1` (`TestBundledDuckDBVersionAtLeast12`).
+- `allowed_directories` value must be absolute; `current_setting` returns a list type in v2 (scan as `any`).
+- DuckDB ≥1.2 treats timezone-less `TIMESTAMPTZ` literals as session-local; bench harness uses explicit `Z` suffix + `TIMESTAMPTZ` comparisons (not a store-engine change).
+- CI cross-platform: v2 uses per-OS `duckdb-go-bindings/*` static libs (linux/darwin amd64+arm64, windows-amd64).

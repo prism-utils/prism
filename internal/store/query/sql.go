@@ -19,7 +19,7 @@ import (
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/layout"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
-	duckdb "github.com/marcboeker/go-duckdb"
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 const (
@@ -209,8 +209,8 @@ func runSandboxQuery(ctx context.Context, tenantRoot, userSQL string, rowCap int
 	if err != nil {
 		return nil, wrapSandboxErr(err)
 	}
-	if _, err := conn.ExecContext(ctx, "CREATE TABLE "+sandboxMetricsView+" AS "+viewSQL); err != nil {
-		return nil, wrapSandboxErr(fmt.Errorf("materialize metrics: %w", err))
+	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
+		return nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
 	}
 	if err := lockSandbox(ctx, conn); err != nil {
 		return nil, err
@@ -307,9 +307,8 @@ func applySandboxBootstrap(ctx context.Context, conn *sql.Conn, tenantRoot strin
 			return fmt.Errorf("query: sandbox bootstrap: %w", err)
 		}
 	}
-	// allowed_directories exists in DuckDB ≥1.2; best-effort before external access is disabled.
 	dirSet := fmt.Sprintf("SET allowed_directories=[%s]", quoteSQLPath(tenantRoot))
-	if _, err := conn.ExecContext(ctx, dirSet); err != nil && !isUnknownConfig(err) {
+	if _, err := conn.ExecContext(ctx, dirSet); err != nil {
 		return fmt.Errorf("query: sandbox allowed_directories: %w", err)
 	}
 	return nil
@@ -330,14 +329,6 @@ func lockSandbox(ctx context.Context, conn *sql.Conn) error {
 		}
 	}
 	return nil
-}
-
-func isUnknownConfig(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unrecognized configuration parameter")
 }
 
 func sandboxMetricsUnionSQL(tenantRoot string) (string, error) {

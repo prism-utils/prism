@@ -16,7 +16,7 @@ import (
 	"time"
 
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
-	duckdb "github.com/marcboeker/go-duckdb"
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 const (

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	duckdb "github.com/marcboeker/go-duckdb"
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 // Row is one metrics-raw sample (prism contract v1).
