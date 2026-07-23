@@ -41,10 +41,11 @@ type sqlResponse struct {
 
 func sqlConfig(dataDir string, opts ...func(*query.SQLConfig)) *query.SQLConfig {
 	cfg := &query.SQLConfig{
-		DataDir:     dataDir,
-		MaxRows:     100_000,
-		Timeout:     30 * time.Second,
-		MemoryLimit: "",
+		DataDir:      dataDir,
+		MaxRows:      100_000,
+		Timeout:      30 * time.Second,
+		MemoryLimit:  "",
+		MaxBodyBytes: query.DefaultSQLMaxBodyBytes,
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -220,6 +221,11 @@ func TestSQLIsolationCrossTenant(t *testing.T) {
 		"SELECT * FROM read_csv('/etc/passwd')",
 		"SELECT * FROM read_parquet('/etc/passwd')",
 		"SET enable_external_access=true",
+		fmt.Sprintf("SELECT * FROM glob('%s')", filepath.ToSlash(filepath.Join(dataDir, tenantSQLB, "tiers", "L0", "*.parquet"))),
+		fmt.Sprintf("SELECT * FROM parquet_metadata('%s')", filepath.ToSlash(filepath.Join(dataDir, tenantSQLB, "engine.duckdb"))),
+		fmt.Sprintf("SELECT * FROM parquet_schema('%s')", filepath.ToSlash(filepath.Join(dataDir, tenantSQLB, "tiers", "L0", "*.parquet"))),
+		"SELECT * FROM read_json('/etc/passwd')",
+		"SELECT * FROM read_text('/etc/passwd')",
 	}
 	for _, sqlText := range attacks {
 		t.Run(sqlText, func(t *testing.T) {
@@ -859,5 +865,67 @@ func TestSQLBurstQueriesAfterFlush(t *testing.T) {
 	close(errCh)
 	for err := range errCh {
 		t.Error(err)
+	}
+}
+
+func TestSQLWithSelect200(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	srv := testSQLServer(t, dataDir, nil, eng)
+	code, out := execSQL(t, srv, tenantSQLA, "WITH x AS (SELECT \"__name__\", value FROM metrics) SELECT COUNT(*) AS c FROM x")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d", code)
+	}
+	if numericCell(t, out.Rows[0][0]) != 3 {
+		t.Fatalf("count=%v want 3", out.Rows[0][0])
+	}
+}
+
+func TestSQLWithDMLRejected400(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	srv := testSQLServer(t, dataDir, nil, eng)
+	cases := []string{
+		"WITH x AS (SELECT 1) INSERT INTO metrics SELECT * FROM x",
+		"WITH x AS (SELECT 1) DELETE FROM metrics",
+		"WITH x AS (SELECT 1) COPY (SELECT 1) TO '/tmp/x.parquet'",
+	}
+	for _, sqlText := range cases {
+		t.Run(sqlText, func(t *testing.T) {
+			execSQLExpect400(t, srv, tenantSQLA, sqlText)
+		})
+	}
+}
+
+func TestSQLMaxBodyBytes400(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	cfg := sqlConfig(dataDir, func(c *query.SQLConfig) { c.MaxBodyBytes = 512 })
+	srv := testSQLServer(t, dataDir, cfg, eng)
+	payload := `{"sql":"` + strings.Repeat("x", 600) + `"}`
+	resp := postSQL(t, sqlURL(srv.URL, tenantSQLA), payload)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, body)
+	}
+}
+
+func TestSQLSymlinkParquetExcluded(t *testing.T) {
+	dataDir, eng := twoTenantFixture(t)
+	linkDir := filepath.Join(dataDir, tenantSQLA, "tiers", "L0")
+	if err := os.MkdirAll(linkDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dataDir, tenantSQLB, "hot", "current.parquet")
+	link := filepath.Join(linkDir, "evil-link.parquet")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := testSQLServer(t, dataDir, nil, eng)
+	code, out := execSQL(t, srv, tenantSQLA, "SELECT COUNT(*) AS c FROM metrics")
+	if code != http.StatusOK {
+		t.Fatalf("status=%d", code)
+	}
+	if numericCell(t, out.Rows[0][0]) != 3 {
+		t.Fatalf("count=%v want 3 (symlink data must not be included)", out.Rows[0][0])
 	}
 }
