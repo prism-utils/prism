@@ -708,6 +708,18 @@ via environment variables (no YAML config file).
 | `INGEST_TOKEN` | _(empty)_ | Static bearer token when `AUTH_MODE=bearer`. |
 | `AUTH_MODE` | `none` | Pluggable auth: `none`, `bearer`, `mtls`, `trusted-header`. |
 | `ROUTE_PREFIX` | _(empty)_ | Optional path prefix prepended to ingest routes (e.g. `/prism-proxy`). |
+| `HOT_WINDOW_SECONDS` | _(unset)_ | Hot-window duration in seconds (overrides minutes when set). |
+| `HOT_WINDOW_MINUTES` | `10` | Hot-window duration in minutes when seconds unset. |
+| `SEGMENTS_PER_TIER` | `6` | Minimum live segments at a tier before merge compaction runs. |
+| `MAX_SEGMENT_BYTES` | `2147483648` | Seal threshold (2 GiB); sealed segments are never merge inputs. |
+| `RETENTION_DAYS` | `15` | Delete tier segments and rollups strictly older than this window. |
+| `ROLLUP_STEPS` | `1m,5m,1h` | Comma-separated rollup intervals built after L1+ merges. |
+| `MAX_TIER` | `8` | Highest tier scanned (`L0`…`L8`). |
+| `HOT_SNAPSHOT_SECONDS` | `15` | Hot snapshot export ticker interval. |
+| `FLUSH_TICK_SECONDS` | `30` | Hot→L0 flush ticker interval. |
+| `MERGE_TICK_SECONDS` | `60` | Tier merge ticker interval. |
+| `RETENTION_TICK_SECONDS` | _(unset)_ | Retention ticker in seconds; when unset, `RETENTION_TICK_HOURS` applies. |
+| `RETENTION_TICK_HOURS` | `1` | Retention ticker in hours when seconds unset. |
 
 ### HTTP routes
 

@@ -24,17 +24,28 @@ import (
 
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/elk-utilities/prism/internal/store/lifecycle"
 	"github.com/elk-utilities/prism/internal/version"
 )
 
 const (
-	defaultListenAddr   = ":8080"
-	defaultDataDir      = "/data"
-	defaultMaxBodyBytes = 268435456
-	defaultArtifacts    = "metrics-raw"
-	defaultAuthMode     = "none"
-	readHeaderTimeout   = 15 * time.Second
-	shutdownTimeout     = 10 * time.Second
+	defaultListenAddr        = ":8080"
+	defaultDataDir           = "/data"
+	defaultMaxBodyBytes      = 268435456
+	defaultArtifacts         = "metrics-raw"
+	defaultAuthMode          = "none"
+	defaultHotWindowMinutes  = 10
+	defaultSegmentsPerTier   = 6
+	defaultMaxSegmentBytes   = 2147483648
+	defaultRetentionDays     = 15
+	defaultRollupSteps       = "1m,5m,1h"
+	defaultMaxTier           = 8
+	defaultHotSnapshotSec    = 15
+	defaultFlushTickSec      = 30
+	defaultMergeTickSec      = 60
+	defaultRetentionTickHour = 1
+	readHeaderTimeout        = 15 * time.Second
+	shutdownTimeout          = 10 * time.Second
 )
 
 type serverConfig struct {
@@ -46,17 +57,37 @@ type serverConfig struct {
 	ingestToken      string
 	authMode         string
 	routePrefix      string
+	hotWindow        time.Duration
+	segmentsPerTier  int
+	maxSegmentBytes  int64
+	retentionDays    int
+	rollupSteps      string
+	maxTier          int
+	snapshotTick     time.Duration
+	flushTick        time.Duration
+	mergeTick        time.Duration
+	retentionTick    time.Duration
 }
 
 func loadConfig() serverConfig {
 	c := serverConfig{
-		listenAddr:   envOr("LISTEN_ADDR", defaultListenAddr),
-		flightAddr:   os.Getenv("FLIGHT_ADDR"),
-		dataDir:      envOr("DATA_DIR", defaultDataDir),
-		maxBodyBytes: defaultMaxBodyBytes,
-		ingestToken:  os.Getenv("INGEST_TOKEN"),
-		authMode:     envOr("AUTH_MODE", defaultAuthMode),
-		routePrefix:  os.Getenv("ROUTE_PREFIX"),
+		listenAddr:      envOr("LISTEN_ADDR", defaultListenAddr),
+		flightAddr:      os.Getenv("FLIGHT_ADDR"),
+		dataDir:         envOr("DATA_DIR", defaultDataDir),
+		maxBodyBytes:    defaultMaxBodyBytes,
+		ingestToken:     os.Getenv("INGEST_TOKEN"),
+		authMode:        envOr("AUTH_MODE", defaultAuthMode),
+		routePrefix:     os.Getenv("ROUTE_PREFIX"),
+		hotWindow:       loadHotWindow(),
+		segmentsPerTier: envInt("SEGMENTS_PER_TIER", defaultSegmentsPerTier),
+		maxSegmentBytes: envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
+		retentionDays:   envInt("RETENTION_DAYS", defaultRetentionDays),
+		rollupSteps:     envOr("ROLLUP_STEPS", defaultRollupSteps),
+		maxTier:         envInt("MAX_TIER", defaultMaxTier),
+		snapshotTick:    time.Duration(envInt("HOT_SNAPSHOT_SECONDS", defaultHotSnapshotSec)) * time.Second,
+		flushTick:       time.Duration(envInt("FLUSH_TICK_SECONDS", defaultFlushTickSec)) * time.Second,
+		mergeTick:       time.Duration(envInt("MERGE_TICK_SECONDS", defaultMergeTickSec)) * time.Second,
+		retentionTick:   loadRetentionTick(),
 	}
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
@@ -71,9 +102,45 @@ func loadConfig() serverConfig {
 	return c
 }
 
+func loadHotWindow() time.Duration {
+	if v := os.Getenv("HOT_WINDOW_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return time.Duration(envInt("HOT_WINDOW_MINUTES", defaultHotWindowMinutes)) * time.Minute
+}
+
+func loadRetentionTick() time.Duration {
+	if v := os.Getenv("RETENTION_TICK_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return time.Duration(envInt("RETENTION_TICK_HOURS", defaultRetentionTickHour)) * time.Hour
+}
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+func envInt64(key string, def int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
 	}
 	return def
 }
@@ -124,14 +191,65 @@ func versionLine() string {
 	return fmt.Sprintf("prism-store %s", version.Version)
 }
 
+// RunBackgroundLoop runs lifecycle tickers until ctx is cancelled.
+func RunBackgroundLoop(ctx context.Context, runner *lifecycle.Runner, cfg *serverConfig, logger *slog.Logger) {
+	snapshotTick := time.NewTicker(cfg.snapshotTick)
+	flushTick := time.NewTicker(cfg.flushTick)
+	mergeTick := time.NewTicker(cfg.mergeTick)
+	retentionTick := time.NewTicker(cfg.retentionTick)
+	defer snapshotTick.Stop()
+	defer flushTick.Stop()
+	defer mergeTick.Stop()
+	defer retentionTick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-snapshotTick.C:
+			if err := runner.TickHotSnapshot(); err != nil {
+				logger.Error("hot snapshot tick", "err", err)
+			}
+		case <-flushTick.C:
+			if err := runner.TickFlush(); err != nil {
+				logger.Error("flush tick", "err", err)
+			}
+		case <-mergeTick.C:
+			if err := runner.TickMerge(); err != nil {
+				logger.Error("merge tick", "err", err)
+			}
+		case <-retentionTick.C:
+			if err := runner.TickRetention(); err != nil {
+				logger.Error("retention tick", "err", err)
+			}
+		}
+	}
+}
+
 func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
 	mode, err := storeingest.ParseAuthMode(cfg.authMode)
 	if err != nil {
 		return fmt.Errorf("auth mode: %w", err)
 	}
 
-	eng := engine.New(engine.Config{DataDir: cfg.dataDir}, nil)
+	now := time.Now
+	eng := engine.New(engine.Config{
+		DataDir:   cfg.dataDir,
+		HotWindow: cfg.hotWindow,
+	}, now)
 	defer func() { _ = eng.Close() }()
+
+	runner := lifecycle.NewRunner(lifecycle.Config{
+		DataDir:         cfg.dataDir,
+		SegmentsPerTier: cfg.segmentsPerTier,
+		MaxSegmentBytes: cfg.maxSegmentBytes,
+		FloorBytes:      lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
+		RetentionDays:   cfg.retentionDays,
+		RollupSteps:     cfg.rollupSteps,
+		MaxTier:         cfg.maxTier,
+	}, eng, now)
+
+	go RunBackgroundLoop(ctx, runner, cfg, logger)
 
 	ingestCfg := cfg.ingestConfig(mode)
 
@@ -157,7 +275,13 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("prism-store listening", "addr", cfg.listenAddr, "data_dir", cfg.dataDir, "auth_mode", cfg.authMode)
+		logger.Info("prism-store listening",
+			"addr", cfg.listenAddr,
+			"data_dir", cfg.dataDir,
+			"auth_mode", cfg.authMode,
+			"hot_window", cfg.hotWindow.String(),
+			"segments_per_tier", cfg.segmentsPerTier,
+		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
