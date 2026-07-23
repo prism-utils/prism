@@ -110,6 +110,14 @@ spec:
               value: "60"
             - name: RETENTION_TICK_HOURS
               value: "1"
+            - name: SQL_API_ENABLED
+              value: "true"
+            - name: SQL_API_MAX_ROWS
+              value: "100000"
+            - name: SQL_API_TIMEOUT_SECONDS
+              value: "30"
+            - name: SQL_API_MAX_BODY_BYTES
+              value: "1048576"
           livenessProbe:
             httpGet:
               path: /healthz
