@@ -1,6 +1,6 @@
 # Spec: honor QUERY_HOT_ONLY in the /sql sandbox + api-arrow-hot benchmark
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/sql-hot-only`
 - **Owner phase:** orchestrator → developer → reviewer + security-review; then orchestrator RUNS the benchmark and commits results to a directory.
@@ -54,12 +54,26 @@ Status: IN_REVIEW
 - [x] No `*-api-arrow-hot*` result artifacts committed (orchestrator generates them).
 
 ## 6. Mandatory review gates (reviewer) — SECURITY-SENSITIVE
-- [ ] Gate 1 — Guidelines: minimal threading of HotOnly; shared sandbox path for JSON+Arrow; wrapped errors; atomic comments §3.8.
-- [ ] Gate 2 — Edge cases: hot-only with missing snapshot → 400; hot-only skips ALL tiers; JSON and Arrow both affected; bench `--hot-only` requires `--api`; count gate holds.
-- [ ] Gate 3 — Docs match code (STORE.md + bench/README.md).
-- [ ] Gate 4 — Atomic comments.
-- [ ] **SECURITY AUDIT:** confirm the change only narrows the source set (drops tier globs) — hot snapshot still vetted by `safeTenantParquetFile`; `allowed_directories` + external-access-off + lock unchanged; no cross-tenant/host-fs escape; RBAC unchanged.
-- [ ] Full `docs/REVIEW.md`; TESTING layering; TDD (`git log`).
+- [x] Gate 1 — Guidelines: minimal threading of HotOnly; shared sandbox path for JSON+Arrow; wrapped errors; atomic comments §3.8.
+- [x] Gate 2 — Edge cases: hot-only with missing snapshot → 400; hot-only skips ALL tiers; JSON and Arrow both affected; bench `--hot-only` requires `--api`; count gate holds.
+- [x] Gate 3 — Docs match code (STORE.md + bench/README.md).
+- [x] Gate 4 — Atomic comments.
+- [x] **SECURITY AUDIT:** confirm the change only narrows the source set (drops tier globs) — hot snapshot still vetted by `safeTenantParquetFile`; `allowed_directories` + external-access-off + lock unchanged; no cross-tenant/host-fs escape; RBAC unchanged.
+- [x] Full `docs/REVIEW.md`; TESTING layering; TDD (`git log`).
 
 ## 7. Reviewer notes
-_(empty until first review)_
+**Verdict: ALL_OK** (2026-07-23)
+
+**TDD:** `4583e44 test:` precedes `93612b8 feat:` — tests-first satisfied.
+
+**Gate 1:** `HotOnly` on `SQLConfig` → single `prepareSandboxConn` call (`sql.go:167`) serves both JSON (`queryJSON`) and Arrow (`writeArrowResponse`); tier skip is one early return (`sql.go:641-642`); errors wrapped via `wrapSandboxErr` / `%w` in bootstrap. No new non-atomic comments in the diff.
+
+**Gate 2:** Unit tests prove tier skip (`sql_hot_only_test.go`); integration hot-vs-full count (`sql_test.go:1091-1111`, `sql_arrow_test.go:500-517`) proves tiers excluded when data exists in both; isolation under hot-only (`sql_test.go:1114`); bench `--hot-only` without `--api` errors (`profile_test.go:51-55`). Missing snapshot → 400 via `len(paths)==0` → `errNoParquetSources` (`sql.go:393-394`, `174-175`); covered generically by `TestSQLNoParquetTenant400` (no hot-only-specific “tiers present, snapshot absent” test — acceptable, same error path).
+
+**Gate 3:** `docs/STORE.md:367-370,458-461` and `bench/README.md:101-118` match delivered behavior; `Makefile:76-79` target matches spec.
+
+**Gate 4:** No new §3.8 violations in changed files.
+
+**Security:** `collectSafeParquetPaths` still vets snapshot through `safeTenantParquetFile` (`sql.go:636-639`); hot-only only skips the tier loop (`641-642`) — strictly narrows sources. `applySandboxBootstrap` / `lockSandbox` unchanged (`338-376`); RBAC/validator/caps untouched.
+
+**Verification:** `make lint` 0 issues; `make test` (`-race`, `duckdb_arrow`) all green; `go build -tags duckdb_arrow ./bench/...` ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; no `*-api-arrow-hot*` artifacts in git index.
