@@ -346,17 +346,60 @@ func TestSQLArrowIsolationCrossTenant(t *testing.T) {
 	srv := testSQLServer(t, dataDir, nil, eng)
 
 	bGlob := filepath.Join(dataDir, tenantSQLB, "tiers", "L0", "*.parquet")
-	sqlText := fmt.Sprintf("SELECT * FROM read_parquet('%s')", filepath.ToSlash(bGlob))
+	bEngine := filepath.Join(dataDir, tenantSQLB, "engine.duckdb")
+	outPath := filepath.Join(dataDir, tenantSQLA, "escape.parquet")
+	otherPath := filepath.ToSlash(filepath.Join(dataDir, tenantSQLB, "hot", "current.parquet"))
+
+	attacks := []string{
+		fmt.Sprintf("SELECT * FROM read_parquet('%s')", filepath.ToSlash(bGlob)),
+		fmt.Sprintf("SELECT * FROM read_parquet('%s')", otherPath),
+		fmt.Sprintf("ATTACH '%s' AS stolen", filepath.ToSlash(bEngine)),
+		fmt.Sprintf("COPY (SELECT 1) TO '%s'", filepath.ToSlash(outPath)),
+		"SELECT * FROM read_csv('/etc/passwd')",
+		"SELECT * FROM read_parquet('/etc/passwd')",
+	}
+	for _, sqlText := range attacks {
+		t.Run(sqlText, func(t *testing.T) {
+			execSQLArrowExpect400(t, srv, tenantSQLA, sqlText)
+		})
+	}
+
+	code, _, rows, _ := execSQLArrow(t, srv, tenantSQLA, "SELECT COUNT(*) AS c FROM metrics")
+	if code != http.StatusOK {
+		t.Fatalf("count status=%d", code)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows=%v", rows)
+	}
+	if numericCell(t, rows[0][0]) != 3 {
+		t.Fatalf("tenant A count=%v want 3", rows[0][0])
+	}
+}
+
+func execSQLArrowExpect400(t *testing.T, srv *httptest.Server, tenant, sqlText string) {
+	t.Helper()
 	body := fmt.Sprintf(`{"sql":%q}`, sqlText)
-	resp := postSQLArrow(t, sqlURL(srv.URL, tenantSQLA), body, "")
+	resp := postSQLArrow(t, sqlURL(srv.URL, tenant), body, "")
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status=%d want 400 body=%s", resp.StatusCode, b)
+		t.Fatalf("status=%d want 400 sql=%q body=%s", resp.StatusCode, sqlText, b)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(raw), "PK") || looksLikeArrowIPC(raw) {
+		t.Fatalf("unexpected arrow stream body for sql=%q", sqlText)
 	}
 	if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, arrowStreamAccept) {
-		t.Fatal("unexpected arrow stream on isolation failure")
+		t.Fatalf("content-type=%q want non-arrow", ct)
 	}
+}
+
+func looksLikeArrowIPC(raw []byte) bool {
+	if len(raw) < 4 {
+		return false
+	}
+	// Arrow IPC stream magic: continuation marker 0xFFFFFFFF then schema/message markers.
+	return raw[0] == 0xff && raw[1] == 0xff && raw[2] == 0xff && raw[3] == 0xff
 }
 
 func TestClusterSQLArrowRBACDenyBeforeProxy(t *testing.T) {
