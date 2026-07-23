@@ -544,8 +544,15 @@ func arrowBenchCellAt(rec arrow.RecordBatch, col, row int64) any {
 		return arr.Value(int(row))
 	case *array.String:
 		return arr.Value(int(row))
+	case *array.Timestamp:
+		return arr.Value(int(row))
 	default:
-		return fmt.Sprint(colArr)
+		// Per-element marshal value; never stringify the whole column array (that
+		// would be O(rows) per cell → O(rows^2) over a large scan).
+		if m, ok := colArr.(interface{ GetOneForMarshal(int) any }); ok {
+			return m.GetOneForMarshal(int(row))
+		}
+		return nil
 	}
 }
 
