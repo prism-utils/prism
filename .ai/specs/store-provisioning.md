@@ -1,6 +1,6 @@
 # Spec: prism-store — tenant provisioning (/ensure) + /stats metering
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 
 - **Slug / branch:** `feat/store-provisioning`
 - **Owner phase:** orchestrator → developer
@@ -56,11 +56,11 @@ so admin/stats/query are not publicly reachable.
 ## 5. Acceptance checklist  (developer checks these off)
 
 - [x] `seed.EnsureMetricsRawSeedForTenant` + `EnsureTieredLayoutForTenant` write all documented zero-row files, idempotently and atomically; embedded fixture present; `SeedName` reserved.
-- [x] `POST /admin/tenants/{ns}/ensure`: `404` unknown tenant, `500` on failure, `204` success; repeat call stays `204` and adds no rows (idempotent) — tested.
+- [ ] `POST /admin/tenants/{ns}/ensure`: `404` unknown tenant, `500` on failure, `204` success; repeat call stays `204` and adds no rows (idempotent) — tested.
 - [x] `GET /stats?ns=<t>`: returns the exact documented shape; `windows` = hot rows + L0 count; `latestUnixNanos` = max L0 mtime; `onDiskBytes` excludes legacy `metrics-raw/`; `compactionCpuSeconds` from metering file.
 - [x] `GET /stats` (no `ns`): aggregates `windows`/`totalWindows` across tenant dirs; omits `onDiskBytes`/`compactionCpuSeconds`.
 - [x] JSON field names/casing/omitempty match the reference byte-for-byte (golden-style assertion).
-- [x] `ADMIN_LISTEN_ADDR` set ⇒ admin/stats/query on the second server, ingest stays on public; unset ⇒ single mux. Both planes serve `/healthz`+`/readyz`. Shutdown stops both.
+- [ ] `ADMIN_LISTEN_ADDR` set ⇒ admin/stats/query on the second server, ingest stays on public; unset ⇒ single mux. Both planes serve `/healthz`+`/readyz`. Shutdown stops both.
 - [x] `ADMIN_TOKEN` set ⇒ `401` without/with wrong bearer, pass with correct (constant-time); unset ⇒ open.
 - [x] `docs/STORE.md` (billing contract + ensure/seeds) and `docs/CONFIG.md` (`ADMIN_LISTEN_ADDR`, `ADMIN_TOKEN`) updated.
 - [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
@@ -68,12 +68,22 @@ so admin/stats/query are not publicly reachable.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Guidelines:** seed pkg leaf/pure; handlers thin, slog at edges, errors wrapped; bearer compare constant-time; no globals; two-server wiring clean with a single shutdown path.
+- [x] **Gate 1 — Guidelines:** seed pkg leaf/pure; handlers thin, slog at edges, errors wrapped; bearer compare constant-time; no globals; two-server wiring clean with a single shutdown path.
 - [ ] **Gate 2 — Edge cases:** ensure on already-seeded tenant (idempotent, no dup rows); ensure on unknown tenant `404`; stats for tenant with no data (zero windows, not error); stats aggregate over empty dataDir; legacy `metrics-raw/` excluded from `onDiskBytes`; missing `.metering.json` ⇒ `0`; admin token unset vs set; port-collision/startup error surfaces.
-- [ ] **Gate 3 — Docs/comments match code:** STORE.md `/stats` contract matches the struct tags exactly; CONFIG.md flags match; no forward references.
+  - Missing: `POST /ensure` → `500 ensure failed` when seed/layout write fails (no httptest); admin-plane `/{ns}/query` not asserted in split-plane tests; no test that `runServe` shuts down both HTTP servers; no port-collision/startup-error test.
+- [x] **Gate 3 — Docs/comments match code:** STORE.md `/stats` contract matches the struct tags exactly; CONFIG.md flags match; no forward references.
 - [ ] **Gate 4 — Atomic comments** (§3.8): none reference another file/symbol.
+  - `internal/store/admin/stats.go:34` nolint cites `engine.ListL0` — drop the cross-symbol reference from the comment text.
 - [ ] Full docs/REVIEW.md checklist; TESTING.md layering (seed unit + DuckDB integration for stats/ensure; `httptest` for handlers incl. two-plane routing + auth).
+  - Split-plane httptest covers ingest/`/stats`/health only; query route and dual-server shutdown untested.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: CHANGES_REQUESTED** (2026-07-22). Independent verification green: `make lint` 0 issues; `make test` (`-race`) all packages ok; `CGO_ENABLED=0 go build ./cmd/prism` ok; `go build ./cmd/prism-store` ok. TDD order ok (`1359153 test(store-provisioning):…` before `0f11e82 feat(store-provisioning):…`). Billing JSON struct tags and golden strings match reference `artifactStats`/`statsResponse` in prism-proxy `main.go` (~273–316); `ingest.BearerEquals` uses `crypto/subtle.ConstantTimeCompare`. No committed binaries (`.parquet` fixture only).
+
+**Fix before re-review:**
+
+1. **§5 ensure `500`:** add an httptest (e.g. read-only `DATA_DIR` or injected seed failure) asserting `500` + body `ensure failed`.
+2. **§5 split plane:** extend `cmd/prism-store/routing_test.go` — admin mux serves `GET /{ns}/query` (non-404), public mux does not when split; add a test that cancelling `runServe` ctx calls `Shutdown` on both servers (or equivalent httptest of the shutdown path).
+3. **Gate 2 port-collision:** assert startup returns/surfaces an error when `ADMIN_LISTEN_ADDR` (or public addr) is already bound.
+4. **Gate 4:** reword the `//nolint:gosec` on `stats.go:34` so it does not name `engine.ListL0`.
