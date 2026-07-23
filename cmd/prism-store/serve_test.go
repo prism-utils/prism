@@ -145,6 +145,8 @@ func TestRunServePublicListenAddrInUse(t *testing.T) {
 }
 
 func TestRunServeAdminListenAddrInUse(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	publicAddr := freeTCPAddr(t)
 	lc := net.ListenConfig{}
 	occupied, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")

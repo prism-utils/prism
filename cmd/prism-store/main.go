@@ -363,6 +363,12 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error
 	case <-ctx.Done():
 	case err := <-errCh:
 		if err != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+			defer shutdownCancel()
+			_ = srv.Shutdown(shutdownCtx)
+			if adminSrv != nil {
+				_ = adminSrv.Shutdown(shutdownCtx)
+			}
 			return err
 		}
 	}

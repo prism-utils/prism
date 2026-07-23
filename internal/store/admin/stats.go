@@ -31,7 +31,7 @@ func CollectEngineStats(dataDir, ns string, eng *engine.Engine) ArtifactStats {
 	if err == nil {
 		st.Windows += len(l0)
 		for _, p := range l0 {
-			if info, err := os.Stat(p); err == nil { //nolint:gosec // G703: paths from engine.ListL0 under validated tenant dataDir
+			if info, err := os.Stat(p); err == nil { //nolint:gosec // G703: tier segment paths stay under the tenant data root
 				if ts := info.ModTime().UnixNano(); ts > st.LatestUnixNanos {
 					st.LatestUnixNanos = ts
 				}
