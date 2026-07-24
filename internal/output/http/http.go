@@ -6,8 +6,9 @@
 // It is the authenticated egress that reaches a tenant ingress fronted by a
 // Bearer-checking reverse proxy (e.g. Traefik ForwardAuth): the block bytes —
 // typically a self-contained Parquet window — become the request body, so the
-// receiver lands columnar artifacts directly. Secrets (the token) come from
-// ${ENV} so nothing sensitive lives in the config file.
+// receiver lands columnar artifacts directly. The bearer token comes from
+// ${ENV} (static) or a token_file re-read per send (for rotating credentials),
+// so nothing sensitive lives in the config file.
 package http
 
 import (
@@ -17,6 +18,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -54,6 +57,12 @@ type Config struct {
 	Headers map[string]string `json:"headers"`
 	// Token, when set, is sent as "Authorization: Bearer <token>". Use ${ENV}.
 	Token string `json:"token"`
+	// TokenFile is a path whose contents are sent as "Authorization: Bearer
+	// <contents>". Unlike Token it is re-read on every send, so a bearer that
+	// rotates on disk (e.g. a Kubernetes projected ServiceAccount token) stays
+	// current without restarting the process. Trailing whitespace is trimmed.
+	// Mutually exclusive with Token.
+	TokenFile string `json:"token_file"`
 	// ContentType sets the request Content-Type (default application/octet-stream).
 	ContentType string `json:"content_type"`
 	// TLS configures transport security for https endpoints.
@@ -72,6 +81,9 @@ type Config struct {
 func (c *Config) Validate() error {
 	if c.URL == "" {
 		return fmt.Errorf("http.url: required, must not be empty")
+	}
+	if c.Token != "" && c.TokenFile != "" {
+		return fmt.Errorf("http.token / http.token_file: set at most one, not both")
 	}
 	switch c.Method {
 	case "", http.MethodPost, http.MethodPut, http.MethodPatch:
@@ -227,7 +239,15 @@ func (o *Output) attempt(ctx context.Context, block data.EncodedBlock) error {
 	for k, v := range o.cfg.Headers {
 		req.Header.Set(k, v)
 	}
-	if o.cfg.Token != "" {
+	if o.cfg.TokenFile != "" {
+		// Re-read on every attempt: a projected SA token rotates on disk, and a
+		// value cached at construction would go stale and start returning 401.
+		raw, err := os.ReadFile(o.cfg.TokenFile)
+		if err != nil {
+			return fmt.Errorf("read token_file %q: %w", o.cfg.TokenFile, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(raw)))
+	} else if o.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+o.cfg.Token)
 	}
 	resp, err := o.client.Do(req)
