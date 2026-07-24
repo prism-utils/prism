@@ -53,6 +53,11 @@ type SQLConfig struct {
 	Threads      int
 	MaxBodyBytes int64
 	HotOnly      bool
+	// RunJobs mirrors the process-wide RUN_JOBS flag. When false this store is a
+	// read-only replica (it owns no writes to the tenant data dir), so /sql must
+	// serve purely from immutable parquet and must NOT flush a fresh hot snapshot
+	// (that is the writer's job, and the replica's data mount is read-only).
+	RunJobs bool
 }
 
 // SQLRoutePattern returns the ServeMux pattern for POST /{ns}/sql.
@@ -136,20 +141,20 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Timeout)
 		defer cancel()
 
-		hasParquet, err := tenantHasParquetSources(ctx, eng, cfg.DataDir, ns)
-		if err != nil {
-			logger.Error("sql parquet probe", "ns", ns, "err", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
-			return
-		}
-		// A known tenant with no tiered parquet and no hot rows (freshly
-		// provisioned, or hot-only-empty) still answers read-only queries via
-		// an empty, correctly-typed `metrics` view (see sandboxMetricsUnionSQL).
-		// Only materialise a hot snapshot when there is data to export;
-		// otherwise proceed straight to the empty sandbox so queries like
-		// `SELECT 1` or `SELECT ... FROM metrics` return zero rows instead of a
-		// misleading 400 "bad query".
-		if hasParquet {
+		// SQL reads serve purely from immutable parquet: the :memory: sandbox
+		// reads hot/current.parquet + tiers/*.parquet via read_parquet and never
+		// opens the tenant engine.duckdb. This lets a read-only replica
+		// (RUN_JOBS=false, with a read-only data mount owned by the writer) serve
+		// /sql without hitting `engine.duckdb: Read-only file system` or a DuckDB
+		// write-lock conflict with the writer that holds the same file.
+		//
+		// A store that runs jobs (the writer / all-in-one) first flushes live hot
+		// rows to hot/current.parquet so its own reads are fresh; a replica serves
+		// the writer-produced snapshot as-is (bounded by the snapshot interval). A
+		// tenant with no parquet at all still answers via an empty, correctly-typed
+		// `metrics` view (see sandboxMetricsUnionSQL), so freshly-provisioned /
+		// hot-only-empty tenants return zero rows rather than a misleading 400.
+		if cfg.RunJobs {
 			//nolint:contextcheck // snapshot export uses engine-internal context; request ctx applies to sandbox query below.
 			if err := eng.ExportHotSnapshot(ns); err != nil {
 				logger.Error("sql hot snapshot", "ns", ns, "err", err)
@@ -845,30 +850,6 @@ func wrapSandboxErr(err error) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %w", errSandboxExec, err)
-}
-
-func tenantHasParquetSources(ctx context.Context, eng *engine.Engine, dataDir, tenant string) (bool, error) {
-	for tier := 0; tier < maxTier; tier++ {
-		glob := filepath.Join(dataDir, tenant, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
-		if matches, _ := filepath.Glob(glob); len(matches) > 0 {
-			return true, nil
-		}
-	}
-	var hotRows, prevRows int64
-	//nolint:contextcheck // probe uses request ctx inside WithRead callback.
-	err := eng.WithRead(tenant, func(db *sql.DB) error {
-		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM hot_current").Scan(&hotRows); err != nil {
-			return err
-		}
-		return db.QueryRowContext(ctx, "SELECT COUNT(*) FROM hot_prev").Scan(&prevRows)
-	})
-	if err != nil {
-		return false, err
-	}
-	if hotRows > 0 || prevRows > 0 {
-		return true, nil
-	}
-	return false, nil
 }
 
 func parsePositiveInt64(s string) (int64, error) {

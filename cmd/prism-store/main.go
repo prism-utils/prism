@@ -344,6 +344,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 				Threads:      cfg.duckdbThreads,
 				MaxBodyBytes: cfg.sqlAPIMaxBodyBytes,
 				HotOnly:      cfg.queryHotOnly,
+				RunJobs:      cfg.runJobs,
 			}
 			h := query.SQLHandler(sqlCfg, eng, logger)
 			h = queue.Middleware(sqlLimiter, h)
