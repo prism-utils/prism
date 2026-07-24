@@ -1,7 +1,11 @@
 # Release image for prism-store: copies the GoReleaser-built CGO binary onto
-# debian:bookworm-slim. DuckDB links against libstdc++ at runtime; the process
-# runs as uid 472 with /data as the writable data root.
-FROM debian:bookworm-slim
+# debian:trixie-slim. The store binary is built with CGO (DuckDB) on the
+# ubuntu-24.04 release runner (glibc 2.39), so the runtime base MUST provide
+# glibc >= 2.38 — bookworm-slim (2.36) crashes at load with
+# `libm.so.6: version GLIBC_2.38 not found`. trixie-slim ships glibc 2.41.
+# DuckDB links against libstdc++ at runtime; the process runs as uid 472 with
+# /data as the writable data root.
+FROM debian:trixie-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
