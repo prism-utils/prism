@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -73,6 +75,45 @@ func TestConsume_PostsBodyWithAuthAndHeaders(t *testing.T) {
 	}
 	if gotCustom != "acme" {
 		t.Fatalf("custom header = %q", gotCustom)
+	}
+}
+
+func TestConsume_TokenFileReadFreshPerAttempt(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// A projected ServiceAccount token rotates on disk while the process runs,
+	// so the bearer must be re-read from the file on every send, not cached at
+	// construction. Trailing whitespace/newlines are stripped.
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("tok-v1\n"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	cfg := fastRetry(srv.URL)
+	cfg.TokenFile = tokenPath
+	out := newOutput(t, cfg)
+
+	block := data.EncodedBlock{Bytes: []byte("x")}
+	if err := out.Consume(context.Background(), block); err != nil {
+		t.Fatalf("Consume v1: %v", err)
+	}
+	if gotAuth != "Bearer tok-v1" {
+		t.Fatalf("auth v1 = %q, want Bearer tok-v1", gotAuth)
+	}
+
+	// Rotate the file; the next send must pick up the new token.
+	if err := os.WriteFile(tokenPath, []byte("tok-v2"), 0o600); err != nil {
+		t.Fatalf("rotate token: %v", err)
+	}
+	if err := out.Consume(context.Background(), block); err != nil {
+		t.Fatalf("Consume v2: %v", err)
+	}
+	if gotAuth != "Bearer tok-v2" {
+		t.Fatalf("auth v2 = %q, want Bearer tok-v2 (token file not re-read)", gotAuth)
 	}
 }
 
@@ -189,6 +230,11 @@ func TestValidate_Errors(t *testing.T) {
 		"bad timeout":  {URL: "http://x", Timeout: "nope"},
 		"bad backoff":  {URL: "http://x", InitialBackoff: "nope"},
 		"tls half key": {URL: "http://x", TLS: &tlsConfig{Cert: "c.pem"}},
+		"token and token_file": {
+			URL:       "http://x",
+			Token:     "inline",
+			TokenFile: "/var/run/token",
+		},
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
