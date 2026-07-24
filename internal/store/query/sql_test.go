@@ -740,7 +740,9 @@ func TestSQLResponseShape(t *testing.T) {
 	}
 }
 
-func TestSQLNoParquetTenant400(t *testing.T) {
+// A known tenant with no parquet sources answers read-only queries with an
+// empty, correctly-typed result rather than a misleading 400 "bad query".
+func TestSQLNoParquetTenantEmptyResult200(t *testing.T) {
 	dataDir := t.TempDir()
 	tenantRoot := filepath.Join(dataDir, tenantSQLA)
 	if err := os.MkdirAll(tenantRoot, 0o750); err != nil {
@@ -750,7 +752,42 @@ func TestSQLNoParquetTenant400(t *testing.T) {
 	t.Cleanup(func() { _ = eng.Close() })
 
 	srv := testSQLServer(t, dataDir, nil, eng)
-	execSQLExpect400(t, srv, tenantSQLA, "SELECT COUNT(*) FROM metrics")
+
+	// Aggregate over the (empty) metrics view returns zero, not an error.
+	code, out := execSQL(t, srv, tenantSQLA, "SELECT COUNT(*) FROM metrics")
+	if code != http.StatusOK {
+		t.Fatalf("count status=%d want 200", code)
+	}
+	if out.RowCount != 1 || len(out.Rows) != 1 {
+		t.Fatalf("count result=%+v want single row", out)
+	}
+
+	// A non-table query also succeeds against the empty sandbox.
+	code, out = execSQL(t, srv, tenantSQLA, "SELECT 1 AS ok")
+	if code != http.StatusOK {
+		t.Fatalf("select 1 status=%d want 200", code)
+	}
+	if out.RowCount != 1 {
+		t.Fatalf("select 1 result=%+v want single row", out)
+	}
+
+	// Selecting the empty metrics view yields the right columns and no rows.
+	code, out = execSQL(t, srv, tenantSQLA, "SELECT * FROM metrics")
+	if code != http.StatusOK {
+		t.Fatalf("select metrics status=%d want 200", code)
+	}
+	if out.RowCount != 0 || len(out.Rows) != 0 {
+		t.Fatalf("select metrics rows=%d want empty", out.RowCount)
+	}
+	want := []string{"__name__", "labels", "value", "timestamp_ms", "ts"}
+	if len(out.Columns) != len(want) {
+		t.Fatalf("columns=%v want %v", out.Columns, want)
+	}
+	for i := range want {
+		if out.Columns[i] != want[i] {
+			t.Fatalf("column[%d]=%q want %q", i, out.Columns[i], want[i])
+		}
+	}
 }
 
 func TestSQLEmptyResult200(t *testing.T) {

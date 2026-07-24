@@ -142,16 +142,20 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			http.Error(w, "query failed", http.StatusInternalServerError)
 			return
 		}
-		if !hasParquet {
-			http.Error(w, "bad query", http.StatusBadRequest)
-			return
-		}
-
-		//nolint:contextcheck // snapshot export uses engine-internal context; request ctx applies to sandbox query below.
-		if err := eng.ExportHotSnapshot(ns); err != nil {
-			logger.Error("sql hot snapshot", "ns", ns, "err", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
-			return
+		// A known tenant with no tiered parquet and no hot rows (freshly
+		// provisioned, or hot-only-empty) still answers read-only queries via
+		// an empty, correctly-typed `metrics` view (see sandboxMetricsUnionSQL).
+		// Only materialise a hot snapshot when there is data to export;
+		// otherwise proceed straight to the empty sandbox so queries like
+		// `SELECT 1` or `SELECT ... FROM metrics` return zero rows instead of a
+		// misleading 400 "bad query".
+		if hasParquet {
+			//nolint:contextcheck // snapshot export uses engine-internal context; request ctx applies to sandbox query below.
+			if err := eng.ExportHotSnapshot(ns); err != nil {
+				logger.Error("sql hot snapshot", "ns", ns, "err", err)
+				http.Error(w, "query failed", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		rowCap := cfg.MaxRows
@@ -376,6 +380,18 @@ func lockSandbox(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
+// emptyMetricsViewSQL is the body of the sandbox `metrics` view when a tenant
+// has no parquet sources. It yields zero rows with the same column names and
+// types as the read_parquet projection in sandboxMetricsUnionSQL, so queries
+// against an empty tenant behave like queries against an empty result set.
+const emptyMetricsViewSQL = `SELECT ` +
+	`CAST(NULL AS VARCHAR) AS "__name__", ` +
+	`CAST(NULL AS VARCHAR) AS labels, ` +
+	`CAST(NULL AS DOUBLE) AS value, ` +
+	`CAST(NULL AS BIGINT) AS timestamp_ms, ` +
+	`CAST(NULL AS TIMESTAMP) AS ts ` +
+	`WHERE 1=0`
+
 func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
 	absRoot, err := filepath.Abs(tenantRoot)
 	if err != nil {
@@ -391,7 +407,12 @@ func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
 		return "", err
 	}
 	if len(paths) == 0 {
-		return "", errNoParquetSources
+		// No parquet sources yet (freshly-provisioned tenant, or a hot-only
+		// tenant with no rows). Serve a correctly-typed, empty `metrics`
+		// relation so valid read-only queries succeed with zero rows instead
+		// of failing with a misleading 400 "bad query". The column list and
+		// types must match the read_parquet projection below.
+		return emptyMetricsViewSQL, nil
 	}
 	var parts []string
 	for _, p := range paths {
