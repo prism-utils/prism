@@ -47,6 +47,9 @@ func sqlConfig(dataDir string, opts ...func(*query.SQLConfig)) *query.SQLConfig 
 		Timeout:      30 * time.Second,
 		MemoryLimit:  "",
 		MaxBodyBytes: query.DefaultSQLMaxBodyBytes,
+		// Default to writer semantics (prod RUN_JOBS default is true): /sql flushes
+		// a fresh hot snapshot before serving. Replica tests opt out via RunJobs:false.
+		RunJobs: true,
 	}
 	for _, opt := range opts {
 		opt(cfg)
