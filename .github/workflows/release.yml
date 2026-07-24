@@ -50,6 +50,33 @@ jobs:
               -o scanctx-store/prism-store ./cmd/prism-store
       - name: build store image for scanning
         run: docker build -f Dockerfile.store.release -t prism-store:scan scanctx-store
+      - name: store image runtime smoke (glibc/base skew gate)
+        # The store binary is CGO (DuckDB) and links glibc at load time. A
+        # build-vs-runtime glibc skew (e.g. binary built on glibc 2.39 shipped
+        # on a base with 2.36) only surfaces when the image is *run*, not by
+        # Trivy. Boot the image and require it to reach "listening"; fail the
+        # release otherwise so a broken image is never published (see prism#59).
+        run: |
+          set -e
+          docker run --rm -d --name prism-store-smoke prism-store:scan >/dev/null
+          ok=""
+          for _ in $(seq 1 20); do
+            if docker logs prism-store-smoke 2>&1 | grep -q "prism-store listening"; then
+              ok=1; break
+            fi
+            if [ -z "$(docker ps -q --filter name=prism-store-smoke)" ]; then
+              break
+            fi
+            sleep 1
+          done
+          echo "----- store smoke logs -----"
+          docker logs prism-store-smoke 2>&1 | tail -20 || true
+          docker rm -f prism-store-smoke >/dev/null 2>&1 || true
+          if [ -z "$ok" ]; then
+            echo "::error::prism-store image failed to boot (glibc/base skew or startup error)"
+            exit 1
+          fi
+          echo "store image booted OK on the release base"
       - name: trivy store image scan (gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
