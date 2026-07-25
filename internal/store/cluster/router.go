@@ -45,6 +45,11 @@ func NewServeMux(clients map[string]*url.URL, routePrefix string, wrapQuery func
 	}
 	mux.Handle(query.QueryRoutePattern(routePrefix), q)
 	mux.Handle(query.SQLRoutePattern(routePrefix), q)
+	// PromQL read API is per-tenant like structured query, so the coordinator
+	// forwards each pattern to the single owning client the same way.
+	for _, pattern := range query.PromQLRoutePatterns(routePrefix) {
+		mux.Handle(pattern, q)
+	}
 	return mux
 }
 
