@@ -16,6 +16,9 @@ import (
 	"github.com/prometheus/prometheus/util/annotations"
 )
 
+// metricNameLabel is the reserved Prometheus label holding a metric's name.
+const metricNameLabel = "__name__"
+
 // errTooManySamples bounds the adapter the same way the engine bounds itself, so
 // a pathological selector cannot materialize more rows than MaxSamples before
 // the engine's own counter trips. Kept identical in spirit to Prometheus'
@@ -145,7 +148,7 @@ func buildSelectSQL(view string, mint, maxt int64, matchers []*labels.Matcher) (
 // pins the metric name, letting DuckDB prune to a single metric before scanning.
 func equalNameMatcher(matchers []*labels.Matcher) (string, bool) {
 	for _, m := range matchers {
-		if m.Name == labels.MetricName && m.Type == labels.MatchEqual {
+		if m.Name == metricNameLabel && m.Type == labels.MatchEqual {
 			return m.Value, true
 		}
 	}
@@ -209,7 +212,7 @@ func scanSeries(rows *sql.Rows, matchers []*labels.Matcher, maxSamples int) ([]s
 // between braces (e.g. `a="1",b="2"`) into a sorted Prometheus label set.
 func parseSeriesLabels(name, text string) (labels.Labels, error) {
 	b := labels.NewScratchBuilder(2)
-	b.Add(labels.MetricName, name)
+	b.Add(metricNameLabel, name)
 	if err := forEachLabelPair(text, func(k, v string) { b.Add(k, v) }); err != nil {
 		return labels.EmptyLabels(), err
 	}

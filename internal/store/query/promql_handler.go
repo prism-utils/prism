@@ -376,7 +376,7 @@ func resultToData(res *promql.Result) (any, *apiError) {
 func metricMap(lbls labels.Labels, dropName bool) map[string]string {
 	m := lbls.Map()
 	if dropName {
-		delete(m, labels.MetricName)
+		delete(m, metricNameLabel)
 	}
 	return m
 }
@@ -534,7 +534,12 @@ func isValidLabelName(name string) bool {
 	}
 	for i := 0; i < len(name); i++ {
 		c := name[i]
-		if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (i > 0 && c >= '0' && c <= '9')) {
+		switch {
+		case c == '_':
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case i > 0 && c >= '0' && c <= '9':
+		default:
 			return false
 		}
 	}

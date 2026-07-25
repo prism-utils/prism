@@ -142,7 +142,7 @@ func TestForEachLabelPairMalformed(t *testing.T) {
 }
 
 func TestBuildSelectSQLNamePushdown(t *testing.T) {
-	m := labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, "up")
+	m := labels.MustNewMatcher(labels.MatchEqual, metricNameLabel, "up")
 	sqlText, args := buildSelectSQL("metrics", 100, 200, []*labels.Matcher{m})
 	if !strings.Contains(sqlText, `"__name__" = ?`) {
 		t.Fatalf("missing name pushdown: %s", sqlText)

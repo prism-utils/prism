@@ -92,7 +92,9 @@ type promQueryData struct {
 	Result     json.RawMessage `json:"result"`
 }
 
-func promGet(t *testing.T, url string) (*http.Response, promEnvelope) {
+// promGet issues a GET and returns the HTTP status plus the decoded Prometheus
+// envelope. It fully reads and closes the body, so callers hold no open response.
+func promGet(t *testing.T, url string) (int, promEnvelope) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
@@ -108,7 +110,7 @@ func promGet(t *testing.T, url string) (*http.Response, promEnvelope) {
 	if len(body) > 0 {
 		_ = json.Unmarshal(body, &env)
 	}
-	return resp, env
+	return resp.StatusCode, env
 }
 
 func unixStr(ts time.Time) string { return strconv.FormatInt(ts.Unix(), 10) }
@@ -119,9 +121,9 @@ func TestPromQLInstantVector(t *testing.T) {
 	srv := promServer(t, promConfig(dataDir))
 
 	end := promBase.Add(45 * time.Second)
-	resp, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query?query=up&time="+unixStr(end))
-	if resp.StatusCode != http.StatusOK || env.Status != "success" {
-		t.Fatalf("status=%d env=%+v", resp.StatusCode, env)
+	status, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query?query=up&time="+unixStr(end))
+	if status != http.StatusOK || env.Status != "success" {
+		t.Fatalf("status=%d env=%+v", status, env)
 	}
 	var data promQueryData
 	mustJSON(t, env.Data, &data)
@@ -299,9 +301,9 @@ func TestPromQLBadExpr(t *testing.T) {
 	dataDir := t.TempDir()
 	seedPromMetrics(t, dataDir)
 	srv := promServer(t, promConfig(dataDir))
-	resp, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query?query="+urlq("sum("))
-	if resp.StatusCode != http.StatusBadRequest || env.Status != "error" || env.ErrorType != "bad_data" {
-		t.Fatalf("status=%d env=%+v", resp.StatusCode, env)
+	status, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query?query="+urlq("sum("))
+	if status != http.StatusBadRequest || env.Status != "error" || env.ErrorType != "bad_data" {
+		t.Fatalf("status=%d env=%+v", status, env)
 	}
 }
 
@@ -309,9 +311,9 @@ func TestPromQLMissingQuery(t *testing.T) {
 	dataDir := t.TempDir()
 	seedPromMetrics(t, dataDir)
 	srv := promServer(t, promConfig(dataDir))
-	resp, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query")
-	if resp.StatusCode != http.StatusBadRequest || env.ErrorType != "bad_data" {
-		t.Fatalf("status=%d env=%+v", resp.StatusCode, env)
+	status, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query")
+	if status != http.StatusBadRequest || env.ErrorType != "bad_data" {
+		t.Fatalf("status=%d env=%+v", status, env)
 	}
 }
 
@@ -319,9 +321,9 @@ func TestPromQLUnknownTenant(t *testing.T) {
 	dataDir := t.TempDir()
 	seedPromMetrics(t, dataDir)
 	srv := promServer(t, promConfig(dataDir))
-	resp, _ := promGet(t, srv.URL+"/promql-tenant-absent/api/v1/query?query=up")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404", resp.StatusCode)
+	status, _ := promGet(t, srv.URL+"/promql-tenant-absent/api/v1/query?query=up")
+	if status != http.StatusNotFound {
+		t.Fatalf("status=%d, want 404", status)
 	}
 }
 
@@ -331,9 +333,9 @@ func TestPromQLRangeExceedsMaxPoints(t *testing.T) {
 	srv := promServer(t, promConfig(dataDir, func(c *query.PromQLConfig) { c.MaxPoints = 2 }))
 	start := unixStr(promBase)
 	end := unixStr(promBase.Add(45 * time.Second))
-	resp, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query_range?query=up&start="+start+"&end="+end+"&step=15s")
-	if resp.StatusCode != http.StatusBadRequest || env.ErrorType != "bad_data" {
-		t.Fatalf("status=%d env=%+v", resp.StatusCode, env)
+	status, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query_range?query=up&start="+start+"&end="+end+"&step=15s")
+	if status != http.StatusBadRequest || env.ErrorType != "bad_data" {
+		t.Fatalf("status=%d env=%+v", status, env)
 	}
 }
 
@@ -343,9 +345,9 @@ func TestPromQLMaxSamplesExceeded(t *testing.T) {
 	srv := promServer(t, promConfig(dataDir, func(c *query.PromQLConfig) { c.MaxSamples = 1 }))
 	start := unixStr(promBase)
 	end := unixStr(promBase.Add(45 * time.Second))
-	resp, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query_range?query=up&start="+start+"&end="+end+"&step=15s")
-	if resp.StatusCode != http.StatusUnprocessableEntity || env.ErrorType != "execution" {
-		t.Fatalf("status=%d env=%+v", resp.StatusCode, env)
+	status, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/query_range?query=up&start="+start+"&end="+end+"&step=15s")
+	if status != http.StatusUnprocessableEntity || env.ErrorType != "execution" {
+		t.Fatalf("status=%d env=%+v", status, env)
 	}
 }
 
@@ -358,9 +360,9 @@ func TestPromQLEmptyTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := promServer(t, promConfig(emptyDir))
-	resp, env := promGet(t, srv.URL+"/promql-empty-x/api/v1/query?query=up")
-	if resp.StatusCode != http.StatusOK || env.Status != "success" {
-		t.Fatalf("status=%d env=%+v", resp.StatusCode, env)
+	status, env := promGet(t, srv.URL+"/promql-empty-x/api/v1/query?query=up")
+	if status != http.StatusOK || env.Status != "success" {
+		t.Fatalf("status=%d env=%+v", status, env)
 	}
 	var data promQueryData
 	mustJSON(t, env.Data, &data)
