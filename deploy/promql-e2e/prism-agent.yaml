@@ -1,0 +1,32 @@
+# prism agent pipeline for the PromQL end-to-end test: scrape a real Prometheus
+# exporter (node-exporter), structure it with the prometheus parser, encode
+# metrics-raw parquet, and ship it to prism-store's ingest endpoint. The store
+# then answers PromQL over the same data.
+pipelines:
+  - name: node
+    input:
+      type: prometheus
+      options:
+        targets:
+          - "http://node-exporter:9100/metrics"
+        interval: "2s"
+        timeout: "3s"
+    parser:
+      type: prometheus
+    buffer:
+      max_age: "2s"
+      max_rows: 100000
+      max_bytes: "16MiB"
+    branches:
+      - name: store
+        encoder:
+          type: parquet
+          options:
+            compression: "zstd"
+            row_group_rows: 50000
+        output:
+          type: http
+          options:
+            url: "http://prism-store:9090/promqle2e/ingest/metrics-raw"
+            method: "POST"
+            content_type: "application/octet-stream"

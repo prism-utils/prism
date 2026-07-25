@@ -1,0 +1,46 @@
+# Full-stack PromQL end-to-end: a real Prometheus exporter (node-exporter) is
+# scraped by the prism agent, shipped to prism-store, and queried back with
+# PromQL. Reproduce with `make promql-e2e`.
+services:
+  # Real, unmodified Prometheus exporter — the "any exporter" the store must serve.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    command:
+      - "--web.listen-address=:9100"
+    expose:
+      - "9100"
+
+  # Store: ingests metrics-raw parquet and serves the Prometheus read API.
+  prism-store:
+    build:
+      context: ..
+      dockerfile: Dockerfile.store.build
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9090"
+      DATA_DIR: "/data"
+      ALLOWED_ARTIFACTS: "metrics-raw"
+      AUTH_MODE: "none"
+      RUN_JOBS: "true"
+      PROMQL_API_ENABLED: "true"
+      HOT_SNAPSHOT_SECONDS: "2"
+      FLUSH_TICK_SECONDS: "2"
+    ports:
+      - "19090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 40
+
+  # Agent: scrape node-exporter → prometheus parser → parquet → store ingest.
+  prism-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on:
+      node-exporter:
+        condition: service_started
+      prism-store:
+        condition: service_healthy
+    volumes:
+      - ./promql-e2e/prism-agent.yaml:/etc/prism/prism.yaml:ro
