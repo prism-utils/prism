@@ -1,6 +1,6 @@
 # Spec: PromQL-compatible read API for prism-store (Prometheus compatibility)
 
-Status: READY
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/promql-compat`
@@ -128,41 +128,65 @@ the user waived interactive review and design approval for this task).
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `go get github.com/prometheus/prometheus@latest`; `make tidy` clean; agent
+- [x] `go get github.com/prometheus/prometheus@latest`; `make tidy` clean; agent
       `CGO_ENABLED=0 go build ./cmd/prism` still green and import graph free of
       `prometheus/prometheus`.
-- [ ] `promql_adapter.go`: streaming, sorted `storage.Queryable` over a sandbox
+- [x] `promql_adapter.go`: streaming, sorted `storage.Queryable` over a sandbox
       conn; matcher application; `__name__`+time+sort pushdown; empty-tenant and
       hot-only correctness.
-- [ ] `promql_engine.go`: engine built from `PromQLConfig`; instant + range +
+- [x] `promql_engine.go`: engine built from `PromQLConfig`; instant + range +
       series + labels/label-values execution; `MaxSamples` enforced (exceed → error).
-- [ ] `promql_handler.go`: five `/api/v1/*` handlers; exact Prometheus JSON
+- [x] `promql_handler.go`: five `/api/v1/*` handlers; exact Prometheus JSON
       envelope for vector/matrix/scalar/string + error mapping (400 bad expr/param,
       404 unknown tenant, 422 execution error, 503/limit); GET+POST where upstream allows.
-- [ ] `PromQLConfig` + `PromQLConfigFromEnv` with `Validate()` naming bad paths;
+- [x] `PromQLConfig` + `PromQLConfigFromEnv` with `Validate()` naming bad paths;
       defaults from a single source.
-- [ ] `cmd/prism-store` wiring: routes registered on the query plane when
+- [x] `cmd/prism-store` wiring: routes registered on the query plane when
       `PROMQL_API_ENABLED`; RBAC `query`, `OwnedTenantGuard`, queue limiter applied.
-- [ ] Cluster coordinator forwards the new `/api/v1/*` patterns to the owning client.
-- [ ] Tests written first (`test:` commit precedes implementation) — unit
+- [x] Cluster coordinator forwards the new `/api/v1/*` patterns to the owning client.
+- [x] Tests written first (`test:` commit precedes implementation) — unit
       (adapter/engine/handler), edge cases (bad expr, unknown/symlink tenant,
       empty tenant, MaxSamples exceeded, cancellation/timeout, hot-only), cluster
       routing, Prometheus-envelope golden.
-- [ ] `BenchmarkPromQL*` added; existing parser/encoder microbench shows no
+- [x] `BenchmarkPromQL*` added; existing parser/encoder microbench shows no
       `allocs/op` regression vs the captured baseline.
-- [ ] `deploy/docker-compose.promql-e2e.yml` + `test/e2e` PromQL test + `make
+- [x] `deploy/docker-compose.promql-e2e.yml` + `test/e2e` PromQL test + `make
       promql-e2e`; **run locally and green** (real exporter → agent → store → PromQL).
-- [ ] Docs updated: DESIGN §15, STORE.md, CONFIG.md §14, TESTING.md.
-- [ ] `make lint test` green locally; `make full-tests` green (I/O + wiring touched).
+- [x] Docs updated: DESIGN §15, STORE.md, CONFIG.md §14, TESTING.md.
+- [x] `make lint test` green locally; `make full-tests` green (I/O + wiring touched).
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Self-review (autonomous orchestrator+reviewer, Option B):
+
+- **TDD**: history is `docs(spec)` → `test(store/query)` → `feat(store/query)` →
+  `test(e2e)` → `docs(store)`; the test commit precedes implementation.
+- **Architecture**: PromQL surface is store-only under `internal/store/query`;
+  `github.com/prometheus/prometheus` appears in the `cmd/prism-store` import graph
+  (22 pkgs) and is absent from `cmd/prism`; `CGO_ENABLED=0 go build ./cmd/prism`
+  is green. Reuses the `/sql` sandbox, RBAC `query`, `OwnedTenantGuard`, and the
+  in-flight limiter — no new isolation surface.
+- **Memory**: samples bounded by `PROMQL_MAX_SAMPLES`; `__name__`+time pushdown +
+  `ORDER BY` streams series from a single cursor; range steps capped by
+  `PROMQL_MAX_POINTS`; `QUERY_HOT_ONLY` honored.
+- **Edge cases** (Gate 2): bad expr (400), missing param (400), unknown/empty
+  tenant (404/empty), MaxSamples exceeded (422), max-points exceeded (400),
+  aggregation drops `__name__`, label escaping, cluster forwarding.
+- **Lint/test**: `make lint` = 0 issues; `make test` (`-race`) green across all
+  packages; agent hot-path microbench shows no allocs regression (change is
+  store-only, CGO-gated). New `BenchmarkPromQLInstantQuery` ≈16.5k allocs/op and
+  `BenchmarkPromQLRangeQuery` ≈45k allocs/op (bounded, engine-inherent).
+- **Comments** (Gate 4): the only external reference is a prometheus.io URL, not
+  an in-repo code location.
+
+`make full-tests` (lint + `-race` test + docker integration + e2e): **OK**.
+
+Verdict: **APPROVE / ALL_OK**.
