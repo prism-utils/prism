@@ -117,6 +117,7 @@ type serverConfig struct {
 	sqlAPIMaxRows      int
 	sqlAPITimeout      time.Duration
 	sqlAPIMaxBodyBytes int64
+	promqlAPIEnabled   bool
 	runJobs            bool
 	mode               string
 	clientTenants      string
@@ -157,6 +158,7 @@ func loadConfig() serverConfig {
 		sqlAPIMaxRows:      envInt("SQL_API_MAX_ROWS", 100000),
 		sqlAPITimeout:      time.Duration(envInt("SQL_API_TIMEOUT_SECONDS", 30)) * time.Second,
 		sqlAPIMaxBodyBytes: envInt64("SQL_API_MAX_BODY_BYTES", 1<<20),
+		promqlAPIEnabled:   envBool("PROMQL_API_ENABLED", true),
 		runJobs:            envBool("RUN_JOBS", true),
 		mode:               envOr("MODE", "standalone"),
 		clientTenants:      os.Getenv("CLIENT_TENANTS"),
@@ -352,6 +354,24 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 				h = cluster.OwnedTenantGuard(ownedTenants, h)
 			}
 			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, h))
+		}
+
+		if cfg.promqlAPIEnabled {
+			promqlCfg := query.PromQLConfigFromEnv(cfg.dataDir, cfg.routePrefix, cfg.duckdbMemoryLimit, cfg.duckdbThreads)
+			promqlCfg.HotOnly = cfg.queryHotOnly
+			promqlCfg.RunJobs = cfg.runJobs
+			ph := query.PromQLHandler(&promqlCfg, eng, logger)
+			// PromQL is a heavy read like /sql, so it shares the same in-flight
+			// limiter and the query RBAC action; a cluster client also guards
+			// non-owned tenants before touching the engine.
+			ph = queue.Middleware(sqlLimiter, ph)
+			if ownedTenants != nil {
+				ph = cluster.OwnedTenantGuard(ownedTenants, ph)
+			}
+			wrapped := protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, ph)
+			for _, pattern := range query.PromQLRoutePatterns(cfg.routePrefix) {
+				mux.Handle(pattern, wrapped)
+			}
 		}
 	}
 	return mux

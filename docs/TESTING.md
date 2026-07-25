@@ -77,6 +77,7 @@ make tidy           # go mod tidy + verify no diff
 make full-tests     # test + lint + integration + e2e (spins docker-compose)
 make integration    # just the integration layer (compose up -> test -> down)
 make e2e            # just the e2e layer
+make promql-e2e     # PromQL full-stack: real node-exporter -> agent -> store -> PromQL (docker)
 make fuzz           # longer fuzz soak (FUZZTIME overridable)
 make golden-update  # regenerate golden files (review the diff!)
 make clean
@@ -86,6 +87,10 @@ make clean
 - `make full-tests` is the gate for calling a phase "done". It brings up
   `deploy/docker-compose.integration.yml`, runs `integration` + `e2e` tagged
   tests against it, and tears down even on failure (`trap`/`--abort-on-…`).
+- `make promql-e2e` is a standalone full-stack check (not part of `full-tests`):
+  `deploy/docker-compose.promql-e2e.yml` scrapes a real `node-exporter` with the
+  prism agent, ships to `prism-store`, and asserts PromQL over the result. It
+  builds both images from source, so it is slower and gated on Docker.
 
 ---
 

@@ -735,7 +735,12 @@ see [`STORE.md`](STORE.md).
 | `OIDC_ISSUER` | string | _(required when RBAC on)_ | OIDC issuer URL; discovery fetches JWKS when JWKS file/URL unset. |
 | `OIDC_JWKS_FILE` | string | _(empty)_ | Filesystem path to static JWKS JSON (offline/air-gapped). |
 | `OIDC_JWKS_URL` | string | _(empty)_ | Static JWKS URL (alternative to discovery). |
-| `QUERY_HOT_ONLY` | bool | `false` | When `true`, structured query and `/sql` sandbox union only hot data (no tier/rollup Parquet). |
+| `PROMQL_API_ENABLED` | bool | `true` | When `false`, the Prometheus read API (`/{ns}/api/v1/*`) is not registered. Metrics-only; reuses the `/sql` sandbox, RBAC `query`, and the `/sql` in-flight queue. |
+| `PROMQL_LOOKBACK_DELTA_SECONDS` | int (seconds) | `300` | How far back a PromQL instant vector selector looks for a sample. |
+| `PROMQL_MAX_POINTS` | int | `11000` | Max resolution steps per range query (`(end-start)/step`); exceeding returns `400`. |
+| `PROMQL_MAX_SAMPLES` | int | `50000000` | Max samples a single PromQL query may load into memory (mirrors Prometheus `--query.max-samples`); exceeding returns `422`. |
+| `PROMQL_TIMEOUT_SECONDS` | int (seconds) | `30` | Per-query timeout for the PromQL API. |
+| `QUERY_HOT_ONLY` | bool | `false` | When `true`, structured query, `/sql`, and PromQL sandboxes union only hot data (no tier/rollup Parquet). |
 | `RETENTION_DAYS` | int | `15` | Delete tier segments and rollups strictly older than this window. |
 | `RETENTION_TICK_HOURS` | int (hours) | `1` | Retention ticker interval when `RETENTION_TICK_SECONDS` is unset. |
 | `RETENTION_TICK_SECONDS` | int (seconds) | _(unset)_ | Retention ticker in seconds; overrides hours when set to a positive integer. |
@@ -774,6 +779,8 @@ See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, adm
 | `GET` | `/readyz` | `200` body `ready\n` | `503` when `DATA_DIR` is not writable |
 | `GET` | `<ROUTE_PREFIX>/{tenant}/query?start=&end=&step=` | `200 application/json` | see query validation in [`STORE.md`](STORE.md) |
 | `POST` | `<ROUTE_PREFIX>/{tenant}/sql` | `200 application/json` (default) or `200 application/vnd.apache.arrow.stream` when `Accept` requests Arrow | arbitrary read-only SQL; see [`STORE.md`](STORE.md) § Arbitrary SQL API |
+| `GET`/`POST` | `<ROUTE_PREFIX>/{tenant}/api/v1/query`, `/query_range`, `/series`, `/labels` | `200 application/json` (Prometheus envelope) | PromQL read API; see [`STORE.md`](STORE.md) § PromQL API |
+| `GET` | `<ROUTE_PREFIX>/{tenant}/api/v1/label/{name}/values` | `200 application/json` | PromQL label values; see [`STORE.md`](STORE.md) § PromQL API |
 | `POST` | `<ROUTE_PREFIX>/{tenant}/ingest/{artifact}` | `204 No Content` | see validation chain below |
 | `POST` | `/admin/tenants/{tenant}/ensure` | `204 No Content` | admin plane; see [`STORE.md`](STORE.md) |
 | `GET` | `/stats?ns=` | `200 application/json` | admin plane; billing contract in [`STORE.md`](STORE.md) |

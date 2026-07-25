@@ -135,6 +135,59 @@ func escape(s string) string {
 	return string(b)
 }
 
+// SegRow is one metrics row with an explicit ingest timestamp, used to build
+// fixtures whose samples are spread over time (range/rate query tests).
+type SegRow struct {
+	Name   string
+	Labels string
+	Value  float64
+	Ts     time.Time
+}
+
+// WriteSegmentRows writes rows to path as a full-schema metrics parquet
+// (contract v1 columns plus the ingest `ts`), so a sandbox metrics view reads
+// samples at controlled timestamps. Empty rows is a no-op.
+func WriteSegmentRows(t testing.TB, path string, rows []SegRow) {
+	t.Helper()
+	if len(rows) == 0 {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatalf("connector: %v", err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+
+	parts := make([]string, len(rows))
+	for i, r := range rows {
+		tsStr := r.Ts.UTC().Format("2006-01-02 15:04:05.999999999")
+		parts[i] = fmt.Sprintf("('%s', '%s', %v, 0::BIGINT, CAST('%s' AS TIMESTAMP))",
+			escape(r.Name), escape(r.Labels), r.Value, tsStr)
+	}
+	values := parts[0]
+	for _, p := range parts[1:] {
+		values += ", " + p
+	}
+	tmp := path + ".tmp"
+	//nolint:gosec // G201: test fixture SQL with controlled literals only.
+	q := fmt.Sprintf(`
+		COPY (
+			SELECT * FROM (VALUES %s) AS t("__name__", labels, value, timestamp_ms, ts)
+		) TO '%s' (FORMAT parquet)
+	`, values, filepath.ToSlash(tmp))
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("copy segment: %v", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+}
+
 // WriteWindow returns a reader-sized parquet blob in dir for ingest tests.
 func WriteWindow(t testing.TB, dir, name string, rows []Row) string {
 	t.Helper()

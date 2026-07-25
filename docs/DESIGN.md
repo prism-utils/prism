@@ -697,3 +697,30 @@ engine/sandbox); wire `MAX_OPEN_TENANTS` LRU on the tenant engine.
 **Consequences:** turns unbounded `concurrent /sql × memory_limit` into a
 configurable ceiling when enabled; one knob set governs every DuckDB instance.
 See [`MEMORY.md`](MEMORY.md) and [`CONFIG.md`](CONFIG.md) §14.
+
+### PromQL-compatible read API (2026-07)
+
+**Decision:** serve the Prometheus HTTP read API
+(`/{ns}/api/v1/{query,query_range,series,labels,label/<name>/values}`) by
+embedding the canonical `github.com/prometheus/prometheus/promql` engine over a
+DuckDB-backed `storage.Queryable`. The adapter reads the **same per-request
+sandbox `metrics` view** as `/sql`, pushes the `__name__` equality plus time
+bounds and an `ORDER BY "__name__", labels, ts` into DuckDB, streams the sorted
+cursor into series, and **parses the opaque `labels` text into a Prometheus label
+set at query time** — so there is **no data-model, schema, or output-contract
+change** and PromQL works over all existing Parquet. The stored ingest `ts` is
+the sample timestamp. Read-only and additive: RBAC action `query`, the `/sql`
+in-flight queue, `QUERY_HOT_ONLY`, and cluster routing are reused unchanged;
+registration is gated by `PROMQL_API_ENABLED` (default on) and is metrics-only.
+
+**References:** Prometheus PromQL engine (`EngineOpts.MaxSamples`) —
+https://github.com/prometheus/prometheus/blob/main/promql/engine.go ; Prometheus
+HTTP API response format —
+https://prometheus.io/docs/prometheus/latest/querying/api/ .
+
+**Consequences:** `github.com/prometheus/prometheus` is added to `internal/store`
+only; the `cmd/prism` import graph stays free of it and the `CGO_ENABLED=0` agent
+build is unchanged (verified in CI). Memory is bounded by `PROMQL_MAX_SAMPLES`
+(mirrors Prometheus `--query.max-samples`), the shared DuckDB caps, and the
+sandbox hot-only union. Rollup projections are excluded (they drop labels).
+Native histograms and PromQL write/rules/remote_write are out of scope.

@@ -1,0 +1,27 @@
+# Example Grafana Prometheus datasource pointing at prism-store's PromQL API.
+# prism-store answers the Prometheus HTTP API under /{tenant}/api/v1/*, so a
+# standard Prometheus datasource works unmodified — set the URL to the tenant's
+# API root. Swap <tenant> for the namespace you ingest into.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource-prism-store-promql
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  prism-store-promql.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: prism-store-promql
+        type: prometheus
+        access: proxy
+        # The tenant/namespace is part of the path; /api/v1/* is appended by Grafana.
+        url: http://prism-store.prism-store.svc:9090/<tenant>
+        jsonData:
+          httpMethod: POST
+          # prism-store stamps ingest time onto samples; keep the default interval.
+          timeInterval: "15s"
+        secureJsonData: {}
+        # When ADMIN_TOKEN or RBAC is set, attach Authorization via Grafana
+        # secureJsonData (httpHeaderName1/httpHeaderValue1) or a sidecar proxy.
