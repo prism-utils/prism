@@ -614,6 +614,10 @@ and additive**: no ingest, agent, or output-contract change.
 | `GET`/`POST` | `<prefix>/{ns}/api/v1/labels` | Label names (optional `match[]`, `start`/`end`). |
 | `GET` | `<prefix>/{ns}/api/v1/label/{name}/values` | Values of a label. |
 
+Repeated `match[]` selectors **union** (OR), and `series`/`labels`/`label
+values` honor the Prometheus `limit` result cap (early-stop, so the response
+stays bounded by `limit` rather than tenant cardinality).
+
 Responses use the exact Prometheus envelope: `{"status":"success","data":{"resultType":"vector|matrix|scalar|string","result":…}}`;
 errors are `{"status":"error","errorType":"…","error":"…"}`.
 
@@ -632,7 +636,9 @@ errors are `{"status":"error","errorType":"…","error":"…"}`.
   query time — no schema or contract change, and it works on all existing Parquet.
 - **Pushdown:** a `__name__` equality matcher and the time bounds are pushed into
   DuckDB with `ORDER BY "__name__", labels, ts`; the adapter streams the sorted
-  cursor into series and applies the remaining matchers in Go.
+  cursor into series (peak memory is one series, not the whole result set) and
+  applies the remaining matchers in Go. `series`/`labels` endpoints read only
+  distinct `(name, labels)` pairs, so they stay bounded by series cardinality.
 - **Bounds:** `PROMQL_MAX_SAMPLES` (default 50,000,000, mirrors Prometheus
   `--query.max-samples`) caps samples per query; `QUERY_HOT_ONLY` restricts to the
   hot snapshot; the optional `/sql` in-flight queue also gates PromQL. Rollup
