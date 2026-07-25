@@ -43,6 +43,9 @@ type sandboxQuerier struct {
 	view       string
 	mint, maxt int64
 	maxSamples int
+	// open tracks streaming cursors so Close releases them if the engine stops
+	// consuming a SeriesSet early; the per-request conn is closed regardless.
+	open []*sql.Rows
 }
 
 func (qr *sandboxQuerier) Select(ctx context.Context, sortSeries bool, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
@@ -60,51 +63,82 @@ func (qr *sandboxQuerier) Select(ctx context.Context, sortSeries bool, hints *st
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
+	// When the caller does not need sorted series (e.g. /series), stream series
+	// straight off the DuckDB cursor without materializing the whole result.
+	if !sortSeries {
+		qr.open = append(qr.open, rows)
+		return newStreamingSeriesSet(rows, matchers, qr.maxSamples)
+	}
+	// Sorted consumers need the full set to sort by label order, which the raw
+	// `labels` text ordering does not guarantee; materialize then sort.
 	defer func() { _ = rows.Close() }()
-
 	series, err := scanSeries(rows, matchers, qr.maxSamples)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
-	if sortSeries {
-		sort.Slice(series, func(i, j int) bool {
-			return labels.Compare(series[i].Labels(), series[j].Labels()) < 0
-		})
-	}
+	sort.Slice(series, func(i, j int) bool {
+		return labels.Compare(series[i].Labels(), series[j].Labels()) < 0
+	})
 	return &sliceSeriesSet{series: series}
 }
 
-func (qr *sandboxQuerier) LabelValues(ctx context.Context, name string, _ *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+func (qr *sandboxQuerier) LabelValues(ctx context.Context, name string, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+	limit := labelHintLimit(hints)
 	seen := map[string]struct{}{}
-	err := qr.forEachDistinctSeries(ctx, matchers, func(lbls labels.Labels) {
-		if v := lbls.Get(name); v != "" {
-			seen[v] = struct{}{}
-		}
+	err := qr.forEachDistinctSeries(ctx, matchers, func(lbls labels.Labels) bool {
+		// Range by name so a present-but-empty value is kept, which lbls.Get
+		// cannot distinguish from an absent label.
+		lbls.Range(func(l labels.Label) {
+			if l.Name == name {
+				seen[l.Value] = struct{}{}
+			}
+		})
+		return limit <= 0 || len(seen) < limit
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return sortedKeys(seen), nil, nil
+	return capSorted(seen, limit), nil, nil
 }
 
-func (qr *sandboxQuerier) LabelNames(ctx context.Context, _ *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+func (qr *sandboxQuerier) LabelNames(ctx context.Context, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+	limit := labelHintLimit(hints)
 	seen := map[string]struct{}{}
-	err := qr.forEachDistinctSeries(ctx, matchers, func(lbls labels.Labels) {
+	err := qr.forEachDistinctSeries(ctx, matchers, func(lbls labels.Labels) bool {
 		lbls.Range(func(l labels.Label) { seen[l.Name] = struct{}{} })
+		return limit <= 0 || len(seen) < limit
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return sortedKeys(seen), nil, nil
+	return capSorted(seen, limit), nil, nil
 }
 
-func (qr *sandboxQuerier) Close() error { return nil }
+// seriesLabels returns the matching series' label sets, reading only distinct
+// (name, labels) pairs — never per-sample rows — so /series stays bounded by
+// series cardinality rather than sample count. limit <= 0 means no cap.
+func (qr *sandboxQuerier) seriesLabels(ctx context.Context, matchers []*labels.Matcher, limit int) ([]labels.Labels, error) {
+	var out []labels.Labels
+	err := qr.forEachDistinctSeries(ctx, matchers, func(lbls labels.Labels) bool {
+		out = append(out, lbls)
+		return limit <= 0 || len(out) < limit
+	})
+	return out, err
+}
+
+func (qr *sandboxQuerier) Close() error {
+	for _, r := range qr.open {
+		_ = r.Close()
+	}
+	qr.open = nil
+	return nil
+}
 
 // forEachDistinctSeries streams the distinct (name, labels) pairs in range,
-// applies the matchers in Go, and invokes fn per matching series. It reads only
-// distinct label sets (not every sample), so label endpoints stay bounded by
-// series cardinality rather than sample count.
-func (qr *sandboxQuerier) forEachDistinctSeries(ctx context.Context, matchers []*labels.Matcher, fn func(labels.Labels)) error {
+// applies the matchers in Go, and invokes fn per matching series until fn returns
+// false. It reads only distinct label sets (not every sample), so label and
+// series endpoints stay bounded by series cardinality rather than sample count.
+func (qr *sandboxQuerier) forEachDistinctSeries(ctx context.Context, matchers []*labels.Matcher, fn func(labels.Labels) bool) error {
 	//nolint:gosec // G201: view is a package const; time bounds are bound as ? params.
 	sqlText := fmt.Sprintf(`SELECT DISTINCT "__name__", labels FROM %s WHERE epoch_ms(ts) >= ? AND epoch_ms(ts) <= ?`, qr.view)
 	rows, err := qr.conn.QueryContext(ctx, sqlText, qr.mint, qr.maxt)
@@ -122,10 +156,30 @@ func (qr *sandboxQuerier) forEachDistinctSeries(ctx context.Context, matchers []
 			return perr
 		}
 		if matchesAll(lbls, matchers) {
-			fn(lbls)
+			if !fn(lbls) {
+				return nil
+			}
 		}
 	}
 	return rows.Err()
+}
+
+// labelHintLimit extracts a non-negative result cap from label hints, or 0 (no
+// cap) when hints are absent.
+func labelHintLimit(hints *storage.LabelHints) int {
+	if hints == nil || hints.Limit <= 0 {
+		return 0
+	}
+	return hints.Limit
+}
+
+// capSorted returns the sorted keys, truncated to limit when limit > 0.
+func capSorted(m map[string]struct{}, limit int) []string {
+	out := sortedKeys(m)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 // buildSelectSQL pushes the selective __name__ equality (when present) and the
@@ -322,6 +376,93 @@ func (s *sliceSeriesSet) Next() bool {
 func (s *sliceSeriesSet) At() storage.Series                { return s.series[s.idx-1] }
 func (s *sliceSeriesSet) Err() error                        { return nil }
 func (s *sliceSeriesSet) Warnings() annotations.Annotations { return nil }
+
+// streamingSeriesSet groups the sorted DuckDB cursor into series lazily: each
+// Next reads only the rows of one series, so peak memory is one series' samples
+// rather than the whole result set. It relies on buildSelectSQL ordering rows by
+// (name, labels, t) and enforces maxSamples across the full scan like scanSeries.
+type streamingSeriesSet struct {
+	rows       *sql.Rows
+	matchers   []*labels.Matcher
+	maxSamples int
+	total      int
+
+	// One-row lookahead so a series boundary is detected without unreading.
+	haveNext bool
+	nName    string
+	nLbl     string
+	nVal     float64
+	nT       int64
+
+	cur  storage.Series
+	err  error
+	done bool
+}
+
+func newStreamingSeriesSet(rows *sql.Rows, matchers []*labels.Matcher, maxSamples int) *streamingSeriesSet {
+	s := &streamingSeriesSet{rows: rows, matchers: matchers, maxSamples: maxSamples}
+	s.advance()
+	return s
+}
+
+// advance loads the next cursor row into the lookahead buffer.
+func (s *streamingSeriesSet) advance() {
+	if s.err != nil {
+		s.haveNext = false
+		return
+	}
+	if !s.rows.Next() {
+		s.err = s.rows.Err()
+		s.haveNext = false
+		return
+	}
+	if err := s.rows.Scan(&s.nName, &s.nLbl, &s.nVal, &s.nT); err != nil {
+		s.err = err
+		s.haveNext = false
+		return
+	}
+	s.haveNext = true
+}
+
+func (s *streamingSeriesSet) Next() bool {
+	if s.done || s.err != nil {
+		return false
+	}
+	for s.haveNext {
+		name, lbl := s.nName, s.nLbl
+		lbls, perr := parseSeriesLabels(name, lbl)
+		if perr != nil {
+			s.err = perr
+			return false
+		}
+		keep := matchesAll(lbls, s.matchers)
+		var samples []chunks.Sample
+		for s.haveNext && s.nName == name && s.nLbl == lbl {
+			if keep {
+				s.total++
+				if s.maxSamples > 0 && s.total > s.maxSamples {
+					s.err = errTooManySamples
+					return false
+				}
+				samples = append(samples, floatSample{t: s.nT, v: s.nVal})
+			}
+			s.advance()
+			if s.err != nil {
+				return false
+			}
+		}
+		if keep && len(samples) > 0 {
+			s.cur = storage.NewListSeries(lbls, samples)
+			return true
+		}
+	}
+	s.done = true
+	return false
+}
+
+func (s *streamingSeriesSet) At() storage.Series                { return s.cur }
+func (s *streamingSeriesSet) Err() error                        { return s.err }
+func (s *streamingSeriesSet) Warnings() annotations.Annotations { return nil }
 
 // floatSample is a float-only chunks.Sample; prism stores gauge/counter floats,
 // never native histograms, so the histogram accessors are nil by construction.

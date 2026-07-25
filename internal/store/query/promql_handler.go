@@ -82,6 +82,11 @@ func PromQLHandler(cfg *PromQLConfig, eng *engine.Engine, logger *slog.Logger) h
 	}
 	c := *cfg
 	c.withDefaults()
+	// withDefaults fills every bound, so Validate is defensive; log rather than
+	// fail so a store never silently runs an out-of-range limit.
+	if err := c.Validate(); err != nil && logger != nil {
+		logger.Warn("promql config invalid after defaults", "err", err)
+	}
 	h := &promQLHandler{cfg: &c, eng: eng, qeng: newPromQLEngine(&c, logger), logger: logger}
 	return http.HandlerFunc(h.serve)
 }
@@ -160,7 +165,7 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 }
 
 func (h *promQLHandler) handleInstant(w http.ResponseWriter, r *http.Request) {
-	if err := parseForm(r); err != nil {
+	if err := parseForm(w, r); err != nil {
 		h.writeError(w, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid request body"})
 		return
 	}
@@ -187,7 +192,7 @@ func (h *promQLHandler) handleInstant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *promQLHandler) handleRange(w http.ResponseWriter, r *http.Request) {
-	if err := parseForm(r); err != nil {
+	if err := parseForm(w, r); err != nil {
 		h.writeError(w, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid request body"})
 		return
 	}
@@ -232,11 +237,71 @@ func (h *promQLHandler) handleRange(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *promQLHandler) handleSeries(w http.ResponseWriter, r *http.Request) {
-	if err := parseForm(r); err != nil {
+	if err := parseForm(w, r); err != nil {
 		h.writeError(w, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid request body"})
 		return
 	}
 	matcherSets, apiErr := parseMatchParams(r.Form["match[]"], true)
+	if apiErr != nil {
+		h.writeError(w, apiErr)
+		return
+	}
+	limit, apiErr := parseLimitParam(r)
+	if apiErr != nil {
+		h.writeError(w, apiErr)
+		return
+	}
+	mint, maxt, apiErr := timeRange(r)
+	if apiErr != nil {
+		h.writeError(w, apiErr)
+		return
+	}
+	h.withSandbox(w, r, func(ctx context.Context, q storage.Queryable) (any, *apiError) {
+		querier, err := q.Querier(mint, maxt)
+		if err != nil {
+			return nil, execError(err)
+		}
+		defer func() { _ = querier.Close() }()
+		sq, ok := querier.(*sandboxQuerier)
+		if !ok {
+			return nil, &apiError{status: http.StatusInternalServerError, typ: errTypeInternal, msg: "query failed"}
+		}
+		seen := map[string]struct{}{}
+		out := []map[string]string{}
+		// Each match[] is a separate selector whose results union (OR), so /series
+		// reads distinct series per selector rather than every sample.
+		for _, ms := range matcherSets {
+			lblsList, err := sq.seriesLabels(ctx, ms, limit)
+			if err != nil {
+				return nil, execError(err)
+			}
+			for _, lbls := range lblsList {
+				key := lbls.String()
+				if _, dup := seen[key]; dup {
+					continue
+				}
+				seen[key] = struct{}{}
+				out = append(out, lbls.Map())
+				if limit > 0 && len(out) >= limit {
+					return out, nil
+				}
+			}
+		}
+		return out, nil
+	})
+}
+
+func (h *promQLHandler) handleLabelNames(w http.ResponseWriter, r *http.Request) {
+	if err := parseForm(w, r); err != nil {
+		h.writeError(w, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid request body"})
+		return
+	}
+	matcherSets, apiErr := parseMatchParams(r.Form["match[]"], false)
+	if apiErr != nil {
+		h.writeError(w, apiErr)
+		return
+	}
+	limit, apiErr := parseLimitParam(r)
 	if apiErr != nil {
 		h.writeError(w, apiErr)
 		return
@@ -253,55 +318,17 @@ func (h *promQLHandler) handleSeries(w http.ResponseWriter, r *http.Request) {
 		}
 		defer func() { _ = querier.Close() }()
 		seen := map[string]struct{}{}
-		out := []map[string]string{}
-		for _, ms := range matcherSets {
-			set := querier.Select(ctx, false, nil, ms...)
-			for set.Next() {
-				lbls := set.At().Labels()
-				key := lbls.String()
-				if _, dup := seen[key]; dup {
-					continue
-				}
-				seen[key] = struct{}{}
-				out = append(out, lbls.Map())
-			}
-			if err := set.Err(); err != nil {
+		hints := &storage.LabelHints{Limit: limit}
+		for _, ms := range matcherSetsOrNil(matcherSets) {
+			names, _, err := querier.LabelNames(ctx, hints, ms...)
+			if err != nil {
 				return nil, execError(err)
 			}
+			for _, n := range names {
+				seen[n] = struct{}{}
+			}
 		}
-		return out, nil
-	})
-}
-
-func (h *promQLHandler) handleLabelNames(w http.ResponseWriter, r *http.Request) {
-	if err := parseForm(r); err != nil {
-		h.writeError(w, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid request body"})
-		return
-	}
-	matcherSets, apiErr := parseMatchParams(r.Form["match[]"], false)
-	if apiErr != nil {
-		h.writeError(w, apiErr)
-		return
-	}
-	mint, maxt, apiErr := timeRange(r)
-	if apiErr != nil {
-		h.writeError(w, apiErr)
-		return
-	}
-	h.withSandbox(w, r, func(ctx context.Context, q storage.Queryable) (any, *apiError) {
-		querier, err := q.Querier(mint, maxt)
-		if err != nil {
-			return nil, execError(err)
-		}
-		defer func() { _ = querier.Close() }()
-		names, _, err := querier.LabelNames(ctx, nil, flatten(matcherSets)...)
-		if err != nil {
-			return nil, execError(err)
-		}
-		if names == nil {
-			names = []string{}
-		}
-		return names, nil
+		return capSorted(seen, limit), nil
 	})
 }
 
@@ -311,11 +338,16 @@ func (h *promQLHandler) handleLabelValues(w http.ResponseWriter, r *http.Request
 		h.writeError(w, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid label name"})
 		return
 	}
-	if err := parseForm(r); err != nil {
+	if err := parseForm(w, r); err != nil {
 		h.writeError(w, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid request body"})
 		return
 	}
 	matcherSets, apiErr := parseMatchParams(r.Form["match[]"], false)
+	if apiErr != nil {
+		h.writeError(w, apiErr)
+		return
+	}
+	limit, apiErr := parseLimitParam(r)
 	if apiErr != nil {
 		h.writeError(w, apiErr)
 		return
@@ -331,14 +363,18 @@ func (h *promQLHandler) handleLabelValues(w http.ResponseWriter, r *http.Request
 			return nil, execError(err)
 		}
 		defer func() { _ = querier.Close() }()
-		values, _, err := querier.LabelValues(ctx, name, nil, flatten(matcherSets)...)
-		if err != nil {
-			return nil, execError(err)
+		seen := map[string]struct{}{}
+		hints := &storage.LabelHints{Limit: limit}
+		for _, ms := range matcherSetsOrNil(matcherSets) {
+			values, _, err := querier.LabelValues(ctx, name, hints, ms...)
+			if err != nil {
+				return nil, execError(err)
+			}
+			for _, v := range values {
+				seen[v] = struct{}{}
+			}
 		}
-		if values == nil {
-			values = []string{}
-		}
-		return values, nil
+		return capSorted(seen, limit), nil
 	})
 }
 
@@ -442,8 +478,8 @@ func (h *promQLHandler) writeJSON(w http.ResponseWriter, status int, resp apiRes
 	}
 }
 
-func parseForm(r *http.Request) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, promQLMaxBodyBytes)
+func parseForm(w http.ResponseWriter, r *http.Request) error {
+	r.Body = http.MaxBytesReader(w, r.Body, promQLMaxBodyBytes)
 	return r.ParseForm()
 }
 
@@ -514,18 +550,28 @@ func parseMatchParams(raw []string, required bool) ([][]*labels.Matcher, *apiErr
 	return sets, nil
 }
 
-func flatten(sets [][]*labels.Matcher) []*labels.Matcher {
+// matcherSetsOrNil yields the parsed selectors, or a single nil selector when
+// none were supplied, so callers can union results with one loop. Repeated
+// match[] selectors union (OR), matching the Prometheus metadata API.
+func matcherSetsOrNil(sets [][]*labels.Matcher) [][]*labels.Matcher {
 	if len(sets) == 0 {
-		return nil
+		return [][]*labels.Matcher{nil}
 	}
-	if len(sets) == 1 {
-		return sets[0]
+	return sets
+}
+
+// parseLimitParam reads the optional Prometheus `limit` result cap. Empty or 0
+// means no limit; a negative or non-numeric value is rejected.
+func parseLimitParam(r *http.Request) (int, *apiError) {
+	s := strings.TrimSpace(r.Form.Get("limit"))
+	if s == "" {
+		return 0, nil
 	}
-	var out []*labels.Matcher
-	for _, s := range sets {
-		out = append(out, s...)
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid limit"}
 	}
-	return out
+	return n, nil
 }
 
 func isValidLabelName(name string) bool {

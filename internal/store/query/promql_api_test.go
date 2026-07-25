@@ -372,3 +372,73 @@ func TestPromQLEmptyTenant(t *testing.T) {
 		t.Fatalf("empty tenant should yield 0 series, got %d", len(result))
 	}
 }
+
+// TestPromQLLabelValuesMultiMatchUnion pins the OR semantics of repeated match[]:
+// two contradictory single-selectors must union, not intersect.
+func TestPromQLLabelValuesMultiMatchUnion(t *testing.T) {
+	dataDir := t.TempDir()
+	seedPromMetrics(t, dataDir)
+	srv := promServer(t, promConfig(dataDir))
+	u := srv.URL + "/" + promTenant + "/api/v1/label/instance/values" +
+		"?match[]=" + urlq(`up{instance="a"}`) + "&match[]=" + urlq(`up{instance="b"}`)
+	_, env := promGet(t, u)
+	var vals []string
+	mustJSON(t, env.Data, &vals)
+	if len(vals) != 2 || vals[0] != "a" || vals[1] != "b" {
+		t.Fatalf("union of match[] should yield [a b], got %v", vals)
+	}
+}
+
+// TestPromQLLabelValuesEmptyValue proves a present-but-empty label value is
+// returned (lbls.Get cannot distinguish absent from empty; Range can).
+func TestPromQLLabelValuesEmptyValue(t *testing.T) {
+	dataDir := t.TempDir()
+	rows := []testparquet.SegRow{
+		{Name: "up", Labels: `job="api",region=""`, Value: 1, Ts: promBase},
+	}
+	testparquet.WriteSegmentRows(t, filepath.Join(dataDir, promTenant, "tiers", "L0", "seg.parquet"), rows)
+	srv := promServer(t, promConfig(dataDir))
+	_, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/label/region/values")
+	var vals []string
+	mustJSON(t, env.Data, &vals)
+	if len(vals) != 1 || vals[0] != "" {
+		t.Fatalf("empty label value should be returned, got %v", vals)
+	}
+}
+
+// TestPromQLSeriesLimit checks that limit truncates the /series result.
+func TestPromQLSeriesLimit(t *testing.T) {
+	dataDir := t.TempDir()
+	seedPromMetrics(t, dataDir)
+	srv := promServer(t, promConfig(dataDir))
+	_, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/series?match[]="+urlq("up")+"&limit=1")
+	var series []map[string]string
+	mustJSON(t, env.Data, &series)
+	if len(series) != 1 {
+		t.Fatalf("limit=1 should yield 1 series, got %d: %v", len(series), series)
+	}
+}
+
+// TestPromQLLabelValuesLimit checks that limit truncates label values.
+func TestPromQLLabelValuesLimit(t *testing.T) {
+	dataDir := t.TempDir()
+	seedPromMetrics(t, dataDir)
+	srv := promServer(t, promConfig(dataDir))
+	_, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/label/instance/values?limit=1")
+	var vals []string
+	mustJSON(t, env.Data, &vals)
+	if len(vals) != 1 {
+		t.Fatalf("limit=1 should yield 1 value, got %v", vals)
+	}
+}
+
+// TestPromQLBadLimit rejects a negative limit as bad_data.
+func TestPromQLBadLimit(t *testing.T) {
+	dataDir := t.TempDir()
+	seedPromMetrics(t, dataDir)
+	srv := promServer(t, promConfig(dataDir))
+	status, env := promGet(t, srv.URL+"/"+promTenant+"/api/v1/series?match[]=up&limit=-1")
+	if status != http.StatusBadRequest || env.ErrorType != "bad_data" {
+		t.Fatalf("status=%d env=%+v", status, env)
+	}
+}
