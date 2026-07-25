@@ -432,7 +432,8 @@ When `QUERY_HOT_ONLY=true`, the union includes only parts (1)–(2) below; tier
 and rollup Parquet reads are skipped for lower latency on freshness-only
 queries. The same flag also constrains the **SQL API sandbox** (`POST /{tenant}/sql`):
 the `metrics` view unions only `hot/current.parquet` and skips `tiers/L*/*.parquet`.
-Default is the full union (hot + tiers + rollups).
+By default the structured query unions hot + tiers + rollups; the `/sql` sandbox
+unions hot + tiers only (never rollups — see "When rollups help").
 
 ### Union SQL shape
 
@@ -458,6 +459,43 @@ When `step` is omitted:
 | shorter | raw tiers only (no rollup part) |
 
 Explicit `step` always wins when rollup files exist for that step.
+
+### When rollups help (and who reads them)
+
+A rollup trades **label fidelity and raw resolution** for a large reduction in
+rows scanned: it pre-aggregates each metric into `(bucket, "__name__")` buckets
+holding `avg/min/max/count/sum`, so **all labels are dropped**. That shape
+determines which readers can use them:
+
+| Reader | hot + `tiers/L*` (raw, labeled) | `rollups/{step}` (downsampled, no labels) |
+|---|---|---|
+| Structured query `GET /{ns}/query` | ✅ | ✅ (auto-selected by range width, or explicit `step`) |
+| Arbitrary SQL `POST /{ns}/sql` | ✅ | ❌ (sandbox `metrics` view unions hot + tiers only) |
+| PromQL `GET`/`POST /{ns}/api/v1/*` | ✅ | ❌ (needs per-series labels) |
+
+**Only the structured query endpoint reads rollups.** `/sql` and PromQL always
+read the raw hot + tier union, so they never return silently-delabeled results.
+Rollups are metrics-only — logs never take the rollup path.
+
+**Worth using when:**
+
+- Wide-range structured-query panels (hours → weeks): a 30-day overview reads
+  pre-bucketed `1h` rows instead of millions of raw samples.
+- Aggregate-only questions where per-metric `avg/min/max/count/sum` is enough
+  (capacity trends, long-horizon SLO lines), not a per-label breakdown.
+- High-cardinality metrics over long windows, where the bucket collapse to one
+  row per `(bucket, "__name__")` is the point.
+
+**Not worth using (raw is better) when:**
+
+- You need per-label detail or filtering (`by (instance)`, `{job="api"}`) — the
+  labels are gone.
+- Short/recent ranges (< 1h): auto-selection returns raw tiers anyway.
+- Alerting or exact values, where bucket aggregates lose precision.
+- Consumption is primarily **PromQL** (e.g. Grafana's Prometheus datasource) or
+  `/sql` — neither path reads rollups, so `ROLLUP_STEPS` is pure background
+  compute + disk for those tenants. Disable rollups (empty `ROLLUP_STEPS`) if no
+  structured-query dashboards rely on them.
 
 ### Grafana view SQL
 
