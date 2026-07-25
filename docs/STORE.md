@@ -30,6 +30,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **Retention** | Deletes expired tier segments and rollups (`RETENTION_DAYS`, retention ticker). |
 | **Structured query** | `GET /{ns}/query?start=&end=&step=` — union over hot + tiers + rollups; optional hot-only (`QUERY_HOT_ONLY`). |
 | **Arbitrary SQL** | `POST /{ns}/sql` — read-only SQL in a per-request sandbox; JSON (default) or Arrow IPC stream on the **same route** via `Accept`. |
+| **PromQL API** | `GET`/`POST /{ns}/api/v1/{query,query_range,series,labels,label/<name>/values}` — Prometheus-compatible read API over the tenant metrics view (`PROMQL_API_ENABLED`, default on). Metrics-only. |
 | **SQL queue** | Optional in-flight limiter (`SQL_API_QUEUE_ENABLED`, default off) with `429` + `Retry-After` backpressure on data nodes. |
 | **RBAC** | Optional JWT/OIDC + deny-by-default YAML policy (`AUTHZ_POLICY_FILE`); fixed roles `reader` / `writer` / `admin`. |
 | **Cluster modes** | `MODE=standalone` (all-in-one), `client` (owned tenants + local engine), `cluster` (stateless coordinator proxy). |
@@ -47,7 +48,7 @@ Bootstrap **`MODE`** selects one of three roles (default **`standalone`**):
 |---|---|---|---|
 | `standalone` | Self-contained node | Engine + ingest + jobs on `DATA_DIR` | Local engine |
 | `client` | Data-holding leaf fronted by a coordinator | Same as standalone | Local engine, but only for tenants listed in `CLIENT_TENANTS`; other tenants → `404` before the engine runs |
-| `cluster` | Stateless coordinator/router | **None** — no engine, ingest, or background jobs | Forwards `GET` and `POST` `<prefix>/{ns}/query` / `{ns}/sql` to the owning client URL from `CLUSTER_CLIENTS` |
+| `cluster` | Stateless coordinator/router | **None** — no engine, ingest, or background jobs | Forwards `GET` and `POST` `<prefix>/{ns}/query`, `{ns}/sql`, and `{ns}/api/v1/*` to the owning client URL from `CLUSTER_CLIENTS` |
 
 **Isolation guarantee:** identifier == tenant/namespace (`ns`). The coordinator routes
 each query to **exactly one** owning client; unknown/unmapped tenants get `404`
@@ -590,6 +591,60 @@ Sizing: see [`MEMORY.md`](MEMORY.md) (`MAX_INFLIGHT × DUCKDB_THREADS ≈ cores`
 Same as structured query: RBAC **`query`** when `AUTHZ_POLICY_FILE` is set; else
 `ADMIN_TOKEN` on the admin plane. Cluster coordinators forward `POST /{ns}/sql`
 to the owning client (authorize-before-proxy; client re-enforces).
+
+---
+
+## PromQL API
+
+Prometheus-compatible **read** API over a single tenant's metrics, so any
+Prometheus exporter (scraped by the `prism` agent) can be queried with PromQL and
+consumed by Grafana's Prometheus datasource or any PromQL client. It embeds the
+canonical `github.com/prometheus/prometheus/promql` engine over a DuckDB-backed
+`storage.Queryable` that reads the **same per-request sandbox `metrics` view** as
+`/sql` (identical tenant isolation, hot-only, and DuckDB caps). It is **read-only
+and additive**: no ingest, agent, or output-contract change.
+
+### HTTP
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`/`POST` | `<prefix>/{ns}/api/v1/query` | Instant query at `time` (default now). |
+| `GET`/`POST` | `<prefix>/{ns}/api/v1/query_range` | Range query over `start`..`end` at `step`. |
+| `GET`/`POST` | `<prefix>/{ns}/api/v1/series` | Series matching one or more `match[]` selectors. |
+| `GET`/`POST` | `<prefix>/{ns}/api/v1/labels` | Label names (optional `match[]`, `start`/`end`). |
+| `GET` | `<prefix>/{ns}/api/v1/label/{name}/values` | Values of a label. |
+
+Responses use the exact Prometheus envelope: `{"status":"success","data":{"resultType":"vector|matrix|scalar|string","result":…}}`;
+errors are `{"status":"error","errorType":"…","error":"…"}`.
+
+| Condition | Status / errorType |
+|---|---|
+| missing/invalid param, malformed expression, `> PROMQL_MAX_POINTS` steps | `400` / `bad_data` |
+| unknown/malformed tenant / missing tenant root | `404` (`unknown tenant`) |
+| evaluation error, `> PROMQL_MAX_SAMPLES` samples | `422` / `execution` |
+| query timeout / cancellation | `503` / `timeout`\|`canceled` |
+
+### Semantics and memory
+
+- **Time axis:** the stored ingest `ts` is the sample timestamp (the same axis as
+  structured query / `/sql`).
+- **Labels:** the opaque `labels` text is parsed into a Prometheus label set at
+  query time — no schema or contract change, and it works on all existing Parquet.
+- **Pushdown:** a `__name__` equality matcher and the time bounds are pushed into
+  DuckDB with `ORDER BY "__name__", labels, ts`; the adapter streams the sorted
+  cursor into series and applies the remaining matchers in Go.
+- **Bounds:** `PROMQL_MAX_SAMPLES` (default 50,000,000, mirrors Prometheus
+  `--query.max-samples`) caps samples per query; `QUERY_HOT_ONLY` restricts to the
+  hot snapshot; the optional `/sql` in-flight queue also gates PromQL. Rollup
+  projections are intentionally excluded (they drop labels).
+
+### Auth, cluster, gating
+
+RBAC action **`query`** (same as structured query / `/sql`). Cluster coordinators
+forward every `/{ns}/api/v1/*` pattern to the owning client (authorize-before-proxy;
+client re-enforces via the owned-tenant guard). Registered when
+`PROMQL_API_ENABLED=true` (default); the API is metrics-only, so logs-only
+deployments simply never receive PromQL traffic.
 
 ---
 
