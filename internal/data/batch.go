@@ -23,6 +23,12 @@ type RawBatch struct {
 	Source string
 	// Records are the raw, unparsed record bytes in arrival order.
 	Records [][]byte
+	// Labels are optional producer-supplied label pairs a format-aware parser
+	// may merge into every record it emits (e.g. the prometheus input's target
+	// labels `instance`/`job`). Nil means none. Parsers that do not understand
+	// labels ignore it; when a key collides with a label already present on a
+	// record, the record's own value wins (honor_labels semantics).
+	Labels map[string]string
 }
 
 // Len reports the number of raw records in the batch.

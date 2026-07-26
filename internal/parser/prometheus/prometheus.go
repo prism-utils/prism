@@ -12,6 +12,7 @@ package prometheus
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -94,6 +95,10 @@ func (p *parser) Parse(_ context.Context, in data.RawBatch) (data.RecordBatch, e
 	defer valueB.Release()
 	defer tsB.Release()
 
+	// Precompute the sorted keys of the batch's producer-supplied labels once so
+	// per-sample merging is deterministic and allocation-light.
+	baseKeys := sortedKeys(in.Labels)
+
 	n := 0
 	for _, rec := range in.Records {
 		line := strings.TrimSpace(string(rec))
@@ -104,6 +109,7 @@ func (p *parser) Parse(_ context.Context, in data.RawBatch) (data.RecordBatch, e
 		if err != nil {
 			return data.RecordBatch{}, fmt.Errorf("parser/prometheus: %w", err)
 		}
+		s.labels = mergeLabels(s.labels, in.Labels, baseKeys)
 		nameB.Append(s.name)
 		labelsB.Append(s.labels)
 		valueB.Append(s.value)
@@ -119,6 +125,117 @@ func (p *parser) Parse(_ context.Context, in data.RawBatch) (data.RecordBatch, e
 	}()
 	rec := array.NewRecordBatch(schema, cols, int64(n))
 	return data.NewRecordBatch(in.Source, rec), nil
+}
+
+// sortedKeys returns the keys of m in ascending order, or nil when m is empty.
+func sortedKeys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// mergeLabels appends producer-supplied labels to an exposition label block,
+// preserving any label the sample already defines (honor_labels semantics).
+// sortedKeys must list base's keys in ascending order for deterministic output.
+// Returns existing unchanged when there is nothing to merge.
+func mergeLabels(existing string, base map[string]string, sortedKeys []string) string {
+	if len(base) == 0 {
+		return existing
+	}
+	present := existingLabelKeys(existing)
+	var sb strings.Builder
+	sb.WriteString(existing)
+	for _, k := range sortedKeys {
+		if _, ok := present[k]; ok {
+			continue // sample's own label wins
+		}
+		if sb.Len() > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(k)
+		sb.WriteString(`="`)
+		writeEscapedValue(&sb, base[k])
+		sb.WriteByte('"')
+	}
+	return sb.String()
+}
+
+// writeEscapedValue writes v as a quoted exposition label value body, escaping
+// backslash, double-quote, and newline per the text format.
+func writeEscapedValue(sb *strings.Builder, v string) {
+	for i := 0; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			sb.WriteString(`\\`)
+		case '"':
+			sb.WriteString(`\"`)
+		case '\n':
+			sb.WriteString(`\n`)
+		default:
+			sb.WriteByte(v[i])
+		}
+	}
+}
+
+// existingLabelKeys returns the set of label names present in an exposition
+// label block (`k="v",k2="v2"`), tolerating whitespace and honoring quoted
+// values with `\"` / `\\` escapes so commas inside values are not mistaken for
+// separators.
+func existingLabelKeys(s string) map[string]struct{} {
+	keys := make(map[string]struct{})
+	i, n := 0, len(s)
+	skipSpace := func() {
+		for i < n && (s[i] == ' ' || s[i] == '\t') {
+			i++
+		}
+	}
+	for {
+		skipSpace()
+		if i >= n {
+			return keys
+		}
+		start := i
+		for i < n && s[i] != '=' && s[i] != ',' && s[i] != ' ' && s[i] != '\t' {
+			i++
+		}
+		key := s[start:i]
+		skipSpace()
+		if i < n && s[i] == '=' {
+			i++
+			skipSpace()
+			if i < n && s[i] == '"' {
+				i++ // opening quote
+				for i < n {
+					if s[i] == '\\' {
+						i += 2
+						continue
+					}
+					if s[i] == '"' {
+						i++
+						break
+					}
+					i++
+				}
+			} else {
+				for i < n && s[i] != ',' {
+					i++
+				}
+			}
+		}
+		if key != "" {
+			keys[key] = struct{}{}
+		}
+		skipSpace()
+		if i < n && s[i] == ',' {
+			i++
+		}
+	}
 }
 
 // parseLine parses one exposition line: name[{labels}] value [timestamp].

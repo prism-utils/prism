@@ -90,6 +90,73 @@ func TestParse_SpecialFloats(t *testing.T) {
 	}
 }
 
+func TestParse_MergeBatchLabels(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+	p := newParser(t, mem)
+
+	raw := data.RawBatch{
+		Source: "t",
+		Labels: map[string]string{"job": "clickhouse", "instance": "demo-clickhouse:9363"},
+		Records: [][]byte{
+			[]byte(`ClickHouseAsyncMetrics_Uptime 3600`),   // no braces
+			[]byte(`http_requests_total{code="200"} 5`),    // has labels, no collision
+			[]byte(`already{job="override",code="200"} 7`), // sample's job wins
+		},
+	}
+	rb, err := p.Parse(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer rb.Release()
+	labels := rb.Record().Column(1).(*array.String)
+
+	// No-brace metric gets the batch labels, sorted (instance before job).
+	if got, want := labels.Value(0), `instance="demo-clickhouse:9363",job="clickhouse"`; got != want {
+		t.Fatalf("row0 labels = %q, want %q", got, want)
+	}
+	// Existing labels are preserved and missing base labels appended.
+	if got, want := labels.Value(1), `code="200",instance="demo-clickhouse:9363",job="clickhouse"`; got != want {
+		t.Fatalf("row1 labels = %q, want %q", got, want)
+	}
+	// The sample's own `job` wins over the batch label; instance still added.
+	if got, want := labels.Value(2), `job="override",code="200",instance="demo-clickhouse:9363"`; got != want {
+		t.Fatalf("row2 labels = %q, want %q", got, want)
+	}
+}
+
+func TestParse_NoBatchLabelsUnchanged(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+	p := newParser(t, mem)
+
+	raw := data.RawBatch{Source: "t", Records: [][]byte{
+		[]byte(`m{a="b"} 1`),
+	}}
+	rb, err := p.Parse(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer rb.Release()
+	if got := rb.Record().Column(1).(*array.String).Value(0); got != `a="b"` {
+		t.Fatalf("labels = %q, want unchanged a=\"b\"", got)
+	}
+}
+
+func TestMergeLabels_QuotedCommaAndEscapes(t *testing.T) {
+	// A comma inside a quoted value must not be read as a label separator, and
+	// base values are escaped.
+	base := map[string]string{"env": `a"b\c`}
+	got := mergeLabels(`msg="x,y"`, base, sortedKeys(base))
+	if want := `msg="x,y",env="a\"b\\c"`; got != want {
+		t.Fatalf("mergeLabels = %q, want %q", got, want)
+	}
+	// Present key is not duplicated.
+	if got := mergeLabels(`env="keep"`, base, sortedKeys(base)); got != `env="keep"` {
+		t.Fatalf("collision merge = %q, want env=\"keep\"", got)
+	}
+}
+
 func TestParse_MalformedErrors(t *testing.T) {
 	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	defer mem.AssertSize(t, 0)

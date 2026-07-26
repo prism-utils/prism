@@ -72,4 +72,63 @@ func TestValidate_Errors(t *testing.T) {
 	if err := (&Config{Targets: []string{"http://x"}, Interval: "nope"}).Validate(); err == nil {
 		t.Fatal("bad interval should be invalid")
 	}
+	if err := (&Config{Targets: []string{"http://x"}, Labels: map[string]string{"": "v"}}).Validate(); err == nil {
+		t.Fatal("empty label name should be invalid")
+	}
+}
+
+func TestScrape_AttachesTargetLabels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(exposition))
+	}))
+	defer srv.Close()
+
+	f := NewFactory()
+	cfg := f.DefaultConfig().(*Config)
+	cfg.Targets = []string{srv.URL}
+	cfg.Interval = "1h"
+	cfg.Labels = map[string]string{"job": "demo"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	created, err := f.Create(cfg, component.Settings{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	in := created.(*Input)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := in.Start(ctx, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var batch data.RawBatch
+	select {
+	case batch = <-in.Batches():
+	case <-time.After(3 * time.Second):
+		t.Fatal("no batch scraped within timeout")
+	}
+	if batch.Labels["job"] != "demo" {
+		t.Fatalf("job label = %q, want demo", batch.Labels["job"])
+	}
+	// instance is derived from the target host:port (httptest is 127.0.0.1:port).
+	if got := batch.Labels["instance"]; got == "" || got == srv.URL {
+		t.Fatalf("instance label = %q, want host:port", got)
+	}
+	cancel()
+	for range in.Batches() {
+	}
+}
+
+func TestInstanceFromTarget(t *testing.T) {
+	cases := map[string]string{
+		"http://demo-clickhouse:9363/metrics": "demo-clickhouse:9363",
+		"https://host/metrics":                "host",
+		"://bad":                              "",
+	}
+	for in, want := range cases {
+		if got := instanceFromTarget(in); got != want {
+			t.Fatalf("instanceFromTarget(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
