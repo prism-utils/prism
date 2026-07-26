@@ -224,10 +224,17 @@ interval. Pair with the `prometheus` parser.
 | `basic_auth` | object | no | — | HTTP Basic credentials `{username, password}` sent on every scrape. Mutually exclusive with `bearer_token`. |
 | `bearer_token` | string | no | — | Sent as `Authorization: Bearer <token>`. Mutually exclusive with `basic_auth`. |
 | `tls` | object | no | — | Client TLS block (see [TLS block](#tls-block)) for https targets. |
+| `labels` | map string→string | no | — | Static labels attached to every scraped sample (e.g. `{job: clickhouse}`), like Prometheus scrape-target labels. A sample's own exposition label wins on collision. |
 
-Auth/TLS apply to **all** targets of this input (the Prometheus `scrape_config`
-model). Put one exporter behind one input when credentials differ. All secret
-fields should come from `${ENV}`.
+Auth/TLS/labels apply to **all** targets of this input (the Prometheus
+`scrape_config` model). Put one exporter behind one input when credentials or
+labels differ. All secret fields should come from `${ENV}`.
+
+An **`instance`** label is derived automatically from each target's `host:port`
+(Prometheus convention), unless `labels.instance` is set. Together with `job`,
+this lets the well-known exporter Grafana dashboards — which filter by
+`instance`/`job` — resolve against prism's PromQL API. Raw-exposition scrapes
+otherwise carry only the exporter's own labels (no `instance`/`job`).
 
 ```yaml
 input:
@@ -236,6 +243,7 @@ input:
     targets: ["https://es:9114/metrics"]
     interval: "15s"
     timeout: "10s"
+    labels: { job: "elasticsearch" }   # + auto instance="es:9114"
     basic_auth:
       username: "${ES_EXPORTER_USER}"
       password: "${ES_EXPORTER_PASS}"

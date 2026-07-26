@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/elk-utilities/prism/internal/component"
@@ -43,6 +44,14 @@ type Config struct {
 	// TLS configures transport security for https targets (custom CA, client
 	// mTLS, SNI override, or verification skip for self-signed endpoints).
 	TLS *TLSConfig `json:"tls,omitempty"`
+	// Labels are static label pairs attached to every scraped sample from this
+	// input (e.g. {"job": "clickhouse"}), mirroring Prometheus scrape-target
+	// labels. They let well-known exporter dashboards that filter by `job`
+	// resolve. In addition, an `instance` label is derived automatically from
+	// each target's host:port unless overridden here. A sample's own exposition
+	// label wins on collision (honor_labels semantics), so these never clobber
+	// exporter-emitted labels.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // BasicAuth holds HTTP Basic credentials for scraping.
@@ -79,6 +88,11 @@ func (c *Config) Validate() error {
 	}
 	if err := c.TLS.Validate("prometheus.tls"); err != nil {
 		return fmt.Errorf("%w", err)
+	}
+	for k := range c.Labels {
+		if k == "" {
+			return fmt.Errorf("prometheus.labels: label name must not be empty")
+		}
 	}
 	return nil
 }
@@ -121,9 +135,23 @@ func (factory) Create(cfg component.Config, set component.Settings) (component.I
 		basicAuth:   c.BasicAuth,
 		bearerToken: c.BearerToken,
 		tls:         c.TLS,
+		labels:      cloneLabels(c.Labels),
 		batches:     make(chan data.RawBatch, 1),
 		log:         set.Logger,
 	}, nil
+}
+
+// cloneLabels returns a copy of m, or nil if m is empty, so the Input owns an
+// immutable snapshot of the configured static labels.
+func cloneLabels(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // Input scrapes targets on an interval and emits their bodies as RawBatches.
@@ -134,6 +162,7 @@ type Input struct {
 	basicAuth   *BasicAuth
 	bearerToken string
 	tls         *TLSConfig
+	labels      map[string]string
 	client      *http.Client
 	batches     chan data.RawBatch
 	log         *slog.Logger
@@ -187,7 +216,11 @@ func (in *Input) scrapeAll(ctx context.Context) {
 			}
 			continue
 		}
-		batch := data.RawBatch{Source: target, Records: splitLines(body)}
+		batch := data.RawBatch{
+			Source:  target,
+			Records: splitLines(body),
+			Labels:  in.targetLabels(target),
+		}
 		if len(batch.Records) == 0 {
 			continue
 		}
@@ -219,6 +252,36 @@ func (in *Input) scrape(ctx context.Context, target string) ([]byte, error) {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// targetLabels builds the label set attached to every sample scraped from
+// target: the configured static labels plus an `instance` label derived from
+// the target's host:port (Prometheus convention). A configured `instance`
+// overrides the derived one. Returns nil when there is nothing to attach.
+func (in *Input) targetLabels(target string) map[string]string {
+	instance := instanceFromTarget(target)
+	if len(in.labels) == 0 && instance == "" {
+		return nil
+	}
+	out := make(map[string]string, len(in.labels)+1)
+	if instance != "" {
+		out["instance"] = instance
+	}
+	for k, v := range in.labels {
+		out[k] = v
+	}
+	return out
+}
+
+// instanceFromTarget extracts the host:port of a scrape target URL, matching
+// Prometheus' default `instance` label. It returns "" when the target cannot be
+// parsed as a URL with a host.
+func instanceFromTarget(target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Host
 }
 
 // splitLines splits an exposition body into per-line records, dropping blanks.
