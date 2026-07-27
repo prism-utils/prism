@@ -1,6 +1,6 @@
 # Spec: prism-alert — PromQL Ruler + Alertmanager-compatible notify
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/prism-alert`
@@ -166,15 +166,15 @@ One instance per user namespace. No Alertmanager container; no PromQL write.
 - [x] Docs: DESIGN ADR §15, CONFIG env table §15, STORE cross-ref, TESTING note,
       `docs/ALERTING.md` versioned contract page.
 - [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` — I/O + wiring touched)
+- [x] `make lint test` green locally (+ `make full-tests` — I/O + wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
@@ -186,6 +186,15 @@ First automated review (bugbot) — addressed:
   store. Comments + `docs/ALERTING.md` now state delivery semantics honestly
   (best-effort, bounded in-request retry); the chart documents that an external
   `rulesConfigMap` update needs a restart (only inline `rules` stamps a checksum).
+
+Third automated review (bugbot, hot-only feature) — clean, minor nits addressed:
+
+- **Fixed:** `wantsHotOnly` now reuses the package `parseBool` (no accepted-value
+  drift); the config bool-toggle test table gained `yes`/`no`. Remaining nits
+  (env-name overlap with the store's global `QUERY_HOT_ONLY`, e2e hardcoding the
+  client flag rather than loading it through config) are documented, accepted:
+  the semantics are per-binary and documented separately, and config→client
+  wiring is covered by dedicated unit tests.
 
 Second automated review (security-review) — addressed:
 
