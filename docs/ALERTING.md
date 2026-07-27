@@ -125,6 +125,25 @@ subset of the group's alerts. Delivery uses `Authorization: Bearer
 <WEBHOOK_SECRET>` and bounded exponential backoff; `5xx`/`429` retry, other
 `4xx` are permanent.
 
+### Delivery semantics (best-effort, bounded)
+
+Notification is **best-effort with bounded in-request retry**, not a durable
+queue. A single `Send` retries transient failures (`5xx`/`429`/transport) with
+exponential backoff up to a capped elapsed time, then gives up. After that:
+
+- An unchanged **firing** group re-notifies on its next change or at
+  `REPEAT_INTERVAL`, so a firing alert is eventually re-sent.
+- A **resolved** notification dropped after retries is **not** re-sent — the
+  series no longer matches, so there is nothing to re-emit.
+- A multi-chunk group is delivered chunk-by-chunk with no cross-chunk rollback;
+  a failure mid-way can leave the notifier holding a partial group until the
+  next re-notify.
+
+This bounded design is deliberate (see [`DESIGN.md`](DESIGN.md) §15 → the lean,
+no-TSDB ruler): it never buffers unboundedly and never blocks evaluation on a
+down notifier. If you need at-least-once resolve delivery, front the notifier
+with a durable receiver.
+
 ## Dispatch knobs
 
 | Knob | Effect |

@@ -161,4 +161,24 @@ One instance per user namespace. No Alertmanager container; no PromQL write.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+First automated review (bugbot) — addressed:
+
+- **Fixed:** `keep_firing_for` had no test → added a deterministic
+  `evalRule`-driven unit test (hold-then-resolve). `evalAll` now checks `ctx`
+  between rules so shutdown does not drain every remaining rule through a slow
+  store. Comments + `docs/ALERTING.md` now state delivery semantics honestly
+  (best-effort, bounded in-request retry); the chart documents that an external
+  `rulesConfigMap` update needs a restart (only inline `rules` stamps a checksum).
+
+Accepted tradeoffs (deliberate for the lean, no-TSDB v1 ruler; documented):
+
+- **Best-effort delivery, no durable queue.** A `Send` retries transient
+  failures with bounded backoff; a firing group re-notifies on change or
+  `repeat_interval`, but a resolve dropped after retries is not re-sent, and
+  multi-chunk delivery has no cross-chunk rollback. Front the notifier with a
+  durable receiver if at-least-once resolve is required.
+- **Rules compiled once at startup;** `ResendDelay` is coupled to
+  `EVALUATION_INTERVAL`; `/readyz` reports ready once serving (no dependency
+  probe) — all fine for a stateless single-tenant ruler and can be lifted later.
+- **Unbounded active-alert map** by design (bounded by live series); size the
+  pod for rule cardinality (chart defaults documented).

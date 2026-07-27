@@ -95,6 +95,10 @@ rules: {}
 
 # When set, mount this pre-existing ConfigMap at env.rulesDir instead of one
 # rendered from `rules`. Mutually exclusive with a non-empty `rules`.
+# NOTE: unlike inline `rules` (which stamps a checksum annotation that rolls the
+# pod on change), updating an external ConfigMap does NOT restart the pod — the
+# ruler compiles rules once at startup, so restart the Deployment (or use a
+# ConfigMap reloader) after editing it.
 rulesConfigMap: ""
 
 service:

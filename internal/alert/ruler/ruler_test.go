@@ -265,3 +265,51 @@ groups:
 	_, err := New(Config{RulesDir: dir, EvaluationInterval: time.Second}, q.fn, (&sink{}).fn, nil, nil)
 	require.Error(t, err)
 }
+
+// TestKeepFiringForHoldsThenResolves drives evalRule at controlled instants so
+// the keep_firing_for window is deterministic (no wall-clock timing): after the
+// series stops matching the alert must keep firing until the window elapses,
+// then resolve exactly once.
+func TestKeepFiringForHoldsThenResolves(t *testing.T) {
+	dir := writeRule(t, `
+groups:
+  - name: test
+    rules:
+      - alert: KeepUp
+        expr: up == 1
+        for: 0s
+        keep_firing_for: 30s
+`)
+	q := &fakeQuery{}
+	q.set(oneSample("n1", 1), nil)
+	r, err := New(Config{RulesDir: dir, EvaluationInterval: time.Second}, q.fn, (&sink{}).fn, nil, nil)
+	require.NoError(t, err)
+	rule := r.rules[0]
+	ctx := context.Background()
+	base := time.Unix(1000, 0)
+
+	// t0: series matches, for:0s ⇒ fires immediately.
+	fired, err := r.evalRule(ctx, rule, base)
+	require.NoError(t, err)
+	require.Len(t, fired, 1)
+	require.False(t, fired[0].Resolved)
+
+	// Series clears, but we are inside keep_firing_for ⇒ still firing, never resolved.
+	q.set(promql.Vector{}, nil)
+	held, err := r.evalRule(ctx, rule, base.Add(10*time.Second))
+	require.NoError(t, err)
+	for _, a := range held {
+		assert.False(t, a.Resolved, "must keep firing within keep_firing_for")
+	}
+
+	// keep_firing_for elapsed ⇒ resolves exactly once.
+	resolved, err := r.evalRule(ctx, rule, base.Add(40*time.Second))
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.True(t, resolved[0].Resolved, "must resolve after keep_firing_for elapses")
+
+	// State is pruned once the resolve is emitted; a further eval sends nothing.
+	none, err := r.evalRule(ctx, rule, base.Add(41*time.Second))
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}

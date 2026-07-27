@@ -155,6 +155,11 @@ func (r *Ruler) evalAll(ctx context.Context) {
 	now := r.clock()
 	var batch []notify.Alert
 	for _, rule := range r.rules {
+		// Stop promptly on shutdown rather than draining every remaining rule
+		// through a possibly-slow store.
+		if ctx.Err() != nil {
+			return
+		}
 		alerts, err := r.evalRule(ctx, rule, now)
 		if err != nil {
 			// Fail-open: a query failure leaves this rule's alert state
@@ -244,7 +249,10 @@ func (r *Ruler) evalRule(ctx context.Context, rule *alertRule, ts time.Time) ([]
 			a.lastSentAt = ts
 			toSend = append(toSend, r.notifyAlert(rule, a, false))
 		}
-		// Prune a resolved alert once its resolution has been delivered.
+		// Prune a resolved alert once its resolution has been handed to the sink.
+		// Delivery is best-effort: the webhook client retries transient failures
+		// with bounded backoff, but a resolve dropped after those retries is not
+		// re-sent (the series no longer matches, so there is nothing to re-emit).
 		if resolved && !a.lastSentAt.Before(a.resolvedAt) {
 			delete(rule.active, h)
 		}
