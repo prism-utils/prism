@@ -36,8 +36,9 @@ type Config struct {
 
 	// NotifierWebhookURL is the notifier /webhook endpoint.
 	NotifierWebhookURL string `json:"notifier_webhook_url"`
-	// WebhookSecret is the bearer token presented to the notifier.
-	WebhookSecret string `json:"webhook_secret"`
+	// WebhookSecret is the bearer token presented to the notifier. It is never
+	// serialized (json:"-") so it cannot leak through a config dump.
+	WebhookSecret string `json:"-"`
 	// Receiver is the receiver name stamped on every emitted payload.
 	Receiver string `json:"receiver"`
 	// ExternalURL is the payload externalURL (links back to a UI); may be empty.
@@ -199,10 +200,19 @@ func (c *Config) Validate() error {
 func validateAbsURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("invalid URL %q: %w", raw, err)
+		// Do not echo the raw value: it may contain embedded credentials.
+		return fmt.Errorf("invalid URL: %w", err)
 	}
-	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("must be an absolute URL, got %q", raw)
+	// Reject userinfo so a credential can never ride in the URL (and so it never
+	// lands in logs or error messages); auth is the bearer token / reader JWT.
+	if u.User != nil {
+		return fmt.Errorf("must not embed credentials in the URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("must be an http(s) URL")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("must be an absolute URL with a host")
 	}
 	return nil
 }

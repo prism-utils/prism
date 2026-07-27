@@ -170,7 +170,27 @@ First automated review (bugbot) — addressed:
   (best-effort, bounded in-request retry); the chart documents that an external
   `rulesConfigMap` update needs a restart (only inline `rules` stamps a checksum).
 
+Second automated review (security-review) — addressed:
+
+- **Fixed:** disabled the template `query` function (no per-series PromQL
+  amplification); both HTTP clients refuse redirects (`CheckRedirect`) so the
+  reader JWT / webhook bearer never follow a redirect to an attacker host;
+  capped the webhook response drain with `LimitReader`; `validateAbsURL` now
+  requires `http(s)` and rejects embedded URL credentials, and no longer echoes
+  raw URLs in errors; template-expansion failures ship a generic `<template
+  error>` (detail only logged); `WebhookSecret` is `json:"-"`;
+  `automountServiceAccountToken: false` on the pod.
+
 Accepted tradeoffs (deliberate for the lean, no-TSDB v1 ruler; documented):
+
+- **SSRF hardening is scheme/userinfo-level only.** Private-IP/metadata egress
+  is not blocked at the app: `STORE_BASE_URL`/`NOTIFIER_WEBHOOK_URL` are
+  operator-provided in-cluster service URLs. Use an egress NetworkPolicy for
+  network-level restriction (chart ships ingress-only, matching prism-store).
+- **`STORE_TOKEN_FILE` path is not allowlisted** and `WEBHOOK_SECRET` is env-
+  injected (matches prism-store's `INGEST_TOKEN`/`ADMIN_TOKEN` convention);
+  both are operator-controlled. Custom CA / mTLS to the store is a later
+  enhancement (default system-root TLS today).
 
 - **Best-effort delivery, no durable queue.** A `Send` retries transient
   failures with bounded backoff; a firing group re-notifies on change or

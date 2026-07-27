@@ -15,6 +15,7 @@ package ruler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -33,6 +34,10 @@ import (
 
 	"github.com/elk-utilities/prism/internal/alert/notify"
 )
+
+// errTemplateQueryDisabled is returned to the annotation template engine's
+// `query` function so a rule cannot trigger extra PromQL from within a template.
+var errTemplateQueryDisabled = errors.New("template query function is disabled in prism-alert")
 
 // QueryFunc evaluates a PromQL instant query at time t. The prism-store PromQL
 // client is the production implementation.
@@ -302,16 +307,22 @@ func (r *Ruler) expand(ctx context.Context, rule *alertRule, smpl promql.Sample,
 			"__alert_"+rule.name,
 			tmplData,
 			model.Time(ts.UnixMilli()),
-			template.QueryFunc(func(c context.Context, q string, t time.Time) (promql.Vector, error) {
-				return r.query(c, q, t)
+			// The template `query` function is intentionally disabled: allowing
+			// rule YAML to issue extra PromQL per series per eval would amplify
+			// load on prism-store and this ruler. $value/$labels expansion is
+			// unaffected.
+			template.QueryFunc(func(context.Context, string, time.Time) (promql.Vector, error) {
+				return nil, errTemplateQueryDisabled
 			}),
 			r.externalURL,
 			nil,
 		)
 		out, err := tmpl.Expand()
 		if err != nil {
+			// Log the detail; ship a generic marker so internal evaluation errors
+			// never leak into webhook annotations sent downstream.
 			r.logger.Warn("expand alert template failed", "alert", rule.name, "err", err)
-			return fmt.Sprintf("<error expanding template: %s>", err)
+			return "<template error>"
 		}
 		return out
 	}

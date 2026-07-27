@@ -27,6 +27,8 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "prism-alert.serviceAccountName" . }}
+      # The ruler never calls the Kubernetes API; don't mount a SA token.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

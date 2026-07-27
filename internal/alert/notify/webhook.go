@@ -43,7 +43,12 @@ type WebhookConfig struct {
 func NewWebhookClient(cfg WebhookConfig, logger *slog.Logger) *WebhookClient {
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+		hc = &http.Client{
+			Timeout: 10 * time.Second,
+			// Never follow a redirect: it could send the notifier bearer token to
+			// an attacker-chosen host. A 3xx surfaces as a non-2xx (permanent) error.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(discard{}, nil))
@@ -122,7 +127,9 @@ func (c *WebhookClient) postOnce(ctx context.Context, body []byte) error {
 		return fmt.Errorf("post webhook: %w", err)
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		// Cap the drain so a hostile notifier cannot force an unbounded read; the
+		// body is only drained to allow connection reuse, not consumed.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		_ = resp.Body.Close()
 	}()
 

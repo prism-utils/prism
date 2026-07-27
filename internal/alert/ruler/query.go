@@ -36,7 +36,13 @@ func NewPromQLClient(storeBaseURL, routePrefix, tenant, tokenFile string, hc *ht
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + path(routePrefix, tenant)
 	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
+		hc = &http.Client{
+			Timeout: 30 * time.Second,
+			// Never follow a redirect: it could send the reader JWT to an
+			// attacker-chosen host. A 3xx from the store surfaces as a non-200
+			// error, keeping prior alert state (fail-open).
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 	}
 	return &PromQLClient{endpoint: base.String(), tokenFile: tokenFile, httpClient: hc}, nil
 }

@@ -75,7 +75,11 @@ Every expression is validated at load with the canonical
 
 Annotations and label **values** are expanded with the Prometheus `template`
 package against the result sample, so `{{ $value }}`, `{{ $labels.<name> }}`,
-`{{ $externalURL }}`, and query functions behave exactly as in Prometheus.
+and `{{ $externalURL }}` behave as in Prometheus. The template `query` function
+is **disabled** (it returns an error): letting rule YAML issue extra PromQL per
+series per evaluation would amplify load on prism-store and the ruler, and a
+template expansion error ships a generic `<template error>` marker rather than
+leaking internal detail into the webhook.
 
 ## Webhook payload (Alertmanager v4)
 

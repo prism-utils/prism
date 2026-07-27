@@ -61,6 +61,8 @@ spec:
         checksum/rules: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
     spec:
       serviceAccountName: golden-prism-alert
+      # The ruler never calls the Kubernetes API; don't mount a SA token.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
