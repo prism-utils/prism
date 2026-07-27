@@ -43,11 +43,19 @@ One instance per user namespace. No Alertmanager container; no PromQL write.
 
 ## 3. Open questions  (resolved before READY)
 
-- [x] Q: Reuse Prometheus `rules.Manager` or hand-roll the state machine? —
-  A: **Reuse** `rules.Manager` (issue mandates it; canonical `for`/`keepFiringFor`
-  + `$value`/`$labels` templating). Provide no-op `storage.Appendable`/`Queryable`
-  (we don't persist ALERTS series; `for`-state resets on restart, same as a
-  single Prometheus without remote-write — acceptable for v1).
+- [x] Q: Reuse Prometheus `rules.Manager` or a lean in-tree state machine? —
+  A: **Lean in-tree** state machine that still reuses the canonical
+  `model/rulefmt` (byte-compatible rule loading), `promql/parser` (expr
+  validation), and `template` (`$value`/`$labels` expansion) packages.
+  `rules.Manager` transitively imports `prometheus/notifier` →
+  `prometheus/config`, which compiles **155** AWS/Azure/GCP/openapi packages
+  into the binary — measured via `go list -deps`. That directly conflicts with
+  the "memory efficient and secure" requirement for a stateless ruler that keeps
+  no TSDB and talks to one notifier over one webhook. The lean set pulls **zero**
+  cloud SDKs (same footprint prism-store already has). Semantics
+  (`for`/`keep_firing_for`/resolve, resend delay, templating) faithfully mirror
+  `rules/alerting.go`; `for`-state resets on restart (same as a single
+  Prometheus without remote-write — acceptable for v1).
 - [x] Q: Where does grouping/dispatch live? — A: In-tree `internal/alert/notify`
   (Prometheus ships the ruler state machine; Alertmanager's dispatch is a
   separate binary we do not run). Implement a compact, bounded dispatcher.
@@ -65,15 +73,19 @@ One instance per user namespace. No Alertmanager container; no PromQL write.
 
 ## 4. Decision log  (Decision Protocol)
 
-- **State machine / templating:** reuse `prometheus/prometheus/rules.Manager`.
-  - ref: Prometheus rules engine `manager.go`/`alerting.go` (`ManagerOptions`,
-    `QueryFunc`, `NotifyFunc`, `ForGracePeriod`, `ResendDelay`) —
-    https://github.com/prometheus/prometheus/blob/main/rules/manager.go
-  - perf: per-group eval is bounded (one instant query per rule per interval);
-    no per-sample heap churn beyond the engine's own vector; no goroutine per
-    alert. Manager owns `ResendDelay` so we don't resend every tick.
-  - product: byte-identical `for`/`keepFiringFor` semantics and `$value/$labels`
-    templating as upstream Prometheus — the whole point of "load v1 rules unchanged".
+- **State machine / templating:** lean in-tree evaluator reusing canonical
+  `rulefmt`/`parser`/`template`; NOT `rules.Manager`.
+  - ref: Prometheus alerting-rule semantics `rules/alerting.go` (`for`,
+    `keep_firing_for`, `$value`/`$labels`, `needsSending`/`ResendDelay`) —
+    https://github.com/prometheus/prometheus/blob/main/rules/alerting.go ;
+    dependency cost verified locally with `go list -deps` (155 cloud/openapi
+    packages via `rules`→`notifier`→`config`).
+  - perf: one instant query per rule per interval; active-alert map bounded by
+    live series; single eval goroutine, no goroutine-per-alert; resend delay
+    suppresses per-tick resends. Binary/attack surface unchanged from prism-store.
+  - product: still loads v1's rule YAML unchanged (same `rulefmt`) and expands
+    annotations identically (same `template`), while honoring the explicit
+    memory-efficiency + security requirement.
 - **Grouping/dispatch:** in-tree bounded aggregation groups keyed by `group_by`.
   - ref: Alertmanager dispatch (route knobs `group_by`, `group_wait`,
     `group_interval`, `repeat_interval`) —

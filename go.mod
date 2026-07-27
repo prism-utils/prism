@@ -17,6 +17,7 @@ require (
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/nxadm/tail v1.4.11
+	github.com/prometheus/common v0.69.0
 	github.com/prometheus/prometheus v0.313.1
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/stretchr/testify v1.11.1
@@ -75,7 +76,6 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.69.0 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
