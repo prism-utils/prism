@@ -1,6 +1,6 @@
 # Spec: prism-alert — PromQL Ruler + Alertmanager-compatible notify
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/prism-alert`
