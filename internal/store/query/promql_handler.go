@@ -144,7 +144,10 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 		}
 	}
 
-	conn, cleanup, err := prepareSandboxConn(ctx, absRoot, h.cfg.HotOnly, sandboxLimits{
+	// hot_only can only tighten scope: a request may force the hot snapshot, but
+	// cannot widen a store that is already globally hot-only.
+	hotOnly := h.cfg.HotOnly || wantsHotOnly(r)
+	conn, cleanup, err := prepareSandboxConn(ctx, absRoot, hotOnly, sandboxLimits{
 		MemoryLimit: h.cfg.MemoryLimit,
 		Threads:     h.cfg.Threads,
 	})
@@ -572,6 +575,19 @@ func parseLimitParam(r *http.Request) (int, *apiError) {
 		return 0, &apiError{status: http.StatusBadRequest, typ: errTypeBadData, msg: "invalid limit"}
 	}
 	return n, nil
+}
+
+// wantsHotOnly reports whether the request opts into hot-only evaluation via the
+// prism `hot_only` extension param. Rulers (prism-alert) set it so recurring
+// evaluations never scan cold Parquet tiers. Callers rely on r.Form, which every
+// handler populates via parseForm before entering withSandbox.
+func wantsHotOnly(r *http.Request) bool {
+	switch strings.ToLower(strings.TrimSpace(r.Form.Get("hot_only"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func isValidLabelName(name string) bool {
