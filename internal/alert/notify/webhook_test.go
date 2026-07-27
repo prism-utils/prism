@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func samplePayload(nAlerts int) WebhookPayload {
+func samplePayload(nAlerts int) *WebhookPayload {
 	alerts := make([]WebhookAlert, nAlerts)
 	for i := range alerts {
 		alerts[i] = WebhookAlert{
@@ -25,7 +25,7 @@ func samplePayload(nAlerts int) WebhookPayload {
 			StartsAt:    time.Unix(0, 0).UTC().Format(time.RFC3339),
 		}
 	}
-	return WebhookPayload{Version: "4", Status: statusFiring, Receiver: "r", Alerts: alerts}
+	return &WebhookPayload{Version: "4", Status: statusFiring, Receiver: "r", Alerts: alerts}
 }
 
 func TestWebhookSendsBearerAndJSON(t *testing.T) {

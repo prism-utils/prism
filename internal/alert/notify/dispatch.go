@@ -11,7 +11,7 @@ import (
 // Sender delivers one assembled webhook payload. The webhook client is the
 // production implementation; tests inject a recorder.
 type Sender interface {
-	Send(ctx context.Context, payload WebhookPayload) error
+	Send(ctx context.Context, payload *WebhookPayload) error
 }
 
 // Options configures the dispatcher's Alertmanager-style route knobs.
@@ -48,7 +48,7 @@ type aggrGroup struct {
 
 // NewDispatcher builds a dispatcher. A nil logger is replaced with a discard
 // logger so callers never nil-check.
-func NewDispatcher(opts Options, sender Sender, logger *slog.Logger) *Dispatcher {
+func NewDispatcher(opts Options, sender Sender, logger *slog.Logger) *Dispatcher { //nolint:gocritic // Options is a one-shot construction config, passed by value to match the repo's constructor style.
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(discard{}, nil))
 	}
@@ -104,9 +104,10 @@ func (d *Dispatcher) Ingest(now time.Time, alerts []Alert) {
 // blocks Ingest. A send failure is logged and dropped; the next change or
 // repeat re-notifies (fail-open, bounded).
 func (d *Dispatcher) Tick(ctx context.Context, now time.Time) {
-	for _, p := range d.collectDue(now) {
-		if err := d.sender.Send(ctx, p); err != nil {
-			d.logger.Error("notify send failed", "group_key", p.GroupKey, "err", err)
+	payloads := d.collectDue(now)
+	for i := range payloads {
+		if err := d.sender.Send(ctx, &payloads[i]); err != nil {
+			d.logger.Error("notify send failed", "group_key", payloads[i].GroupKey, "err", err)
 		}
 	}
 }

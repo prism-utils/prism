@@ -309,7 +309,7 @@ func (r *Ruler) expand(ctx context.Context, rule *alertRule, smpl promql.Sample,
 	}
 
 	lb := labels.NewBuilder(smpl.Metric)
-	lb.Del(labels.MetricName)
+	lb.Del(model.MetricNameLabel)
 	for name, value := range rule.labels {
 		lb.Set(name, expand(value))
 	}

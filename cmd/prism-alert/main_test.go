@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -41,7 +42,7 @@ func TestParseFlagsRejectsUnknown(t *testing.T) {
 func TestHealthEndpoints(t *testing.T) {
 	mux := healthMux()
 	for _, path := range []string{"/healthz", "/readyz"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code, path)

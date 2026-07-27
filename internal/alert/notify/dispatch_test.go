@@ -22,13 +22,13 @@ type recorder struct {
 	err      error
 }
 
-func (r *recorder) Send(_ context.Context, p WebhookPayload) error {
+func (r *recorder) Send(_ context.Context, p *WebhookPayload) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.err != nil {
 		return r.err
 	}
-	r.payloads = append(r.payloads, p)
+	r.payloads = append(r.payloads, *p)
 	return nil
 }
 
@@ -196,7 +196,7 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		d.Run(ctx, func() time.Time { return time.Now() }, 10*time.Millisecond)
+		d.Run(ctx, time.Now, 10*time.Millisecond)
 		close(done)
 	}()
 	cancel()

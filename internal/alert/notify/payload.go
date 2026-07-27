@@ -135,7 +135,7 @@ func buildPayload(receiver, externalURL string, groupLabels map[string]string, a
 
 	for _, a := range alerts {
 		status := statusFiring
-		endsAt := ""
+		var endsAt string
 		if a.Resolved {
 			status = statusResolved
 			endsAt = a.ResolvedAt.UTC().Format(time.RFC3339)

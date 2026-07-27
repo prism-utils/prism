@@ -65,9 +65,10 @@ func NewWebhookClient(cfg WebhookConfig, logger *slog.Logger) *WebhookClient {
 var _ Sender = (*WebhookClient)(nil)
 
 // Send delivers a payload, chunking it into ≤256 KiB batches first.
-func (c *WebhookClient) Send(ctx context.Context, payload WebhookPayload) error {
-	for _, batch := range c.chunk(payload) {
-		body, err := json.Marshal(batch)
+func (c *WebhookClient) Send(ctx context.Context, payload *WebhookPayload) error {
+	batches := c.chunk(payload)
+	for i := range batches {
+		body, err := json.Marshal(&batches[i])
 		if err != nil {
 			return fmt.Errorf("marshal webhook payload: %w", err)
 		}
@@ -81,20 +82,20 @@ func (c *WebhookClient) Send(ctx context.Context, payload WebhookPayload) error 
 // chunk splits a payload so each emitted payload's JSON body is ≤ maxBody. A
 // single alert that alone exceeds the cap is emitted as-is (the notifier will
 // reject it, which surfaces the misconfiguration rather than hiding data).
-func (c *WebhookClient) chunk(payload WebhookPayload) []WebhookPayload {
+func (c *WebhookClient) chunk(payload *WebhookPayload) []WebhookPayload {
 	body, err := json.Marshal(payload)
 	if err == nil && len(body) <= c.maxBody {
-		return []WebhookPayload{payload}
+		return []WebhookPayload{*payload}
 	}
 	if len(payload.Alerts) <= 1 {
-		return []WebhookPayload{payload}
+		return []WebhookPayload{*payload}
 	}
 	mid := len(payload.Alerts) / 2
-	left := payload
+	left := *payload
 	left.Alerts = payload.Alerts[:mid]
-	right := payload
+	right := *payload
 	right.Alerts = payload.Alerts[mid:]
-	return append(c.chunk(left), c.chunk(right)...)
+	return append(c.chunk(&left), c.chunk(&right)...)
 }
 
 // postWithRetry POSTs one JSON body, retrying transport errors, 429, and 5xx

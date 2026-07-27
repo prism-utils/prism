@@ -48,6 +48,12 @@ func (f *fakeQuery) set(vec promql.Vector, err error) {
 	f.vec, f.err = vec, err
 }
 
+func (f *fakeQuery) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
+}
+
 // sink collects alerts the ruler emits.
 type sink struct {
 	mu     sync.Mutex
@@ -159,7 +165,7 @@ groups:
 
 	// Give the manager many evaluation cycles; with for:1h the alert stays
 	// pending and must never be handed to the sink.
-	require.Eventually(t, func() bool { return q.called > 5 }, 3*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return q.callCount() > 5 }, 3*time.Second, 10*time.Millisecond)
 	assert.Empty(t, s.snapshot(), "alert must stay pending until the for duration elapses")
 }
 
@@ -215,7 +221,7 @@ groups:
 	// prism-store becomes unreachable: the query errors. The alert must NOT be
 	// resolved on a query failure — state is kept (fail-open).
 	q.set(nil, errors.New("connection refused"))
-	require.Eventually(t, func() bool { return q.called > firingCount+5 }, 3*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return q.callCount() > firingCount+5 }, 3*time.Second, 10*time.Millisecond)
 	for _, a := range s.snapshot() {
 		assert.False(t, a.Resolved, "query failure must not resolve alerts")
 	}

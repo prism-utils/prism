@@ -174,8 +174,9 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	if err := run(ctx, &cfg, logger); err != nil {
+	err = run(ctx, &cfg, logger)
+	stop()
+	if err != nil {
 		logger.Error("prism-alert failed", "err", err)
 		os.Exit(1)
 	}
