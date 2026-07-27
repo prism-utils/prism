@@ -1,0 +1,53 @@
+{
+  "version": "4",
+  "groupKey": "{alertname=\"HighCPU\",severity=\"warning\"}",
+  "status": "firing",
+  "receiver": "tenant-webhook",
+  "groupLabels": {
+    "alertname": "HighCPU",
+    "severity": "warning"
+  },
+  "commonLabels": {
+    "alertname": "HighCPU",
+    "severity": "warning"
+  },
+  "commonAnnotations": {
+    "description": "CPU has been over 90% for 5m",
+    "summary": "CPU \u003e 90%"
+  },
+  "externalURL": "https://prism.example/alerts",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighCPU",
+        "instance": "node-a",
+        "severity": "warning"
+      },
+      "annotations": {
+        "description": "CPU has been over 90% for 5m",
+        "summary": "CPU \u003e 90%"
+      },
+      "startsAt": "2026-04-19T09:55:00Z",
+      "endsAt": "2026-04-19T10:05:00Z",
+      "generatorURL": "https://prism.example/alerts/graph?g0.expr=cpu",
+      "fingerprint": "58a171d28f29e910"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighCPU",
+        "instance": "node-b",
+        "severity": "warning"
+      },
+      "annotations": {
+        "description": "CPU has been over 90% for 5m",
+        "summary": "CPU \u003e 90%"
+      },
+      "startsAt": "2026-04-19T09:55:00Z",
+      "endsAt": "2026-04-19T10:05:00Z",
+      "generatorURL": "https://prism.example/alerts/graph?g0.expr=cpu",
+      "fingerprint": "d01f579a2eb8db21"
+    }
+  ]
+}

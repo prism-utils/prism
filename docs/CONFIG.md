@@ -819,3 +819,51 @@ Flight `DoPut` uses the same chain: tenant and artifact come from the
 `authorization: Bearer <token>`.
 
 Graceful shutdown: `SIGINT` / `SIGTERM` → HTTP `Shutdown` (10s) and Flight stop.
+
+## 15. `prism-alert` (PromQL ruler + notifier)
+
+`cmd/prism-alert` is a per-tenant PromQL ruler with Alertmanager-compatible
+webhook notification. Configuration is via environment variables (secrets via
+the environment or a mounted file); a few non-secret operational fields also
+accept flags that **override** the environment (`-listen`, `-rules-dir`,
+`-store-base-url`, `-tenant`, `-notifier-url`, `-evaluation-interval`). This
+table is the **authoritative, complete** reference — every variable read by
+`Load()` in `internal/alert/config/config.go`. For the alerting contract, state
+machine, and webhook payload see [`ALERTING.md`](ALERTING.md).
+
+| Env | Type | Default | Meaning |
+|---|---|---|---|
+| `STORE_BASE_URL` | string (URL) | _(required)_ | prism-store query base URL (`scheme://host[:port]`). |
+| `TENANT_NS` | string | _(required)_ | Tenant namespace this instance rules for; must match `^[a-z0-9][a-z0-9._-]{0,62}$`. |
+| `ROUTE_PREFIX` | string | _(empty)_ | prism-store optional path prefix (matches its `ROUTE_PREFIX`). |
+| `STORE_TOKEN_FILE` | string | _(empty — no auth header)_ | Path to a prism-store reader JWT, read fresh per request so rotation needs no restart. |
+| `QUERY_HOT_ONLY` | bool | `true` | Tag every evaluation with the store's `hot_only` extension so recurring rules never scan cold Parquet tiers. Set `false` to allow full-range evaluation. |
+| `NOTIFIER_WEBHOOK_URL` | string (URL) | _(required)_ | Notifier `/webhook` endpoint the v4 payload is POSTed to. |
+| `WEBHOOK_SECRET` | string | _(required)_ | Bearer token presented to the notifier (`Authorization: Bearer …`). |
+| `RECEIVER` | string | `tenant-webhook` | Receiver name stamped on every emitted payload. |
+| `EXTERNAL_URL` | string | _(empty)_ | Payload `externalURL` (links a receiver back to a UI). |
+| `RULES_DIR` | string | `/etc/prism-alert/rules` | Directory of Prometheus rule-group YAML (`*.yml` / `*.yaml`); a missing dir yields no rules (no crash). |
+| `EVALUATION_INTERVAL` | duration | `60s` | Ruler evaluation cadence (must be `> 0`). |
+| `GROUP_BY` | string (comma-separated) | `alertname,severity` | Labels alerts are grouped on before notifying (≥1 required). |
+| `GROUP_WAIT` | duration | `30s` | Delay before the first notification for a new group (may be `0`). |
+| `GROUP_INTERVAL` | duration | `5m` | Minimum spacing between notifications for a group once fired, when its alert set changes (`> 0`). |
+| `REPEAT_INTERVAL` | duration | `4h` | How often an unchanged firing group re-notifies (`> 0`). |
+| `RESOLVE_TIMEOUT` | duration | `5m` | `endsAt` horizon stamped on firing alerts so a receiver auto-resolves if updates stop (`> 0`). |
+| `LISTEN_ADDR` | string | `:8080` | Health/probe HTTP bind; the ruler serves no query API. |
+
+Durations parse with `time.ParseDuration` (e.g. `30s`, `5m`, `4h`). Validation
+is total and names the offending variable; the process exits non-zero on any
+invalid or missing required value before evaluating a single rule.
+
+### HTTP routes
+
+| Method | Path | Success | Failure |
+|---|---|---|---|
+| `GET` | `/healthz` | `200` body `ok\n` | — |
+| `GET` | `/readyz` | `200` body `ready\n` | — |
+
+The ruler exposes only these probes; it is a client of prism-store and the
+notifier, not a server of alert data.
+
+Graceful shutdown: `SIGINT` / `SIGTERM` → HTTP `Shutdown` (10s); the evaluation
+loop and dispatcher stop on context cancellation.

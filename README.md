@@ -21,8 +21,9 @@ container**, as a **single static, CGO-free binary** (`cmd/prism`).
 |---|---|---|
 | **`prism`** (agent) | Config-driven edge collector; produces Parquet artifacts per [`docs/OUTPUT_CONTRACT.md`](docs/OUTPUT_CONTRACT.md). | Static, `CGO_ENABLED=0` |
 | **`prism-store`** (store) | Durable tiered columnar store + query server; consumes agent output. Deployable `standalone`/`client`/`cluster`, with optional **RBAC** and an **arbitrary read-only SQL API**. | CGO-linked (DuckDB) |
+| **`prism-alert`** (ruler) | Per-tenant PromQL ruler; evaluates alerting-rule YAML against the store's PromQL API and posts **Alertmanager v4** webhooks to the prism notifier. | Static, `CGO_ENABLED=0` |
 
-Store design: [`docs/STORE.md`](docs/STORE.md). Memory model: [`docs/MEMORY.md`](docs/MEMORY.md). Architecture ADR: [`docs/DESIGN.md`](docs/DESIGN.md) §15. Cutover from `prism-proxy`: [`docs/MIGRATION.md`](docs/MIGRATION.md).
+Store design: [`docs/STORE.md`](docs/STORE.md). Alerting contract: [`docs/ALERTING.md`](docs/ALERTING.md). Memory model: [`docs/MEMORY.md`](docs/MEMORY.md). Architecture ADR: [`docs/DESIGN.md`](docs/DESIGN.md) §15. Cutover from `prism-proxy`: [`docs/MIGRATION.md`](docs/MIGRATION.md).
 
 **Store security (RBAC).** When `AUTHZ_POLICY_FILE` is set, HTTP query/ingest/admin
 routes require a verified **JWT (OIDC/JWKS)** and a **deny-by-default, per-tenant
@@ -105,17 +106,18 @@ make full-tests                 # unit + integration (docker-compose) + e2e
 
 A `v*` git tag triggers
 [`.github/workflows/release.yml`](.github/workflows/release.yml) (never
-merge-to-main). One pipeline publishes **two artifacts**:
+merge-to-main). One pipeline publishes **three artifacts**:
 
 | Artifact | Image | Binary build | Runtime base | UID |
 |---|---|---|---|---|
 | **`prism`** (agent) | `ghcr.io/elk-utilities/prism` | static, `CGO_ENABLED=0` | distroless static | 65532 |
 | **`prism-store`** (store) | `ghcr.io/elk-utilities/prism-store` | CGO + DuckDB, linux amd64/arm64 | debian:bookworm-slim + `libstdc++6` | 472 |
+| **`prism-alert`** (ruler) | `ghcr.io/elk-utilities/prism-alert` | static, `CGO_ENABLED=0`, linux amd64/arm64 | distroless static | 65532 |
 
 Per-arch tags: `:<version>-amd64`, `:<version>-arm64`, plus combined manifests
 `:<version>`, `:sha-<short>`, and `:latest`. GitHub Release assets include
-`prism_*` and `prism-store_*` tarballs, `checksums.txt`, SBOMs, and cosign
-signatures.
+`prism_*`, `prism-store_*`, and `prism-alert_*` tarballs, `checksums.txt`, SBOMs,
+and cosign signatures.
 
 Verify a published store manifest (keyless OIDC signature from the release
 workflow):

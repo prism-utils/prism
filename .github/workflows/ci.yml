@@ -49,14 +49,21 @@ jobs:
         with:
           version: v4.1.4
       - name: helm lint
-        run: helm lint deploy/charts/prism-store
+        run: |
+          helm lint deploy/charts/prism-store
+          helm lint deploy/charts/prism-alert
       - name: helm template variants
         run: |
           helm template test deploy/charts/prism-store >/dev/null
           helm template test deploy/charts/prism-store --set networkPolicy.enabled=true >/dev/null
           helm template test deploy/charts/prism-store --set env.adminListenAddr=":9090" >/dev/null
+          helm template test deploy/charts/prism-alert >/dev/null
+          helm template test deploy/charts/prism-alert --set networkPolicy.enabled=true >/dev/null
+          helm template test deploy/charts/prism-alert --set secrets.existingSecret=alert-secrets --set secrets.storeTokenSecretKey=reader-jwt >/dev/null
       - name: golden snapshot
-        run: deploy/charts/prism-store/scripts/check-golden.sh
+        run: |
+          deploy/charts/prism-store/scripts/check-golden.sh
+          deploy/charts/prism-alert/scripts/check-golden.sh
 
   # Merge-blocking gate: brings up docker-compose deps and runs integration+e2e.
   full:

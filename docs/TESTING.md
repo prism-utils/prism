@@ -91,6 +91,13 @@ make clean
   `deploy/docker-compose.promql-e2e.yml` scrapes a real `node-exporter` with the
   prism agent, ships to `prism-store`, and asserts PromQL over the result. It
   builds both images from source, so it is slower and gated on Docker.
+- `test/e2e/alert_e2e_test.go` drives `prism-alert` end to end (no Docker): the
+  canonical `promql` engine evaluates a real `up == 1` expression over an
+  in-memory `storage.Queryable` serving the store's `/{ns}/api/v1/query` shape,
+  and the full ruler → dispatcher → v4 webhook client chain fires into a real
+  HTTP notifier receiver, asserting a firing→resolved transition. It uses an
+  in-memory store (not `teststorage`/`promqltest`) so `go.mod` gains no cloud
+  SDK — see [`DESIGN.md`](DESIGN.md) §15 → "prism-alert".
 
 ---
 

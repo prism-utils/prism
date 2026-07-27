@@ -1,0 +1,140 @@
+---
+# Source: prism-alert/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: golden-prism-alert
+  labels:
+    helm.sh/chart: prism-alert-0.1.0
+    app.kubernetes.io/name: prism-alert
+    app.kubernetes.io/instance: golden
+    app.kubernetes.io/version: "dev"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: prism-alert/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-prism-alert
+  labels:
+    helm.sh/chart: prism-alert-0.1.0
+    app.kubernetes.io/name: prism-alert
+    app.kubernetes.io/instance: golden
+    app.kubernetes.io/version: "dev"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: prism-alert
+    app.kubernetes.io/instance: golden
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# Source: prism-alert/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: golden-prism-alert
+  labels:
+    helm.sh/chart: prism-alert-0.1.0
+    app.kubernetes.io/name: prism-alert
+    app.kubernetes.io/instance: golden
+    app.kubernetes.io/version: "dev"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prism-alert
+      app.kubernetes.io/instance: golden
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prism-alert
+        app.kubernetes.io/instance: golden
+      annotations:
+        # Roll pods when the rendered rule set changes so new rules load without
+        # waiting for the kubelet's ConfigMap propagation + a manual restart.
+        checksum/rules: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
+    spec:
+      serviceAccountName: golden-prism-alert
+      # The ruler never calls the Kubernetes API; don't mount a SA token.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prism-alert
+          image: "ghcr.io/elk-utilities/prism-alert:dev"
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDR
+              value: ":8080"
+            - name: STORE_BASE_URL
+              value: ""
+            - name: TENANT_NS
+              value: ""
+            - name: QUERY_HOT_ONLY
+              value: "true"
+            - name: NOTIFIER_WEBHOOK_URL
+              value: ""
+            - name: RECEIVER
+              value: "tenant-webhook"
+            - name: RULES_DIR
+              value: "/etc/prism-alert/rules"
+            - name: EVALUATION_INTERVAL
+              value: "60s"
+            - name: GROUP_BY
+              value: "alertname,severity"
+            - name: GROUP_WAIT
+              value: "30s"
+            - name: GROUP_INTERVAL
+              value: "5m"
+            - name: REPEAT_INTERVAL
+              value: "4h"
+            - name: RESOLVE_TIMEOUT
+              value: "5m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

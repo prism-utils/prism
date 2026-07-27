@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism-alert.fullname" . }}
+  labels:
+    {{- include "prism-alert.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "prism-alert.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ include "prism-alert.publicPort" . }}
+      targetPort: http
+      protocol: TCP
