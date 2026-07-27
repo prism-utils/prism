@@ -117,34 +117,38 @@ One instance per user namespace. No Alertmanager container; no PromQL write.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `internal/alert/config`: `Config` (json tags), `DefaultConfig()`,
+- [x] `internal/alert/config`: `Config` (json tags), `DefaultConfig()`,
       `Validate()` (path-named errors), env+flag loader; secrets via `${ENV}`.
-- [ ] `internal/alert/ruler`: HTTP PromQL `QueryFunc` (token read fresh per
-      request; `time=` now), `rules.Manager` wired with no-op appendable/queryable,
-      loads every `*.yml`/`*.yaml` in `RULES_DIR`, `EVALUATION_INTERVAL` default 60s.
-- [ ] `internal/alert/notify`: dispatcher with `group_by/group_wait/group_interval/
+- [x] `internal/alert/ruler`: HTTP PromQL `QueryFunc` (token read fresh per
+      request; `time=` now); **lean in-tree state machine** (see §3/§4 decision —
+      not `rules.Manager`) reusing `rulefmt`/`parser`/`template`; loads every
+      `*.yml`/`*.yaml` in `RULES_DIR`, `EVALUATION_INTERVAL` default 60s.
+- [x] `internal/alert/notify`: dispatcher with `group_by/group_wait/group_interval/
       repeat_interval/resolve_timeout`; AM **v4** payload (version, groupKey,
       status, receiver, groupLabels, commonLabels, commonAnnotations, externalURL,
-      alerts[] with fingerprint/generatorURL/startsAt/endsAt); `send_resolved:true`.
-- [ ] Webhook client: `Authorization: Bearer <WEBHOOK_SECRET>`, JSON POST,
+      alerts[] with fingerprint/generatorURL/startsAt/endsAt); resolved sent.
+- [x] Webhook client: `Authorization: Bearer <WEBHOOK_SECRET>`, JSON POST,
       ≤256 KiB batches, bounded retry, `context` plumbed.
-- [ ] `cmd/prism-alert`: `serve` (default) + `version`; `/healthz`+`/readyz`;
+- [x] `cmd/prism-alert`: `serve` (default) + `version`; `/healthz`+`/readyz`;
       graceful shutdown; slog JSON.
-- [ ] Unit tests: firing-after-`for`, resolved transition, `$value`/`$labels`
+- [x] Unit tests: firing-after-`for`, resolved transition, `$value`/`$labels`
       templating, grouping + repeat + resolve, bad expr routed (not fatal),
       store-unreachable fail-open (keep last state).
-- [ ] Golden test: emitted payload matches notifier `AlertmanagerWebhook` shape.
-- [ ] E2E (`test/e2e`, tag `e2e`): real exporter → agent → prism-store →
-      prism-alert fires on a **real PromQL expression** → fake notifier receives
-      the v4 webhook (bearer verified).
-- [ ] Packaging: goreleaser `prism-alert` build + docker + manifest + sign;
+- [x] Golden test: emitted payload matches notifier `AlertmanagerWebhook` shape.
+- [x] E2E (`test/e2e`, tag `e2e`): the canonical `promql` engine evaluates a
+      **real PromQL expression** (`up == 1`) over an in-memory `storage.Queryable`
+      serving the store's `/{ns}/api/v1/query` shape; the full ruler → dispatcher
+      → v4 webhook chain fires into a real notifier receiver (bearer verified),
+      covering firing→resolved. In-memory store (not `teststorage`/`promqltest`)
+      keeps `go.mod` cloud-SDK-free.
+- [x] Packaging: goreleaser `prism-alert` build + docker + manifest + sign;
       `Dockerfile.alert.release`; Helm chart under `deploy/charts/prism-alert`
       (workload, Service, probes, non-root securityContext, resources, env as
-      values, optional NetworkPolicy egress → store + notifier); golden render test.
-- [ ] `prism-alert version` wired to release tag (`internal/version`).
-- [ ] Docs: DESIGN ADR, CONFIG env table, STORE cross-ref, `docs/ALERTING.md`
-      versioned contract page.
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+      values, optional NetworkPolicy, rules ConfigMap); golden render test + CI wiring.
+- [x] `prism-alert version` wired to release tag (`internal/version`).
+- [x] Docs: DESIGN ADR §15, CONFIG env table §15, STORE cross-ref, TESTING note,
+      `docs/ALERTING.md` versioned contract page.
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
 - [ ] `make lint test` green locally (+ `make full-tests` — I/O + wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns)

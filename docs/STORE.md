@@ -642,6 +642,10 @@ canonical `github.com/prometheus/prometheus/promql` engine over a DuckDB-backed
 `/sql` (identical tenant isolation, hot-only, and DuckDB caps). It is **read-only
 and additive**: no ingest, agent, or output-contract change.
 
+`cmd/prism-alert` is the in-repo consumer of this API: a per-tenant PromQL ruler
+that evaluates alerting rules against `/{ns}/api/v1/query` and posts
+Alertmanager v4 webhooks to the prism notifier. See [`ALERTING.md`](ALERTING.md).
+
 ### HTTP
 
 | Method | Path | Purpose |

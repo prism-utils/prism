@@ -724,3 +724,51 @@ build is unchanged (verified in CI). Memory is bounded by `PROMQL_MAX_SAMPLES`
 (mirrors Prometheus `--query.max-samples`), the shared DuckDB caps, and the
 sandbox hot-only union. Rollup projections are excluded (they drop labels).
 Native histograms and PromQL write/rules/remote_write are out of scope.
+
+### prism-alert — PromQL ruler + Alertmanager webhook (2026-07)
+
+**Status:** accepted (2026-07, issue #68).
+
+**Context:** the store serves a PromQL read API but has no alerting. We need a
+third binary (`cmd/prism-alert`) that loads Prometheus alerting-rule YAML,
+evaluates each rule against the store's `/{ns}/api/v1/query` endpoint, runs the
+`for`/`keep_firing_for`/resolve state machine with `$value`/`$labels`
+templating, groups alerts Alertmanager-style, and POSTs the **identical
+Alertmanager v4 webhook** the existing prism notifier already consumes. One
+instance rules for exactly one tenant.
+
+**Decision — lean in-tree state machine, not `rules.Manager`.** We reuse only
+the canonical, dependency-light Prometheus packages — `model/rulefmt` (rule
+parse + expression validation), `promql/parser`, `template` ($value/$labels),
+and `promql` (types) — and implement the pending→firing→resolved state machine
+in `internal/alert/ruler` ourselves. Importing `prometheus/rules.Manager` would
+transitively pull the Alertmanager notifier and its cloud service-discovery
+config (`storage/remote` sigv4 → AWS/Azure/GCP SDKs, ~124 packages), bloating a
+binary that keeps no TSDB and talks to exactly one notifier over one webhook.
+The ruler is pure Go (`CGO_ENABLED=0`) like the agent.
+
+**Decision — package + transport.** `internal/alert/{config,ruler,notify}`:
+`ruler` owns rule compilation, the HTTP PromQL `QueryFunc` (reader JWT read
+fresh per request from a mounted file so rotation needs no restart), and the
+state machine; `notify` owns the Alertmanager-style dispatcher (`group_wait` /
+`group_interval` / `repeat_interval` / `resolve_timeout`) and the v4 webhook
+client (bearer auth, ≥256 KiB payload chunking, bounded backoff). Query failures
+**fail open** — a rule's alert state is left untouched rather than spuriously
+resolved.
+
+**References:** Prometheus alerting rules & `for`/`keep_firing_for` semantics —
+https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/ ;
+Alertmanager webhook (v4) payload —
+https://prometheus.io/docs/alerting/latest/configuration/#webhook_config ;
+Alertmanager routing/grouping (`group_wait`/`group_interval`/`repeat_interval`) —
+https://prometheus.io/docs/alerting/latest/configuration/#route .
+
+**Consequences:** the alerting contract, env reference, and route table live in
+[`ALERTING.md`](ALERTING.md) and [`CONFIG.md`](CONFIG.md) §15. `cmd/prism` and
+`cmd/prism-store` import graphs are unchanged; `go.mod` gains no cloud SDK
+(verified in CI). The e2e (`test/e2e`, build tag `e2e`) drives the full chain
+against the **real** `promql` engine over an in-memory `storage.Queryable`
+(no `teststorage`/`promqltest`, which would re-introduce the sigv4 SDKs),
+covering a firing→resolved transition end to end. Packaged as a signed
+multi-arch image (`ghcr.io/elk-utilities/prism-alert`) and the project-agnostic
+`deploy/charts/prism-alert` Helm chart.
