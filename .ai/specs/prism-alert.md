@@ -103,6 +103,19 @@ One instance per user namespace. No Alertmanager container; no PromQL write.
     `http.Client` with timeout; reuses connections.
   - product: prism-store already serves this exact API (PR #65); "rule eval at
     now" uses the documented `time=` param.
+- **Hot-only evaluation:** ruler tags every query with a store `hot_only`
+  extension param (default `QUERY_HOT_ONLY=true`) so recurring rules never scan
+  cold Parquet tiers. Store honors it as a monotonic *tighten-only* flag
+  (`effectiveHotOnly = cfg.HotOnly || request`), so a request can force hot-only
+  but never widen a globally hot-only store back to the tiers.
+  - ref: existing store hot-only union (`QUERY_HOT_ONLY`, `sandboxMetricsUnionSQL`)
+    skips `tiers/L*` — same mechanism, now selectable per request.
+  - perf: hot snapshot is the smallest, fastest scan; keeps the eval loop cheap
+    at short intervals and bounds store memory. Unknown param is ignored by
+    older stores, so the client stays backward-compatible.
+  - product: the ideal ruler scope — alerts evaluate on fresh hot data, never on
+    cold storage — while Grafana/other clients keep full-range reads on the same
+    store. Enforced end-to-end (`test/e2e` asserts `hot_only=true` reaches store).
 - **Webhook retry:** bounded exponential backoff on transport/5xx via
   `github.com/cenkalti/backoff/v4` (already a dependency).
   - ref: prism `output/http` retry pattern (DESIGN §9) + backoff lib.
@@ -135,6 +148,10 @@ One instance per user namespace. No Alertmanager container; no PromQL write.
       templating, grouping + repeat + resolve, bad expr routed (not fatal),
       store-unreachable fail-open (keep last state).
 - [x] Golden test: emitted payload matches notifier `AlertmanagerWebhook` shape.
+- [x] Hot-only enforcement: `QUERY_HOT_ONLY` (default true) → client sends
+      `hot_only=true`; store honors it as a tighten-only flag. Unit tests cover
+      the config toggle, the client param, and the store per-request behavior
+      (tighten + cannot-widen); e2e asserts `hot_only=true` reaches the store.
 - [x] E2E (`test/e2e`, tag `e2e`): the canonical `promql` engine evaluates a
       **real PromQL expression** (`up == 1`) over an in-memory `storage.Queryable`
       serving the store's `/{ns}/api/v1/query` shape; the full ruler → dispatcher

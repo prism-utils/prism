@@ -63,9 +63,10 @@ func advancingClock() func() time.Time {
 // The backing storage is swappable so the test can flip a series from present
 // to absent and observe a real resolve.
 type promStore struct {
-	engine *promql.Engine
-	mu     sync.Mutex
-	store  storage.Queryable
+	engine     *promql.Engine
+	mu         sync.Mutex
+	store      storage.Queryable
+	sawHotOnly bool // set once any query arrives with hot_only=true
 }
 
 func (p *promStore) swap(s storage.Queryable) {
@@ -81,6 +82,9 @@ func (p *promStore) handler() http.Handler {
 		tsUnix, _ := strconv.ParseInt(r.URL.Query().Get("time"), 10, 64)
 		p.mu.Lock()
 		st := p.store
+		if r.URL.Query().Get("hot_only") == "true" {
+			p.sawHotOnly = true
+		}
 		p.mu.Unlock()
 
 		query, err := p.engine.NewInstantQuery(r.Context(), st, nil, q, time.Unix(tsUnix, 0))
@@ -275,7 +279,7 @@ groups:
         annotations: { summary: "up is {{ $value }} on {{ $labels.instance }}" }
 `), 0o600))
 
-	client, err := ruler.NewPromQLClient(storeSrv.URL, "", "tenant-e2e", "", nil)
+	client, err := ruler.NewPromQLClient(storeSrv.URL, "", "tenant-e2e", "", true, nil)
 	require.NoError(t, err)
 
 	webhook := notify.NewWebhookClient(notify.WebhookConfig{URL: notifierSrv.URL + "/webhook", Secret: "webhook-secret"}, nil)
@@ -326,4 +330,11 @@ groups:
 	require.Len(t, p.Alerts, 1)
 	assert.Equal(t, "resolved", p.Alerts[0].Status)
 	assert.NotEmpty(t, p.Alerts[0].EndsAt)
+
+	// The ruler enforces hot-only evaluation: every query it issued to the store
+	// carried hot_only=true, so it never scans cold Parquet tiers.
+	ps.mu.Lock()
+	sawHotOnly := ps.sawHotOnly
+	ps.mu.Unlock()
+	assert.True(t, sawHotOnly, "ruler must query prism-store with hot_only=true")
 }

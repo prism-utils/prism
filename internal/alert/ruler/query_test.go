@@ -14,11 +14,12 @@ import (
 )
 
 func TestPromQLClientParsesVector(t *testing.T) {
-	var gotPath, gotQuery, gotTime, gotAuth string
+	var gotPath, gotQuery, gotTime, gotAuth, gotHotOnly string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.Query().Get("query")
 		gotTime = r.URL.Query().Get("time")
+		gotHotOnly = r.URL.Query().Get("hot_only")
 		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[
@@ -31,7 +32,7 @@ func TestPromQLClientParsesVector(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte("reader-jwt\n"), 0o600))
 
-	c, err := NewPromQLClient(srv.URL, "/prism", "team-a", tokenFile, nil)
+	c, err := NewPromQLClient(srv.URL, "/prism", "team-a", tokenFile, true, nil)
 	require.NoError(t, err)
 
 	vec, err := c.Query(context.Background(), `up`, time.Unix(1700000000, 0))
@@ -44,7 +45,26 @@ func TestPromQLClientParsesVector(t *testing.T) {
 	assert.Equal(t, "/prism/team-a/api/v1/query", gotPath)
 	assert.Equal(t, "up", gotQuery)
 	assert.Equal(t, "1700000000", gotTime)
+	assert.Equal(t, "true", gotHotOnly, "hot-only client tags every query with hot_only=true")
 	assert.Equal(t, "Bearer reader-jwt", gotAuth, "token read fresh from file, whitespace trimmed")
+}
+
+func TestPromQLClientOmitsHotOnlyWhenDisabled(t *testing.T) {
+	var gotHotOnly string
+	var hadHotOnly bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHotOnly = r.URL.Query().Get("hot_only")
+		_, hadHotOnly = r.URL.Query()["hot_only"]
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewPromQLClient(srv.URL, "", "t", "", false, nil)
+	require.NoError(t, err)
+	_, err = c.Query(context.Background(), `up`, time.Unix(1, 0))
+	require.NoError(t, err)
+	assert.False(t, hadHotOnly, "disabled client must not send hot_only at all")
+	assert.Empty(t, gotHotOnly)
 }
 
 func TestPromQLClientParsesScalar(t *testing.T) {
@@ -53,7 +73,7 @@ func TestPromQLClientParsesScalar(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewPromQLClient(srv.URL, "", "t", "", nil)
+	c, err := NewPromQLClient(srv.URL, "", "t", "", false, nil)
 	require.NoError(t, err)
 	vec, err := c.Query(context.Background(), `40+2`, time.Unix(1700000000, 0))
 	require.NoError(t, err)
@@ -70,7 +90,7 @@ func TestPromQLClientNoTokenFileNoAuthHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewPromQLClient(srv.URL, "", "t", "", nil)
+	c, err := NewPromQLClient(srv.URL, "", "t", "", false, nil)
 	require.NoError(t, err)
 	_, err = c.Query(context.Background(), `up`, time.Unix(1, 0))
 	require.NoError(t, err)
@@ -83,7 +103,7 @@ func TestPromQLClientErrorsOnNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewPromQLClient(srv.URL, "", "t", "", nil)
+	c, err := NewPromQLClient(srv.URL, "", "t", "", false, nil)
 	require.NoError(t, err)
 	_, err = c.Query(context.Background(), `up`, time.Unix(1, 0))
 	require.Error(t, err)
@@ -96,7 +116,7 @@ func TestPromQLClientErrorsOnAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewPromQLClient(srv.URL, "", "t", "", nil)
+	c, err := NewPromQLClient(srv.URL, "", "t", "", false, nil)
 	require.NoError(t, err)
 	_, err = c.Query(context.Background(), `up{`, time.Unix(1, 0))
 	require.Error(t, err)
@@ -109,7 +129,7 @@ func TestPromQLClientErrorsWhenTokenFileMissing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewPromQLClient(srv.URL, "", "t", "/nonexistent/token", nil)
+	c, err := NewPromQLClient(srv.URL, "", "t", "/nonexistent/token", false, nil)
 	require.NoError(t, err)
 	_, err = c.Query(context.Background(), `up`, time.Unix(1, 0))
 	require.Error(t, err, "a configured but unreadable token must fail the eval, not fall back to no auth")

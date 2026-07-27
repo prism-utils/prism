@@ -23,13 +23,15 @@ import (
 type PromQLClient struct {
 	endpoint   string
 	tokenFile  string
+	hotOnly    bool
 	httpClient *http.Client
 }
 
 // NewPromQLClient builds a client targeting
 // {storeBaseURL}{routePrefix}/{tenant}/api/v1/query. A nil httpClient gets a
-// 30s-timeout default.
-func NewPromQLClient(storeBaseURL, routePrefix, tenant, tokenFile string, hc *http.Client) (*PromQLClient, error) {
+// 30s-timeout default. When hotOnly is set, every query carries the store's
+// `hot_only` extension so recurring evaluations never scan cold Parquet tiers.
+func NewPromQLClient(storeBaseURL, routePrefix, tenant, tokenFile string, hotOnly bool, hc *http.Client) (*PromQLClient, error) {
 	base, err := url.Parse(storeBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse store base url: %w", err)
@@ -44,7 +46,7 @@ func NewPromQLClient(storeBaseURL, routePrefix, tenant, tokenFile string, hc *ht
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 	}
-	return &PromQLClient{endpoint: base.String(), tokenFile: tokenFile, httpClient: hc}, nil
+	return &PromQLClient{endpoint: base.String(), tokenFile: tokenFile, hotOnly: hotOnly, httpClient: hc}, nil
 }
 
 func path(routePrefix, tenant string) string {
@@ -79,6 +81,9 @@ func (c *PromQLClient) Query(ctx context.Context, q string, t time.Time) (promql
 	params := url.Values{}
 	params.Set("query", q)
 	params.Set("time", strconv.FormatInt(t.Unix(), 10))
+	if c.hotOnly {
+		params.Set("hot_only", "true")
+	}
 	req.URL.RawQuery = params.Encode()
 
 	if c.tokenFile != "" {

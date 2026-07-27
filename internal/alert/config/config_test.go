@@ -38,8 +38,33 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, cfg.ResolveTimeout)
 	assert.Equal(t, "tenant-webhook", cfg.Receiver)
 	assert.Equal(t, ":8080", cfg.ListenAddr)
+	assert.True(t, cfg.QueryHotOnly, "hot-only is the default ruler scope")
 	assert.Empty(t, cfg.ExternalURL)
 	assert.Empty(t, cfg.RoutePrefix)
+}
+
+func TestLoadQueryHotOnlyToggle(t *testing.T) {
+	for _, tc := range []struct {
+		val  string
+		want bool
+	}{
+		{"false", false}, {"0", false}, {"off", false},
+		{"true", true}, {"1", true}, {"on", true},
+	} {
+		env := minimalEnv()
+		env["QUERY_HOT_ONLY"] = tc.val
+		cfg, err := Load(lookup(env))
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, cfg.QueryHotOnly, "QUERY_HOT_ONLY=%q", tc.val)
+	}
+}
+
+func TestLoadRejectsBadHotOnly(t *testing.T) {
+	env := minimalEnv()
+	env["QUERY_HOT_ONLY"] = "maybe"
+	_, err := Load(lookup(env))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "QUERY_HOT_ONLY")
 }
 
 func TestLoadOverrides(t *testing.T) {

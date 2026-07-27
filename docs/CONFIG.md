@@ -837,6 +837,7 @@ machine, and webhook payload see [`ALERTING.md`](ALERTING.md).
 | `TENANT_NS` | string | _(required)_ | Tenant namespace this instance rules for; must match `^[a-z0-9][a-z0-9._-]{0,62}$`. |
 | `ROUTE_PREFIX` | string | _(empty)_ | prism-store optional path prefix (matches its `ROUTE_PREFIX`). |
 | `STORE_TOKEN_FILE` | string | _(empty — no auth header)_ | Path to a prism-store reader JWT, read fresh per request so rotation needs no restart. |
+| `QUERY_HOT_ONLY` | bool | `true` | Tag every evaluation with the store's `hot_only` extension so recurring rules never scan cold Parquet tiers. Set `false` to allow full-range evaluation. |
 | `NOTIFIER_WEBHOOK_URL` | string (URL) | _(required)_ | Notifier `/webhook` endpoint the v4 payload is POSTed to. |
 | `WEBHOOK_SECRET` | string | _(required)_ | Bearer token presented to the notifier (`Authorization: Bearer …`). |
 | `RECEIVER` | string | `tenant-webhook` | Receiver name stamped on every emitted payload. |

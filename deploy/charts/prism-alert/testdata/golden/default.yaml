@@ -95,6 +95,8 @@ spec:
               value: ""
             - name: TENANT_NS
               value: ""
+            - name: QUERY_HOT_ONLY
+              value: "true"
             - name: NOTIFIER_WEBHOOK_URL
               value: ""
             - name: RECEIVER

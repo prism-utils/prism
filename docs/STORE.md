@@ -660,6 +660,13 @@ Repeated `match[]` selectors **union** (OR), and `series`/`labels`/`label
 values` honor the Prometheus `limit` result cap (early-stop, so the response
 stays bounded by `limit` rather than tenant cardinality).
 
+**`hot_only` extension** — any endpoint accepts an optional `hot_only` param
+(`true`/`1`/`yes`/`on`). It restricts that single request to the hot snapshot,
+skipping cold Parquet tiers. It can only **tighten** scope: on a store already
+running with `QUERY_HOT_ONLY=true` the param is a no-op (a request can never
+widen back to the tiers). `prism-alert` sets it on every evaluation so recurring
+rules stay cheap and never touch cold storage (see [`ALERTING.md`](ALERTING.md)).
+
 Responses use the exact Prometheus envelope: `{"status":"success","data":{"resultType":"vector|matrix|scalar|string","result":…}}`;
 errors are `{"status":"error","errorType":"…","error":"…"}`.
 

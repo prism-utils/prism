@@ -45,6 +45,10 @@ env:
   tenantNS: ""
   # prism-store optional path prefix (matches its ROUTE_PREFIX).
   routePrefix: ""
+  # Force hot-only evaluation: every query carries the store's `hot_only`
+  # extension so recurring rules never scan cold Parquet tiers. Set false only
+  # if a rule needs the full time range (heavier, slower cold-storage queries).
+  queryHotOnly: true
 
   # Notifier /webhook endpoint — REQUIRED.
   notifierWebhookURL: ""

@@ -65,6 +65,8 @@ spec:
             - name: ROUTE_PREFIX
               value: {{ .Values.env.routePrefix | quote }}
             {{- end }}
+            - name: QUERY_HOT_ONLY
+              value: {{ .Values.env.queryHotOnly | quote }}
             - name: NOTIFIER_WEBHOOK_URL
               value: {{ .Values.env.notifierWebhookURL | quote }}
             - name: RECEIVER

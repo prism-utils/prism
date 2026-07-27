@@ -33,6 +33,17 @@ The ruler holds no TSDB. It reads the store over HTTP (optionally with a reader
 JWT read fresh per request from `STORE_TOKEN_FILE`, so rotation needs no
 restart) and writes to exactly one notifier webhook.
 
+### Hot-only evaluation
+
+By default (`QUERY_HOT_ONLY=true`) the ruler tags **every** query with the
+store's `hot_only` extension, so recurring evaluations read only the hot
+snapshot and never scan cold Parquet tiers — the ideal ruler scope: cheap,
+bounded, and safe to run on a short `EVALUATION_INTERVAL`. This is enforced
+end-to-end (`test/e2e` asserts the store receives `hot_only=true`). The param
+can only tighten scope, so it is a no-op against a store already globally
+hot-only. Set `QUERY_HOT_ONLY=false` only if a rule genuinely needs the full
+time range; expect heavier, slower queries against cold storage.
+
 ## Rule format
 
 Standard Prometheus **alerting** rule groups. Recording rules are ignored (the

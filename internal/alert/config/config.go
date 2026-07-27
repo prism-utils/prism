@@ -28,6 +28,10 @@ type Config struct {
 	// StoreTokenFile is the path to the reader JWT; read fresh per request so
 	// rotation needs no restart. Empty means no Authorization header.
 	StoreTokenFile string `json:"store_token_file"`
+	// QueryHotOnly forces every evaluation onto the store's hot snapshot via the
+	// `hot_only` extension, so recurring rules never scan cold Parquet tiers.
+	// Defaults to true: hot-only is the intended ruler scope.
+	QueryHotOnly bool `json:"query_hot_only"`
 
 	// RulesDir is the directory of Prometheus rule-group YAML files.
 	RulesDir string `json:"rules_dir"`
@@ -66,6 +70,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		RulesDir:           "/etc/prism-alert/rules",
+		QueryHotOnly:       true,
 		EvaluationInterval: 60 * time.Second,
 		Receiver:           "tenant-webhook",
 		GroupBy:            []string{"alertname", "severity"},
@@ -105,6 +110,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if v := getenv("GROUP_BY"); v != "" {
 		c.GroupBy = parseList(v)
+	}
+	if v := getenv("QUERY_HOT_ONLY"); v != "" {
+		hotOnly, err := parseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("QUERY_HOT_ONLY: %w", err)
+		}
+		c.QueryHotOnly = hotOnly
 	}
 
 	durations := []struct {
@@ -215,6 +227,19 @@ func validateAbsURL(raw string) error {
 		return fmt.Errorf("must be an absolute URL with a host")
 	}
 	return nil
+}
+
+// parseBool accepts the common truthy/falsy spellings so operators can toggle
+// QUERY_HOT_ONLY with 1/0, true/false, yes/no, or on/off.
+func parseBool(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean %q", v)
+	}
 }
 
 func parseList(v string) []string {

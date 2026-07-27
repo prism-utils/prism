@@ -86,7 +86,7 @@ func dispatcherOptions(cfg *config.Config) notify.Options {
 }
 
 func run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	client, err := ruler.NewPromQLClient(cfg.StoreBaseURL, cfg.RoutePrefix, cfg.TenantNS, cfg.StoreTokenFile, nil)
+	client, err := ruler.NewPromQLClient(cfg.StoreBaseURL, cfg.RoutePrefix, cfg.TenantNS, cfg.StoreTokenFile, cfg.QueryHotOnly, nil)
 	if err != nil {
 		return fmt.Errorf("build promql client: %w", err)
 	}
