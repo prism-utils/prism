@@ -1,0 +1,10 @@
+apiVersion: v2
+name: prism-alert
+description: Per-tenant PromQL ruler with Alertmanager-compatible webhook notification for the prism pipeline
+type: application
+version: 0.1.0
+appVersion: "dev"
+kubeVersion: ">=1.24.0-0"
+home: https://github.com/elk-utilities/prism
+sources:
+  - https://github.com/elk-utilities/prism

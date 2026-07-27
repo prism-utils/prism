@@ -86,6 +86,24 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           vuln-type: os,library
+      - name: build alert binary for scanning
+        run: |
+          mkdir -p scanctx-alert
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath \
+              -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
+              -o scanctx-alert/prism-alert ./cmd/prism-alert
+      - name: build alert image for scanning
+        run: docker build -f Dockerfile.alert.release -t prism-alert:scan scanctx-alert
+      - name: trivy alert image scan (gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: prism-alert:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
 
   release:
     needs: scan
@@ -136,10 +154,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: package and push chart
+      - name: package and push charts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/^version: .*/version: ${VERSION}/" deploy/charts/prism-store/Chart.yaml
-          sed -i "s/^appVersion: .*/appVersion: ${GITHUB_REF_NAME}/" deploy/charts/prism-store/Chart.yaml
-          helm package deploy/charts/prism-store --destination /tmp
-          helm push "/tmp/prism-store-${VERSION}.tgz" oci://ghcr.io/elk-utilities/charts
+          for chart in prism-store prism-alert; do
+            sed -i "s/^version: .*/version: ${VERSION}/" "deploy/charts/${chart}/Chart.yaml"
+            sed -i "s/^appVersion: .*/appVersion: ${GITHUB_REF_NAME}/" "deploy/charts/${chart}/Chart.yaml"
+            helm package "deploy/charts/${chart}" --destination /tmp
+            helm push "/tmp/${chart}-${VERSION}.tgz" oci://ghcr.io/elk-utilities/charts
+          done

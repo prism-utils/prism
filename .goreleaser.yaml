@@ -57,6 +57,21 @@ builds:
           - CC=aarch64-linux-gnu-gcc
           - CXX=aarch64-linux-gnu-g++
 
+  - id: prism-alert
+    main: ./cmd/prism-alert
+    binary: prism-alert
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/elk-utilities/prism/internal/version.Version={{ .Version }}
+
 archives:
   - id: prism
     ids:
@@ -73,6 +88,15 @@ archives:
     formats:
       - tar.gz
     name_template: "prism-store_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+  - id: prism-alert
+    ids:
+      - prism-alert
+    formats:
+      - tar.gz
+    name_template: "prism-alert_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
       - LICENSE*
@@ -167,6 +191,40 @@ dockers:
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
+  - id: alert-amd64
+    ids:
+      - prism-alert
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile.alert.release
+    image_templates:
+      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-amd64"
+      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title=prism-alert"
+      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+  - id: alert-arm64
+    ids:
+      - prism-alert
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile.alert.release
+    image_templates:
+      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-arm64"
+      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title=prism-alert"
+      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
 
 docker_manifests:
   - name_template: "ghcr.io/elk-utilities/prism:{{ .Version }}"
@@ -193,6 +251,18 @@ docker_manifests:
     image_templates:
       - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-amd64"
       - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/elk-utilities/prism-alert:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-amd64"
+      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}"
+    image_templates:
+      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-arm64"
+  - name_template: "ghcr.io/elk-utilities/prism-alert:latest"
+    image_templates:
+      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-amd64"
+      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-arm64"
 
 docker_signs:
   - id: manifest-keyless

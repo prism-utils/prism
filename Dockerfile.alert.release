@@ -1,0 +1,14 @@
+# Release image for prism-alert: copies the GoReleaser-built static binary onto
+# a distroless nonroot base. prism-alert is CGO-free (pure-Go ruler; it keeps no
+# TSDB and only talks HTTP to prism-store and the notifier), so the image needs
+# no shell, package manager, or libc — it runs as uid 65532 with a read-only
+# rootfs.
+#
+# GoReleaser builds the per-arch binary itself and only needs it copied in.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY prism-alert /usr/local/bin/prism-alert
+# Rule YAML is mounted at /etc/prism-alert/rules; config comes from env, and
+# secrets (WEBHOOK_SECRET, reader JWT) from env/mounted files.
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/prism-alert"]
+CMD ["serve"]

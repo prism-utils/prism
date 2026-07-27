@@ -137,6 +137,16 @@ docker-store: ## Build the store release image (tag: prism-store:$(VERSION))
 	docker build -f Dockerfile.store.release -t prism-store:$(VERSION) $(STORE_DOCKER_CTX)
 	@rm -rf $(STORE_DOCKER_CTX)
 
+ALERT_DOCKER_CTX := .docker-alert-ctx
+
+.PHONY: docker-alert
+docker-alert: ## Build the alert release image (tag: prism-alert:$(VERSION))
+	@rm -rf $(ALERT_DOCKER_CTX)
+	@mkdir -p $(ALERT_DOCKER_CTX)
+	CGO_ENABLED=0 go build $(GOFLAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(ALERT_DOCKER_CTX)/prism-alert ./cmd/prism-alert
+	docker build -f Dockerfile.alert.release -t prism-alert:$(VERSION) $(ALERT_DOCKER_CTX)
+	@rm -rf $(ALERT_DOCKER_CTX)
+
 .PHONY: release-check
 release-check: ## Validate .goreleaser.yaml
 	goreleaser check

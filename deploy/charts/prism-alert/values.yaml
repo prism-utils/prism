@@ -1,0 +1,110 @@
+# prism-alert is a stateless, CGO-free ruler: it loads rule YAML, evaluates
+# PromQL against prism-store, and POSTs Alertmanager v4 webhooks to the notifier.
+# One instance rules for exactly one tenant — deploy one release per tenant.
+#
+# Sizing: the ruler holds no TSDB; memory is dominated by the active-alert set
+# and one in-flight HTTP body. The defaults below comfortably cover thousands of
+# rules; raise limits only for very large rule sets or tiny evaluation intervals.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/elk-utilities/prism-alert
+  # Empty tag defaults to Chart.appVersion at render time.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podLabels: {}
+podAnnotations: {}
+
+# The ruler is stateless; scale horizontally only if you shard rule files, as
+# multiple replicas evaluating the same rules notify redundantly.
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+env:
+  # Health/probe listen address (also the only listener; the ruler serves no API).
+  listenAddr: ":8080"
+
+  # prism-store query base URL (scheme://host[:port]) — REQUIRED.
+  storeBaseURL: ""
+  # Tenant namespace this instance rules for — REQUIRED.
+  tenantNS: ""
+  # prism-store optional path prefix (matches its ROUTE_PREFIX).
+  routePrefix: ""
+
+  # Notifier /webhook endpoint — REQUIRED.
+  notifierWebhookURL: ""
+  # Receiver name stamped on every emitted payload.
+  receiver: "tenant-webhook"
+  # Payload externalURL (links a receiver back to a UI); may be empty.
+  externalURL: ""
+
+  # Directory the rule ConfigMap is mounted into (see `rules` below).
+  rulesDir: "/etc/prism-alert/rules"
+  # Ruler evaluation cadence and Alertmanager-style route knobs.
+  evaluationInterval: "60s"
+  groupBy: "alertname,severity"
+  groupWait: "30s"
+  groupInterval: "5m"
+  repeatInterval: "4h"
+  resolveTimeout: "5m"
+
+# Secrets are never inlined here. Point existingSecret at a pre-created Secret;
+# the chart does not create or rotate credentials.
+#   - webhookSecretKey (REQUIRED at runtime): the bearer token presented to the
+#     notifier, wired to WEBHOOK_SECRET.
+#   - storeTokenSecretKey (optional): a prism-store reader JWT; when set it is
+#     mounted read-only as a file and STORE_TOKEN_FILE points at it, so rotating
+#     the Secret needs no restart (the token is read fresh per request).
+secrets:
+  existingSecret: ""
+  webhookSecretKey: webhook-secret
+  storeTokenSecretKey: ""
+  # Mount path + filename for the reader JWT when storeTokenSecretKey is set.
+  storeTokenMountPath: /etc/prism-alert/token
+  storeTokenFileName: token
+
+# Alerting rules: a map of file name -> Prometheus rule-group YAML. Each entry
+# becomes a key in a ConfigMap mounted read-only at env.rulesDir, exactly the
+# shape the ruler globs (*.yml / *.yaml). Empty means "mount rules yourself"
+# (set rulesConfigMap to an externally-managed ConfigMap name instead).
+rules: {}
+  # example.yml: |
+  #   groups:
+  #     - name: node
+  #       rules:
+  #         - alert: NodeDown
+  #           expr: up == 0
+  #           for: 5m
+  #           labels: { severity: critical }
+  #           annotations: { summary: "{{ $labels.instance }} is down" }
+
+# When set, mount this pre-existing ConfigMap at env.rulesDir instead of one
+# rendered from `rules`. Mutually exclusive with a non-empty `rules`.
+rulesConfigMap: ""
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+networkPolicy:
+  # The ruler makes only egress calls (store + notifier) and exposes health
+  # probes; enable to restrict who may reach the probe port.
+  enabled: false
+  ingress:
+    namespaceSelector: {}
+    podSelector: {}

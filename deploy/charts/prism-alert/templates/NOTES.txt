@@ -1,0 +1,24 @@
+prism-alert is running for tenant {{ .Values.env.tenantNS | default "<UNSET — set env.tenantNS>" }}.
+
+It evaluates rules every {{ .Values.env.evaluationInterval }} against
+  {{ .Values.env.storeBaseURL | default "<UNSET — set env.storeBaseURL>" }}
+and posts Alertmanager v4 webhooks (receiver "{{ .Values.env.receiver }}") to
+  {{ .Values.env.notifierWebhookURL | default "<UNSET — set env.notifierWebhookURL>" }}
+
+Health probes: port {{ include "prism-alert.publicPort" . }} (/healthz, /readyz). The ruler exposes no query API.
+
+{{- if not .Values.secrets.existingSecret }}
+
+WARNING: secrets.existingSecret is empty, so WEBHOOK_SECRET is not injected and
+the pod will fail validation at startup. Create a Secret with key
+"{{ .Values.secrets.webhookSecretKey }}" and set secrets.existingSecret to its name.
+{{- end }}
+
+{{- if not (include "prism-alert.hasRules" .) }}
+
+NOTE: no rules configured. Set `rules` (inline rule YAML) or `rulesConfigMap`
+(an existing ConfigMap) so the ruler has something to evaluate.
+{{- end }}
+
+Check the loaded rule count in the startup log:
+  kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "prism-alert.fullname" . }} | grep '"rule_files"'

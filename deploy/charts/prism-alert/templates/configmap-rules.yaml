@@ -1,0 +1,13 @@
+{{- if and .Values.rules (not .Values.rulesConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "prism-alert.fullname" . }}-rules
+  labels:
+    {{- include "prism-alert.labels" . | nindent 4 }}
+data:
+  {{- range $name, $body := .Values.rules }}
+  {{ $name }}: |
+{{ $body | indent 4 }}
+  {{- end }}
+{{- end }}
