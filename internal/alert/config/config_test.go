@@ -48,8 +48,8 @@ func TestLoadQueryHotOnlyToggle(t *testing.T) {
 		val  string
 		want bool
 	}{
-		{"false", false}, {"0", false}, {"off", false},
-		{"true", true}, {"1", true}, {"on", true},
+		{"false", false}, {"0", false}, {"off", false}, {"no", false},
+		{"true", true}, {"1", true}, {"on", true}, {"yes", true},
 	} {
 		env := minimalEnv()
 		env["QUERY_HOT_ONLY"] = tc.val

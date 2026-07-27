@@ -579,15 +579,13 @@ func parseLimitParam(r *http.Request) (int, *apiError) {
 
 // wantsHotOnly reports whether the request opts into hot-only evaluation via the
 // prism `hot_only` extension param. Rulers (prism-alert) set it so recurring
-// evaluations never scan cold Parquet tiers. Callers rely on r.Form, which every
-// handler populates via parseForm before entering withSandbox.
+// evaluations never scan cold Parquet tiers. It reuses the package parseBool so
+// accepted spellings never drift; an empty or malformed value is simply false
+// (the param is an optional tightening, not a required flag). Callers rely on
+// r.Form, which every handler populates via parseForm before entering withSandbox.
 func wantsHotOnly(r *http.Request) bool {
-	switch strings.ToLower(strings.TrimSpace(r.Form.Get("hot_only"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
+	v, err := parseBool(r.Form.Get("hot_only"))
+	return err == nil && v
 }
 
 func isValidLabelName(name string) bool {
