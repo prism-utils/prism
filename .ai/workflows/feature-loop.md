@@ -58,8 +58,8 @@ deleted as soon as the change is merged.** Never work in the primary clone.
 ```bash
 # from the primary clone
 git -C ~/git/prism fetch origin main
-git -C ~/git/prism worktree add ~/git/prism-wt/<branch> -b <branch> origin/main
-cd ~/git/prism-wt/<branch>          # ALL work for this task happens here
+git -C ~/git/prism worktree add ~/workdir/<branch>/prism -b <branch> origin/main
+cd ~/workdir/<branch>/prism          # ALL work for this task happens here
 ```
 
 `<branch>` is `feat/…`, `fix/…`, `chore/…`, or `docs/…` (kebab-case, matches the
@@ -73,7 +73,7 @@ git log --oneline HEAD..origin/main   # must print nothing; rebase if it doesn't
 After merge, remove the worktree and its branch:
 
 ```bash
-git -C ~/git/prism worktree remove ~/git/prism-wt/<branch>
+git -C ~/git/prism worktree remove ~/workdir/<branch>/prism
 git -C ~/git/prism branch -D <branch>          # local
 git -C ~/git/prism push origin --delete <branch>  # remote (if pushed)
 ```
