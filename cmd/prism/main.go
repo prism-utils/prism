@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"github.com/elk-utilities/prism/internal/config"
 	"github.com/elk-utilities/prism/internal/obs"
 	"github.com/elk-utilities/prism/internal/pipeline"
+	"github.com/elk-utilities/prism/internal/quick"
 	"github.com/elk-utilities/prism/internal/version"
 )
 
@@ -68,6 +70,11 @@ func usage() {
 
 usage:
   prism run      -config <file>       run pipelines until interrupted
+  prism run      --quick logs         run a built-in preset (stdin → template→count on stdout)
+                 [--store <url>]      also ship logs-summary parquet to a prism-store
+                 [--tenant <ns>]      tenant namespace for --store (default "default")
+                 [--token <t>]        bearer token for --store ingest
+                 [--print-config]     print the effective preset config and exit
   prism validate -config <file>       load and validate a config, then exit
   prism collect  -addr <a> -dir <d>   run an Arrow Flight receiver → Parquet
                  [-token <t>]         require a bearer token on every RPC
@@ -127,11 +134,60 @@ func validateCmd(args []string) error {
 	return nil
 }
 
+// runOptions holds the parsed flags for the run subcommand. Exactly one of
+// configPath or quickTemplate selects the pipeline source.
+type runOptions struct {
+	configPath    string
+	quickTemplate string
+	store         string
+	tenant        string
+	token         string
+	printConfig   bool
+}
+
+func parseRunFlags(args []string) (runOptions, error) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	var o runOptions
+	fs.StringVar(&o.configPath, "config", "", "path to the pipeline config (YAML or JSON)")
+	fs.StringVar(&o.quickTemplate, "quick", "", "run a built-in preset instead of a config file (e.g. \"logs\")")
+	fs.StringVar(&o.store, "store", "", "prism-store base URL to also ship logs to (quick mode)")
+	fs.StringVar(&o.tenant, "tenant", "", "tenant namespace for --store (default \"default\")")
+	fs.StringVar(&o.token, "token", "", "bearer token for --store ingest")
+	fs.BoolVar(&o.printConfig, "print-config", false, "print the effective config and exit")
+	if err := fs.Parse(args); err != nil {
+		return runOptions{}, err
+	}
+	return o, nil
+}
+
+// runConfig resolves the run subcommand's flags into a validated config,
+// choosing the quick preset or a config file. Mixing the two is an error.
+func runConfig(o runOptions) (*config.Config, error) {
+	switch {
+	case o.quickTemplate != "" && o.configPath != "":
+		return nil, fmt.Errorf("run: -config and --quick are mutually exclusive")
+	case o.quickTemplate != "":
+		return quick.Build(o.quickTemplate, quick.Options{Store: o.store, Tenant: o.tenant, Token: o.token})
+	case o.configPath != "":
+		return config.LoadFile(o.configPath)
+	default:
+		return nil, fmt.Errorf("run: one of -config or --quick is required")
+	}
+}
+
 func runCmd(args []string) error {
-	cfg, err := loadConfig(args)
+	o, err := parseRunFlags(args)
 	if err != nil {
 		return err
 	}
+	cfg, err := runConfig(o)
+	if err != nil {
+		return err
+	}
+	if o.printConfig {
+		return printEffectiveConfig(os.Stdout, cfg)
+	}
+
 	reg, err := components.Default()
 	if err != nil {
 		return err
@@ -145,9 +201,27 @@ func runCmd(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	logger.Info("prism starting", "pipelines", len(cfg.Pipelines), "version", version.Version)
+	if o.quickTemplate == "logs" && o.store != "" {
+		logger.Info("logs available on prism-store",
+			"ingest", quick.IngestURL(o.store, o.tenant),
+			"query_endpoint", "POST "+quick.SQLEndpoint(o.store, o.tenant),
+			"example_query", quick.ExampleLogsQuery,
+		)
+	}
 	if err := set.Run(ctx, obs.NewHost(logger)); err != nil {
 		return err
 	}
 	logger.Info("prism stopped")
 	return nil
+}
+
+// printEffectiveConfig writes the resolved config as indented JSON (valid YAML)
+// so a user can inspect a quick preset or graduate it into a file.
+func printEffectiveConfig(w io.Writer, cfg *config.Config) error {
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("run: encode config: %w", err)
+	}
+	_, err = fmt.Fprintln(w, string(b))
+	return err
 }
