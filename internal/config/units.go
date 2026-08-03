@@ -12,6 +12,12 @@ import (
 // rejected because their unit would be ambiguous.
 type Duration time.Duration
 
+// MarshalJSON emits a quoted Go duration string (e.g. "2s") so a config
+// serialized for inspection reloads unchanged through UnmarshalJSON.
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.Quote(time.Duration(d).String())), nil
+}
+
 // UnmarshalJSON decodes a quoted Go duration string (or the literal 0).
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	s := strings.TrimSpace(string(b))
@@ -38,6 +44,12 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 // "1KiB", "1MB") or a plain byte count (number or quoted digits). Binary units
 // (KiB/MiB/GiB) are powers of 1024; SI units (KB/MB/GB) are powers of 1000.
 type ByteSize int64
+
+// MarshalJSON emits the plain byte count, which reloads unchanged through
+// UnmarshalJSON's numeric path (no unit ambiguity).
+func (s ByteSize) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.FormatInt(int64(s), 10)), nil
+}
 
 // UnmarshalJSON decodes a byte quantity from a string or a plain number.
 func (s *ByteSize) UnmarshalJSON(b []byte) error {

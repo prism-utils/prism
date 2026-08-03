@@ -239,6 +239,12 @@ validation chain and land via `engine.Ingest`.
 `POST <ROUTE_PREFIX>/{tenant}/ingest/{artifact}` — raw Parquet body
 (`application/octet-stream`). Empty body → `204` no-op.
 
+**Logs artifacts** (`logs-raw`/`logs-template`/`logs-summary`, opt-in via
+`ALLOWED_ARTIFACTS`) skip the metrics hot catalog: each window is landed as an
+immutable file under `<tenant>/logs/<artifact>/` and read back through the
+`logs` relation on `/sql`. Metrics ingest is unchanged. Both HTTP and Flight
+ingest land logs the same way.
+
 ### Arrow Flight
 
 When `FLIGHT_ADDR` is set, a Flight server accepts `DoPut` streams. Incoming
@@ -555,8 +561,19 @@ When **`SQL_API_ENABLED=false`** (default `true`), the route is not registered
 | Relation | Schema |
 |---|---|
 | `metrics` | `"__name__"`, `labels`, `value`, `timestamp_ms`, `ts` |
+| `logs` | `message`, `format` (guaranteed) + per-format/`template`/`count` columns (varies) |
 
-Built from the tenant's **`hot/current.parquet`** snapshot (exported per request)
+The **`logs`** relation unions the tenant's landed `logs-*/*.parquet` windows with
+`union_by_name=true` (variable per-format schemas; missing columns are NULL). It
+is present in every sandbox (empty — zero rows — when a tenant has no logs), is
+tenant-scoped like `metrics`, and is unaffected by `QUERY_HOT_ONLY` (logs have no
+hot/tier split). Typical use — total count per mined template:
+
+```sql
+SELECT template, CAST(sum(count) AS BIGINT) AS count FROM logs GROUP BY template ORDER BY count DESC
+```
+
+The `metrics` relation is built from the tenant's **`hot/current.parquet`** snapshot (exported per request)
 plus present **`tiers/L*/*.parquet`** globs when `QUERY_HOT_ONLY` is off — same
 union shape as structured query / Grafana view SQL. With `QUERY_HOT_ONLY=true`,
 only the hot snapshot is included. Visibility: committed hot (as of snapshot) + all

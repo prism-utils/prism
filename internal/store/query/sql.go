@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ const (
 	defaultSQLTimeout      = 30 * time.Second
 	defaultSQLMaxBodyBytes = 1 << 20 // 1 MiB
 	sandboxMetricsView     = "metrics"
+	sandboxLogsView        = "logs"
 	arrowStreamMediaType   = "application/vnd.apache.arrow.stream"
 	truncatedTrailer       = "X-Prism-Truncated"
 )
@@ -262,6 +264,15 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 		cleanup()
 		return nil, nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
 	}
+	logsSQL, err := sandboxLogsUnionSQL(tenantRoot)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxLogsView+" AS "+logsSQL); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(fmt.Errorf("create logs view: %w", err))
+	}
 	if err := lockSandbox(ctx, conn); err != nil {
 		cleanup()
 		return nil, nil, err
@@ -432,6 +443,70 @@ func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
 		return "", fmt.Errorf("view SQL must not use union_by_name or filename")
 	}
 	return sqlText, nil
+}
+
+// emptyLogsViewSQL is the body of the sandbox `logs` view when a tenant has no
+// landed log parquet: zero rows with the guaranteed logs columns (message,
+// format) plus the summary columns (template, count), so a query against a
+// logs-empty tenant returns an empty result instead of failing with a
+// misleading 400.
+const emptyLogsViewSQL = `SELECT ` +
+	`CAST(NULL AS VARCHAR) AS message, ` +
+	`CAST(NULL AS VARCHAR) AS format, ` +
+	`CAST(NULL AS VARCHAR) AS template, ` +
+	`CAST(NULL AS BIGINT) AS count ` +
+	`WHERE 1=0`
+
+// sandboxLogsUnionSQL builds the `logs` relation over the tenant's landed log
+// parquet. Logs have a variable, per-format schema (message/format always
+// present; template/count and extracted fields vary by artifact), so the files
+// are unified with union_by_name — missing columns are NULL-filled — rather than
+// the fixed positional union the metrics view uses.
+func sandboxLogsUnionSQL(tenantRoot string) (string, error) {
+	absRoot, err := filepath.Abs(tenantRoot)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolved
+	}
+	absRoot = filepath.Clean(absRoot)
+
+	paths, err := collectSafeLogParquetPaths(absRoot)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return emptyLogsViewSQL, nil
+	}
+	quoted := make([]string, len(paths))
+	for i, p := range paths {
+		quoted[i] = "'" + escapeSQLLiteral(layout.ToSlash(p)) + "'"
+	}
+	return fmt.Sprintf("SELECT * FROM read_parquet([%s], union_by_name=true)", strings.Join(quoted, ", ")), nil
+}
+
+// collectSafeLogParquetPaths returns landed log parquet files under
+// <tenantRoot>/logs/<artifact>/, each validated to be a regular file that
+// resolves within the tenant root (mirrors the metrics path's symlink guard).
+func collectSafeLogParquetPaths(absTenantRoot string) ([]string, error) {
+	glob := filepath.Join(absTenantRoot, "logs", "*", "*.parquet")
+	matches, err := filepath.Glob(glob)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(matches)
+	var paths []string
+	for _, match := range matches {
+		ok, err := safeTenantParquetFile(absTenantRoot, match)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			paths = append(paths, match)
+		}
+	}
+	return paths, nil
 }
 
 func validateReadOnlySQL(raw string) error {
