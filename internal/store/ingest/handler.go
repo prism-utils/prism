@@ -46,6 +46,14 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 			return
 		}
 
+		// Logs carry a variable per-format schema, so they are landed as
+		// immutable parquet files (queried later with union_by_name) instead of
+		// being inserted into the fixed metrics hot catalog.
+		if isLogArtifact(artifact) {
+			landLogWindow(w, r, cfg, eng, logger, ns, artifact)
+			return
+		}
+
 		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
 		//nolint:contextcheck // engine.Ingest manages its own DB context internally
 		n, err := eng.Ingest(ns, body)
@@ -66,4 +74,33 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		logger.Info("ingested", "ns", ns, "artifact", artifact, "rows", n)
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// isLogArtifact reports whether an artifact belongs to the logs-* family and so
+// takes the land-as-file path instead of the metrics hot-catalog insert.
+func isLogArtifact(artifact string) bool {
+	return strings.HasPrefix(artifact, "logs-")
+}
+
+// landLogWindow persists a logs-* window as a file and writes the ingest
+// response (204 on success or empty no-op; 413 when the body is too large).
+func landLogWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *engine.Engine, logger *slog.Logger, ns, artifact string) {
+	body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
+	n, err := eng.LandLogWindow(ns, artifact, body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		logger.Error("log ingest failed", "ns", ns, "artifact", artifact, "err", err)
+		http.Error(w, "ingest failed", http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	logger.Info("landed log window", "ns", ns, "artifact", artifact, "bytes", n)
+	w.WriteHeader(http.StatusNoContent)
 }

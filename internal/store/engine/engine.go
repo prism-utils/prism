@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -104,6 +105,54 @@ func (e *Engine) Ingest(tenant string, body io.Reader) (int64, error) {
 	affected, _ := res.RowsAffected()
 	e.scheduleFlush(tenant)
 	return affected, nil
+}
+
+// logArtifactPattern guards the artifact segment used in a landing path so a
+// crafted artifact name cannot escape <tenant>/logs/. Log artifacts are the
+// contract-v1 logs-* family (logs-raw, logs-template, logs-summary).
+var logArtifactPattern = regexp.MustCompile(`^logs-[a-z0-9]+$`)
+
+// LandLogWindow persists a logs-* artifact window as an immutable parquet file
+// under <tenant>/logs/<artifact>/, bypassing the metrics hot catalog. Logs carry
+// a variable, per-format schema, so they are stored as files and read back with
+// union_by_name at query time rather than inserted into the fixed metrics hot
+// table. Empty bodies are a no-op. Returns bytes written (0 for empty).
+func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, error) {
+	if !storetenant.TenantAllowed(tenant) {
+		return 0, fmt.Errorf("engine: invalid tenant %q", tenant)
+	}
+	if !logArtifactPattern.MatchString(artifact) {
+		return 0, fmt.Errorf("engine: invalid log artifact %q", artifact)
+	}
+	dir := filepath.Join(e.cfg.DataDir, tenant, "logs", artifact)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return 0, err
+	}
+	tmp, err := os.CreateTemp(dir, ".window-*.parquet.tmp")
+	if err != nil {
+		return 0, err
+	}
+	tmpPath := tmp.Name()
+	n, copyErr := io.Copy(tmp, body)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		return 0, copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return 0, closeErr
+	}
+	if n == 0 {
+		_ = os.Remove(tmpPath)
+		return 0, nil
+	}
+	final := filepath.Join(dir, segmentName(e.clock()))
+	if err := os.Rename(tmpPath, final); err != nil {
+		_ = os.Remove(tmpPath)
+		return 0, fmt.Errorf("engine: land log window: %w", err)
+	}
+	return n, nil
 }
 
 // FlushDue rolls hot tables and writes L0 segments for tenants whose hot window elapsed.
