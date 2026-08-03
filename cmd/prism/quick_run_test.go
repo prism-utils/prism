@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/components"
 	"github.com/elk-utilities/prism/internal/component"
+	"github.com/elk-utilities/prism/internal/components"
 	"github.com/elk-utilities/prism/internal/config"
 	"github.com/elk-utilities/prism/internal/obs"
 	"github.com/elk-utilities/prism/internal/pipeline"
@@ -16,7 +16,7 @@ import (
 // TestQuickPresetBuildsPipeline proves the logs preset resolves and wires
 // through the real component registry + pipeline builder (not just validates).
 func TestQuickPresetBuildsPipeline(t *testing.T) {
-	cfg, err := runConfig(runOptions{quickTemplate: "logs"})
+	cfg, err := runConfig(&runOptions{quickTemplate: "logs"})
 	if err != nil {
 		t.Fatalf("runConfig: %v", err)
 	}
@@ -31,21 +31,21 @@ func TestQuickPresetBuildsPipeline(t *testing.T) {
 }
 
 func TestQuickAndConfigMutuallyExclusive(t *testing.T) {
-	_, err := runConfig(runOptions{quickTemplate: "logs", configPath: "prism.yaml"})
+	_, err := runConfig(&runOptions{quickTemplate: "logs", configPath: "prism.yaml"})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("err = %v, want mutually exclusive", err)
 	}
 }
 
 func TestRunRequiresConfigOrQuick(t *testing.T) {
-	_, err := runConfig(runOptions{})
+	_, err := runConfig(&runOptions{})
 	if err == nil || !strings.Contains(err.Error(), "required") {
 		t.Fatalf("err = %v, want required", err)
 	}
 }
 
 func TestPrintEffectiveConfigRoundTrips(t *testing.T) {
-	cfg, err := runConfig(runOptions{quickTemplate: "logs", store: "http://store:8080", tenant: "team-a"})
+	cfg, err := runConfig(&runOptions{quickTemplate: "logs", store: "http://store:8080", tenant: "team-a"})
 	if err != nil {
 		t.Fatalf("runConfig: %v", err)
 	}

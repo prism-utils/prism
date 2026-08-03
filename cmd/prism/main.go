@@ -162,7 +162,7 @@ func parseRunFlags(args []string) (runOptions, error) {
 
 // runConfig resolves the run subcommand's flags into a validated config,
 // choosing the quick preset or a config file. Mixing the two is an error.
-func runConfig(o runOptions) (*config.Config, error) {
+func runConfig(o *runOptions) (*config.Config, error) {
 	switch {
 	case o.quickTemplate != "" && o.configPath != "":
 		return nil, fmt.Errorf("run: -config and --quick are mutually exclusive")
@@ -180,7 +180,7 @@ func runCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := runConfig(o)
+	cfg, err := runConfig(&o)
 	if err != nil {
 		return err
 	}
