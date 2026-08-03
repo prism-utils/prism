@@ -42,6 +42,38 @@ prism validate -config prism.yaml   # load + validate, then exit
 prism run      -config prism.yaml   # run until interrupted (SIGINT/SIGTERM)
 ```
 
+### Zero-config quick presets (`--quick`)
+
+`prism run --quick <template>` runs a built-in preset instead of a config file,
+so you can pipe logs in with no YAML. The only template in this cut is `logs`:
+
+```bash
+my-app 2>&1 | prism run --quick logs         # prints "template → count" to stdout
+```
+
+The `logs` preset is `stdin → logs{format:auto} → template + summary`, flushing a
+short (2s) window, and prints the per-template counts as JSON to stdout. Cap the
+input with `head`/`tail` — there is no agent-side sampling.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--quick` | — | Preset name (`logs`). Mutually exclusive with `-config`. |
+| `--store` | — | prism-store base URL to **also** ship `logs-summary` Parquet to (local stdout still runs). |
+| `--tenant` | `default` | Tenant namespace used in the `--store` ingest path. |
+| `--token` | — | Bearer token sent to the store on ingest. |
+| `--print-config` | `false` | Print the effective preset config (JSON, reloadable) and exit. |
+
+With `--store`, the agent logs one line pointing at the store and the SQL to run;
+it does **not** query the store itself. Query the shipped logs with the `logs`
+relation (see [`STORE.md`](STORE.md#arbitrary-sql-api)):
+
+```sql
+SELECT template, CAST(sum(count) AS BIGINT) AS count FROM logs GROUP BY template ORDER BY count DESC
+```
+
+The store must allow the artifact: set `ALLOWED_ARTIFACTS=metrics-raw,logs-summary`
+(logs are opt-in; see [§14](#14-prism-store-ingest-receiver)).
+
 Every component config block has the same shape — a `type` selecting the
 component, plus a `type`-specific `options` block:
 
@@ -716,7 +748,7 @@ see [`STORE.md`](STORE.md).
 |---|---|---|---|
 | `ADMIN_LISTEN_ADDR` | string | _(empty — off)_ | When set, binds `/admin/*`, `/stats`, and query/SQL on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
 | `ADMIN_TOKEN` | string | _(empty — off)_ | Static bearer for admin-plane routes when RBAC is off. Constant-time compare. Superseded when `AUTHZ_POLICY_FILE` is set. |
-| `ALLOWED_ARTIFACTS` | string (comma-separated) | `metrics-raw` | Artifact types accepted on ingest routes. |
+| `ALLOWED_ARTIFACTS` | string (comma-separated) | `metrics-raw` | Artifact types accepted on ingest routes. Logs (`logs-raw`/`logs-template`/`logs-summary`) are landed as files and queried via the `logs` relation; add them here to enable (e.g. `metrics-raw,logs-summary`). |
 | `AUTH_MODE` | string | `none` | Ingest/Flight auth when RBAC is off: `none`, `bearer`, `mtls`, `trusted-header`. HTTP ingest ignores this when RBAC is on (JWT). Flight always uses `AUTH_MODE`. |
 | `AUTHZ_POLICY_FILE` | string | _(empty — off)_ | Path to deny-by-default RBAC policy YAML. When set, enables JWT/OIDC + RBAC on HTTP query/ingest/admin routes. |
 | `AUTHZ_RELOAD_SECONDS` | int (seconds) | `15` | Policy file reload poll interval. |
