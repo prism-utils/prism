@@ -80,4 +80,4 @@ are **not exclusive**. No agent-side sampling — the user caps input with
 
 - E2E lives in `test/integration` (not `test/e2e`): the store must be imported in-process (CGO), and `test/e2e` builds CGO-free for its docker-compose harness. The integration test runs the **real agent binary** as a subprocess, so the stdin→agent→HTTP→store→/sql chain is genuine.
 - Logs files under `<tenant>/logs/` are **not** retention-managed by the lifecycle jobs (metrics-only). Acceptable for the quick/inspect use case; unbounded growth is a follow-up (see Notes).
-- Flight ingest stays metrics-only; logs ship over HTTP (the `--quick logs` path).
+- Both HTTP and Flight ingest land logs as files (Flight routes `logs-*` to `LandLogWindow` too, so a shared `ALLOWED_ARTIFACTS` can't 500 on the Flight path). `--quick logs` itself ships over HTTP.

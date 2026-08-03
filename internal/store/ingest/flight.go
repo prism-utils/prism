@@ -155,6 +155,18 @@ func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
 	if err != nil {
 		return status.Errorf(codes.Internal, "ingest: parquet: %v", err)
 	}
+	// Logs carry a variable per-format schema, so they are landed as files (the
+	// same path HTTP ingest uses) rather than inserted into the metrics catalog.
+	if isLogArtifact(artifact) {
+		n, err := s.eng.LandLogWindow(tenant, artifact, bytes.NewReader(parquetBytes))
+		if err != nil {
+			return status.Errorf(codes.Internal, "ingest: land log: %v", err)
+		}
+		if n > 0 {
+			s.log.Info("flight landed log window", "ns", tenant, "artifact", artifact, "bytes", n)
+		}
+		return stream.Send(&flight.PutResult{})
+	}
 	n, err := s.eng.Ingest(tenant, bytes.NewReader(parquetBytes))
 	if err != nil {
 		return status.Errorf(codes.Internal, "ingest: land: %v", err)

@@ -97,6 +97,36 @@ func metricsIPCBlock(t *testing.T, mem memory.Allocator) []byte {
 	return buf.Bytes()
 }
 
+func logsSummaryIPCBlock(t *testing.T, mem memory.Allocator) []byte {
+	t.Helper()
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "template", Type: arrow.BinaryTypes.String},
+		{Name: "count", Type: arrow.PrimitiveTypes.Int64},
+	}, nil)
+	tb := array.NewStringBuilder(mem)
+	cb := array.NewInt64Builder(mem)
+	defer tb.Release()
+	defer cb.Release()
+	tb.Append("user <*> logged in")
+	cb.Append(3)
+	tc := tb.NewArray()
+	cc := cb.NewArray()
+	defer tc.Release()
+	defer cc.Release()
+	rec := array.NewRecordBatch(schema, []arrow.Array{tc, cc}, 1)
+	defer rec.Release()
+
+	var buf bytes.Buffer
+	w := ipc.NewWriter(&buf, ipc.WithSchema(schema), ipc.WithAllocator(mem))
+	if err := w.Write(rec); err != nil {
+		t.Fatalf("ipc write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("ipc close: %v", err)
+	}
+	return buf.Bytes()
+}
+
 func doPutWindow(t *testing.T, addr, token, tenant, artifact string, ipcBytes []byte) error {
 	t.Helper()
 	var dialOpts []grpc.DialOption
@@ -173,6 +203,28 @@ func TestFlightDoPutRoundTrip(t *testing.T) {
 	}
 	if c, _ := eng.HotRowCount(testTenant); c != 1 {
 		t.Fatalf("hot rows = %d, want 1", c)
+	}
+}
+
+// TestFlightDoPutLogsLandsWithoutHotRows proves the Flight path routes logs
+// artifacts to the land-as-file path instead of the metrics hot catalog, so a
+// shared ALLOWED_ARTIFACTS list cannot make Flight fail on logs.
+func TestFlightDoPutLogsLandsWithoutHotRows(t *testing.T) {
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer mem.AssertSize(t, 0)
+
+	cfg := ingest.Config{
+		AllowedArtifacts: []string{"metrics-raw", "logs-summary"},
+		MaxBodyBytes:     1 << 20,
+		AuthMode:         ingest.AuthNone,
+	}
+	addr, eng := startFlightReceiver(t, &cfg)
+	ipcBytes := logsSummaryIPCBlock(t, mem)
+	if err := doPutWindow(t, addr, "", testTenant, "logs-summary", ipcBytes); err != nil {
+		t.Fatalf("DoPut logs-summary: %v", err)
+	}
+	if c, _ := eng.HotRowCount(testTenant); c != 0 {
+		t.Fatalf("hot rows = %d, want 0 (logs land as files, not metrics)", c)
 	}
 }
 

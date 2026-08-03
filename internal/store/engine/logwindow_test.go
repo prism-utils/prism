@@ -55,10 +55,23 @@ func TestLandLogWindowWritesFile(t *testing.T) {
 
 func TestLandLogWindowRejectsNonLogArtifact(t *testing.T) {
 	_, e := newLogEngine(t)
-	for _, a := range []string{"metrics-raw", "logs-../evil", "logs bad"} {
+	for _, a := range []string{"metrics-raw", "logs-../evil", "logs bad", "logs-a/b", "logs-a.b"} {
 		if _, err := e.LandLogWindow("team-a", a, strings.NewReader("x")); err == nil {
 			t.Errorf("artifact %q: want error, got nil", a)
 		}
+	}
+}
+
+// Hyphenated log artifacts pass the shared artifact regex and must land (not
+// 500) — the engine guard admits the same safe charset the ingest router uses.
+func TestLandLogWindowAcceptsHyphenatedArtifact(t *testing.T) {
+	dir, e := newLogEngine(t)
+	if _, err := e.LandLogWindow("team-a", "logs-app-json", strings.NewReader("bytes")); err != nil {
+		t.Fatalf("hyphenated log artifact: %v", err)
+	}
+	glob := filepath.Join(dir, "team-a", "logs", "logs-app-json", "*.parquet")
+	if m, _ := filepath.Glob(glob); len(m) != 1 {
+		t.Fatalf("want 1 landed file, got %v", m)
 	}
 }
 

@@ -108,9 +108,10 @@ func (e *Engine) Ingest(tenant string, body io.Reader) (int64, error) {
 }
 
 // logArtifactPattern guards the artifact segment used in a landing path so a
-// crafted artifact name cannot escape <tenant>/logs/. Log artifacts are the
-// contract-v1 logs-* family (logs-raw, logs-template, logs-summary).
-var logArtifactPattern = regexp.MustCompile(`^logs-[a-z0-9]+$`)
+// crafted artifact name cannot escape <tenant>/logs/. It admits the whole
+// logs-* family (logs-raw, logs-template, logs-summary, and hyphenated variants)
+// while rejecting path separators, dots, and other unsafe characters.
+var logArtifactPattern = regexp.MustCompile(`^logs-[a-z0-9-]+$`)
 
 // LandLogWindow persists a logs-* artifact window as an immutable parquet file
 // under <tenant>/logs/<artifact>/, bypassing the metrics hot catalog. Logs carry

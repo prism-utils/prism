@@ -242,8 +242,8 @@ validation chain and land via `engine.Ingest`.
 **Logs artifacts** (`logs-raw`/`logs-template`/`logs-summary`, opt-in via
 `ALLOWED_ARTIFACTS`) skip the metrics hot catalog: each window is landed as an
 immutable file under `<tenant>/logs/<artifact>/` and read back through the
-`logs` relation on `/sql`. Metrics ingest is unchanged. (HTTP path; Flight
-ingest remains metrics-only.)
+`logs` relation on `/sql`. Metrics ingest is unchanged. Both HTTP and Flight
+ingest land logs the same way.
 
 ### Arrow Flight
 
