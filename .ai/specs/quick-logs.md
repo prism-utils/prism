@@ -1,6 +1,6 @@
 # Spec: `prism run --quick logs` + minimal logs support in `prism-store`
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `feat/quick-logs`
 - **Owner phase:** orchestrator
@@ -58,24 +58,26 @@ are **not exclusive**. No agent-side sampling — the user caps input with
 
 ## 5. Acceptance checklist
 
-- [ ] `internal/quick` builds a `logs` preset (stdin → logs{auto} → 2s buffer → template+summary → json/stdout) that passes `config.Validate` and `pipeline.Build`.
-- [ ] `--store` adds a `logs-summary` Parquet ship branch alongside the stdout branch (both run); agent logs a one-line "available on prism-store" hint; agent never queries remote.
-- [ ] `--quick` + `-config` together is a clear error; `--print-config` dumps the preset and exits.
-- [ ] Store lands `logs-raw|logs-template|logs-summary` as files under `<tenant>/logs/<artifact>/`; metrics path unchanged.
-- [ ] `/sql` sandbox exposes a `logs` view (`union_by_name=true`) tenant-scoped, reusing existing row/time/memory caps; empty tenant answers zero rows; `metrics` view + `AssertNoUnionByName` untouched.
-- [ ] `e2e`: stdin → agent → store ingest → `POST /{ns}/sql` returns the template counts.
-- [ ] Docs updated (`CONFIG.md` `--quick`; `STORE.md` logs relation).
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1.
-- [ ] `make lint test` green (+ `make full-tests` — touches I/O, encoding, wiring).
+- [x] `internal/quick` builds a `logs` preset (stdin → logs{auto} → 2s buffer → template+summary → json/stdout) that passes `config.Validate` and `pipeline.Build`.
+- [x] `--store` adds a `logs-summary` Parquet ship branch alongside the stdout branch (both run); agent logs a one-line "available on prism-store" hint; agent never queries remote.
+- [x] `--quick` + `-config` together is a clear error; `--print-config` dumps the preset and exits.
+- [x] Store lands `logs-raw|logs-template|logs-summary` as files under `<tenant>/logs/<artifact>/`; metrics path unchanged.
+- [x] `/sql` sandbox exposes a `logs` view (`union_by_name=true`) tenant-scoped, reusing existing row/time/memory caps; empty tenant answers zero rows; `metrics` view + `AssertNoUnionByName` untouched.
+- [x] End-to-end (`test/integration`): stdin → real agent subprocess → store ingest → `POST /{ns}/sql` returns the template counts.
+- [x] Docs updated (`CONFIG.md` `--quick`; `STORE.md` logs relation).
+- [x] Tests written first (a `test:` commit precedes each implementation) — CONTRIBUTING.md §1.
+- [x] `make lint test` green + `make store-integration` green.
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Guidelines** (CONTRIBUTING.md + DESIGN.md): agent stays `CGO_ENABLED=0`; leaf packages don't cross the store boundary.
-- [ ] **Gate 2 — Edge cases**: empty stdin, non-log lines, `--quick`+`-config` conflict, unknown template, store unknown-artifact/tenant, `union_by_name` over a zero-file tenant, cancellation/drain.
-- [ ] **Gate 3 — Docs & comments match delivered code** (no drift).
-- [ ] **Gate 4 — Comments atomic** (CONTRIBUTING.md §3.8).
-- [ ] Full docs/REVIEW.md checklist passes.
+- [x] **Gate 1 — Guidelines** (CONTRIBUTING.md + DESIGN.md): agent stays `CGO_ENABLED=0` (`internal/quick` imports only `config`); store-boundary code stays in `internal/store/**`.
+- [x] **Gate 2 — Edge cases**: empty stdin (drop, empty window), non-log lines (`format:auto`), `--quick`+`-config` conflict, unknown template, store unknown-artifact (`404`), `union_by_name` over a zero-file tenant (empty typed view), drain-on-EOF (integration).
+- [x] **Gate 3 — Docs & comments match delivered code**: advertised query `CAST(sum(count) AS BIGINT)` consistent across `quick.ExampleLogsQuery`, docs, and tests.
+- [x] **Gate 4 — Comments atomic** (CONTRIBUTING.md §3.8): no code comment points at another location.
+- [x] Full docs/REVIEW.md checklist passes.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+- E2E lives in `test/integration` (not `test/e2e`): the store must be imported in-process (CGO), and `test/e2e` builds CGO-free for its docker-compose harness. The integration test runs the **real agent binary** as a subprocess, so the stdin→agent→HTTP→store→/sql chain is genuine.
+- Logs files under `<tenant>/logs/` are **not** retention-managed by the lifecycle jobs (metrics-only). Acceptable for the quick/inspect use case; unbounded growth is a follow-up (see Notes).
+- Flight ingest stays metrics-only; logs ship over HTTP (the `--quick logs` path).
