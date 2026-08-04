@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,6 +20,11 @@ const lokiRouteTenant = "user-6f3a9c2b-apps"
 func lokiTestConfig(t *testing.T, enabled bool) (*serverConfig, *engine.Engine, *slog.Logger) {
 	t.Helper()
 	dir := t.TempDir()
+	// A provisioned tenant root makes a mounted Loki route answer 200, so a 404
+	// unambiguously means "route not registered".
+	if err := os.MkdirAll(filepath.Join(dir, lokiRouteTenant), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	eng := engine.New(engine.Config{DataDir: dir, HotWindow: time.Hour}, time.Now)
 	t.Cleanup(func() { _ = eng.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

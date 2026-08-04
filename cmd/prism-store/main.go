@@ -14,6 +14,10 @@
 // Arbitrary SQL API: POST /{ns}/sql (RBAC action query, or ADMIN_TOKEN when RBAC
 // off). Disable with SQL_API_ENABLED=false. Limits: SQL_API_MAX_ROWS (default
 // 100000), SQL_API_TIMEOUT_SECONDS (default 30). Reuses DUCKDB_MEMORY_LIMIT.
+// Loki logs API: GET|POST /{ns}/loki/api/v1/{query_range,labels,label/{name}/values}
+// (RBAC action query). Serves the file-backed logs relation with a LogQL subset
+// (stream selectors + line filters). Disable with LOKI_API_ENABLED=false. Reuses
+// SQL_API_MAX_ROWS / SQL_API_TIMEOUT_SECONDS / DUCKDB_* caps.
 // Background jobs: set RUN_JOBS=false to skip all lifecycle maintenance
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
@@ -118,6 +122,7 @@ type serverConfig struct {
 	sqlAPITimeout      time.Duration
 	sqlAPIMaxBodyBytes int64
 	promqlAPIEnabled   bool
+	lokiAPIEnabled     bool
 	runJobs            bool
 	mode               string
 	clientTenants      string
@@ -159,6 +164,7 @@ func loadConfig() serverConfig {
 		sqlAPITimeout:      time.Duration(envInt("SQL_API_TIMEOUT_SECONDS", 30)) * time.Second,
 		sqlAPIMaxBodyBytes: envInt64("SQL_API_MAX_BODY_BYTES", 1<<20),
 		promqlAPIEnabled:   envBool("PROMQL_API_ENABLED", true),
+		lokiAPIEnabled:     envBool("LOKI_API_ENABLED", true),
 		runJobs:            envBool("RUN_JOBS", true),
 		mode:               envOr("MODE", "standalone"),
 		clientTenants:      os.Getenv("CLIENT_TENANTS"),
@@ -370,6 +376,29 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			}
 			wrapped := protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, ph)
 			for _, pattern := range query.PromQLRoutePatterns(cfg.routePrefix) {
+				mux.Handle(pattern, wrapped)
+			}
+		}
+
+		if cfg.lokiAPIEnabled {
+			lokiCfg := &query.LokiConfig{
+				DataDir:     cfg.dataDir,
+				RoutePrefix: cfg.routePrefix,
+				MaxEntries:  cfg.sqlAPIMaxRows,
+				Timeout:     cfg.sqlAPITimeout,
+				MemoryLimit: cfg.duckdbMemoryLimit,
+				Threads:     cfg.duckdbThreads,
+			}
+			lh := query.LokiHandler(lokiCfg, logger)
+			// Logs reads scan Parquet like /sql, so they share the same in-flight
+			// limiter and the query RBAC action; a cluster client also guards
+			// non-owned tenants before touching the data dir.
+			lh = queue.Middleware(sqlLimiter, lh)
+			if ownedTenants != nil {
+				lh = cluster.OwnedTenantGuard(ownedTenants, lh)
+			}
+			wrapped := protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, lh)
+			for _, pattern := range query.LokiRoutePatterns(cfg.routePrefix) {
 				mux.Handle(pattern, wrapped)
 			}
 		}
