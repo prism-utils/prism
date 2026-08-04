@@ -1,0 +1,8 @@
+user 42 logged in from 10.0.0.1
+user 99 logged in from 10.0.0.9
+disk full on /dev/sda1
+user 7 logged in from 10.0.0.3
+cache miss for key session:8812
+user 13 logged in from 10.0.0.7
+disk full on /dev/sdb2
+cache miss for key session:9001

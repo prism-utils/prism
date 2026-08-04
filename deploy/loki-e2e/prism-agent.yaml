@@ -1,0 +1,52 @@
+# prism agent pipeline for the logs end-to-end test: tail a log file, structure
+# it with the logs parser, and ship two artifacts to the writer store — raw lines
+# (message + format) and mined template counts. The reader store then answers the
+# Loki-compatible API over the same landed files.
+pipelines:
+  - name: applogs
+    input:
+      type: file
+      options:
+        path: "/var/log/app/app.log"
+        mode: "tail"
+    parser:
+      type: logs
+      options:
+        format: "auto"
+    buffer:
+      max_age: "2s"
+      max_rows: 10000
+      max_bytes: "8MiB"
+    on_error: "drop"
+    branches:
+      - name: raw
+        encoder:
+          type: parquet
+          options:
+            compression: "zstd"
+        output:
+          type: http
+          options:
+            url: "http://prism-store-writer:9090/lokie2e/ingest/logs-raw"
+            method: "POST"
+            content_type: "application/octet-stream"
+      - name: summary
+        processors:
+          - type: template
+            options:
+              source: "message"
+              target: "template"
+          - type: summary
+            options:
+              group_by: ["template"]
+              aggregates: ["count"]
+        encoder:
+          type: parquet
+          options:
+            compression: "zstd"
+        output:
+          type: http
+          options:
+            url: "http://prism-store-writer:9090/lokie2e/ingest/logs-summary"
+            method: "POST"
+            content_type: "application/octet-stream"

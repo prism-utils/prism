@@ -235,6 +235,54 @@ func WriteLogsSummaryFile(t testing.TB, path string, rows []LogSummaryRow) {
 	}
 }
 
+// LogRow is one logs-raw row (message → line text, format → discovered shape),
+// contract v1 §3.4.
+type LogRow struct {
+	Message string
+	Format  string
+}
+
+// WriteLogsRawFile writes rows to path as a logs-raw parquet (columns message
+// VARCHAR, format VARCHAR). Empty rows is a no-op.
+func WriteLogsRawFile(t testing.TB, path string, rows []LogRow) {
+	t.Helper()
+	if len(rows) == 0 {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatalf("connector: %v", err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+
+	parts := make([]string, len(rows))
+	for i, r := range rows {
+		parts[i] = fmt.Sprintf("('%s', '%s')", escape(r.Message), escape(r.Format))
+	}
+	values := parts[0]
+	for _, p := range parts[1:] {
+		values += ", " + p
+	}
+	tmp := path + ".tmp"
+	//nolint:gosec // G201: test fixture SQL with controlled literals only.
+	q := fmt.Sprintf(`
+		COPY (
+			SELECT * FROM (VALUES %s) AS t(message, format)
+		) TO '%s' (FORMAT parquet)
+	`, values, filepath.ToSlash(tmp))
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("copy logs raw: %v", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+}
+
 // WriteWindow returns a reader-sized parquet blob in dir for ingest tests.
 func WriteWindow(t testing.TB, dir, name string, rows []Row) string {
 	t.Helper()
