@@ -1,6 +1,6 @@
 # Spec: Loki-compatible logs API + remote-reader parity (logging-migration)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/loki-compat-logs`
 - **Owner phase:** orchestrator → developer
@@ -105,19 +105,19 @@ Update docs; ship well-tested (unit + Docker e2e); release follows merge.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] Loki handlers registered; JSON envelopes match Loki success/error shapes
+- [x] Loki handlers registered; JSON envelopes match Loki success/error shapes
       (`status`, `data.resultType=streams`, `result[].stream`, `values: [[ts_ns, line], …]`).
-- [ ] `query_range` / `labels` / `label/{name}/values` implemented with LogQL subset;
+- [x] `query_range` / `labels` / `label/{name}/values` implemented with LogQL subset;
       unsupported LogQL → 400; empty tenant → empty success (not 500).
-- [ ] RBAC `query` + tenant isolation + cross-tenant denied (mirror PromQL tests).
-- [ ] `LOKI_API_ENABLED` (default true) + CONFIG.md / STORE.md / TESTING.md updated;
+- [x] RBAC `query` + tenant isolation + cross-tenant denied (mirror PromQL tests).
+- [x] `LOKI_API_ENABLED` (default true) + CONFIG.md / STORE.md / TESTING.md updated;
       reader/writer + `QUERY_HOT_ONLY` behavior for logs documented.
-- [ ] Unit tests (handlers, LogQL parse, mtime ts, limit/direction, empty tenant).
-- [ ] Docker e2e: `--quick logs` (or land fixtures) → writer ingest → **reader**
+- [x] Unit tests (handlers, LogQL parse, mtime ts, limit/direction, empty tenant).
+- [x] Docker e2e: `--quick logs` (or land fixtures) → writer ingest → **reader**
       Loki `query_range` + `/sql` FROM logs; `make loki-e2e` green.
-- [ ] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
-- [ ] `make lint test` green locally; loki-e2e green.
-- [ ] Cluster route patterns include Loki paths (unit or wiring test).
+- [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1.
+- [x] `make lint test` green locally; loki-e2e green.
+- [x] Cluster route patterns include Loki paths (unit or wiring test).
 
 ## 6. Mandatory review gates  (reviewer owns)
 
@@ -130,3 +130,33 @@ Update docs; ship well-tested (unit + Docker e2e); release follows merge.
 ## 7. Reviewer notes
 
 _(empty until first review)_
+
+## 8. Developer notes (delivery)
+
+- **Surface:** `internal/store/query/{loki.go,loki_handler.go,loki_sql.go,logql.go}`;
+  routes `GET|POST <prefix>/{ns}/loki/api/v1/{query_range,labels,label/{name}/values}`
+  (GET+POST on all three, per §2). Wired in `cmd/prism-store/main.go` behind
+  `LOKI_API_ENABLED` (default true), RBAC `query`, the shared `/sql` in-flight
+  queue, and `OwnedTenantGuard`; `cluster.NewServeMux` forwards every pattern.
+- **Sandbox:** logs are file-backed, so the handler needs no engine and no hot
+  snapshot. It opens the same hardened `:memory:` sandbox `/sql` uses
+  (`allowed_directories`, extension hardening, `lock_configuration`) and creates a
+  logs relation whose rows carry `__prism_ts_ns` = the landing file's mtime,
+  unified across windows with `UNION ALL BY NAME`.
+- **Caps:** no new limit envs — `SQL_API_MAX_ROWS` caps entries per query
+  (`limit` defaults to Loki's 100), `SQL_API_TIMEOUT_SECONDS` bounds execution,
+  `DUCKDB_MEMORY_LIMIT` / `DUCKDB_THREADS` govern the sandbox.
+- **Labels:** text columns + synthetic `job="prism"`; `count` as a label string;
+  `message` is the line (never a label) and falls back to `template`; NULL/empty
+  values and illegal label names are omitted.
+- **Tests:** `logql_test.go` (subset parse, unsupported vs malformed, matcher
+  semantics), `loki_internal_test.go` (config `Validate`, defaults, env, route
+  patterns, time parsing), `loki_api_test.go` (streams/mtime/limit/direction/time
+  range/line filters/summary window/mixed schemas/empty tenant/404/isolation/
+  labels/values/POST), `loki_rbac_test.go` (reader/writer/cross-tenant/JWT +
+  owned-tenant guard), `cluster/router_loki_test.go`,
+  `cmd/prism-store/loki_routing_test.go`, `test/e2e/loki_e2e_test.go`
+  (`make loki-e2e`: agent → writer → read-only reader).
+- **Verification:** `make lint test` green; `make loki-e2e` green (reader served
+  11 rows via `/sql FROM logs` and 4 streams / 11 entries via the Loki API from
+  the writer's read-only mount).
