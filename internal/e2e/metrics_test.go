@@ -88,7 +88,7 @@ func TestE2E_MetricsToParquet(t *testing.T) {
 	}
 
 	newest := newestFile(t, dataDir, ".parquet")
-	assertParquetRows(t, newest, 2)
+	assertParquetRows(t, newest, 3) // exposition samples + synthetic scrape `up`
 	assertRangeName(t, newest, "metrics", "raw")
 }
 
