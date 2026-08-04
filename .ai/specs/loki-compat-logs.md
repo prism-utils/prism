@@ -1,6 +1,6 @@
 # Spec: Loki-compatible logs API + remote-reader parity (logging-migration)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/loki-compat-logs`
 - **Owner phase:** orchestrator → developer
@@ -121,15 +121,67 @@ Update docs; ship well-tested (unit + Docker e2e); release follows merge.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: ALL_OK** (reviewed at `45fea29`).
+
+- **Gate 1 — guidelines.** History is test-first: `4525c96 test(...)` lands the
+  whole test surface (unit, RBAC, cluster, wiring, e2e + compose fixtures) before
+  `f975dfa feat(...)`, docs follow in `c12ce29`. Conventional Commits with correct
+  scopes. Scope is one slice — a read-only query surface — with no ingest, agent,
+  or output-contract change and no new dependency (the parser is stdlib scanning +
+  `regexp`). No panics or `log.Fatal` in library code; errors wrap with `%w`; the
+  logger is nil-safe; `slog` only; `context` is plumbed as the first argument and
+  bounds every query. Deps point inward: the query package gains no sibling import,
+  and the coordinator reuses the exported pattern list rather than restating routes.
+- **Gate 2 — edge cases.** Beyond the happy path: `Validate()` rejection with
+  path-named errors and defaults round-trip; env parsing including empty and
+  garbage; unsupported LogQL (metric queries, parsers, label filters, formatters,
+  range vectors) distinguished from malformed input (unterminated selector/value,
+  bad regex, trailing comma, unquoted value); absent-label `=`/`!=` semantics; empty
+  and `{}` match-all; line-filter chaining including a contradiction that yields
+  nothing; mtime timestamps; direction and limit, with the server cap beating a
+  larger client limit; explicit and defaulted time windows; mixed raw/summary
+  schemas; summary-only windows; empty tenant answering `200` with `"result":[]`;
+  unknown and malformed tenants `404`; cross-tenant isolation both without auth and
+  under RBAC (reader allowed, writer `403`, missing/invalid JWT `401`, owned-tenant
+  guard); `GET` and `POST` on every route. Verified `make lint test` green, and
+  re-ran `go test -count=1 -race` on `internal/store/query`, `internal/store/cluster`,
+  and `cmd/prism-store` — all green. `make loki-e2e` accepted as green per delivery
+  notes; the compose topology and assertions match what §2 requires of it.
+- **Gate 3 — docs match code.** STORE.md's parameter, status-code, and label tables
+  match the handler exactly (`start` inclusive / `end` exclusive, `limit` default 100
+  capped by `SQL_API_MAX_ROWS`, `direction` default backward, `400`/`404`/`503`/`500`
+  mapping, `message` never a label, `count` as a label string, synthetic
+  `job="prism"`). CONFIG.md documents `LOKI_API_ENABLED` and the routes, TESTING.md
+  documents `make loki-e2e`, and DESIGN.md carries the ADR next to the PromQL one
+  including the `QUERY_HOT_ONLY` consequence. The reader/writer claim in STORE.md is
+  the behavior the e2e proves.
+- **Gate 4 — atomic comments.** No comment names another file, package, type, or
+  function. Rationale that needs an external anchor cites a durable doc by name
+  (`OUTPUT_CONTRACT.md` §3.2) or an upstream URL, which §3.8 permits. The two
+  `//nolint` directives carry reasons.
+- **Issue intent.** prism#73 is satisfied (`query_range` + `labels` +
+  `label/{name}/values`, tenant-scoped under RBAC `query`, shared `/sql` sandbox
+  caps, empty tenant → empty result, STORE.md section, e2e). prism#75 is satisfied
+  by the reader leg: the read-only, `RUN_JOBS=false`, `QUERY_HOT_ONLY=true` replica
+  answers both `/sql FROM logs` and the Loki API over the writer's landed files.
+
+Non-blocking observations for a future cut, none of which change this verdict:
+
+- If a tenant's logs ever carry a literal `job` column, a `{job=…}` matcher is
+  decided against the synthetic value while the emitted stream shows the column's
+  value. Today's log schemas have no `job` column, so nothing is wrong in practice.
+- `label/job/values` answers `["prism"]` without consulting the selector, so it
+  stays non-empty even for a window that matches nothing.
+- The `make loki-e2e` row in TESTING.md is one space out of alignment with its
+  neighbours in that command list.
 
 ## 8. Developer notes (delivery)
 
