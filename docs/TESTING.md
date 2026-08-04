@@ -78,6 +78,7 @@ make full-tests     # test + lint + integration + e2e (spins docker-compose)
 make integration    # just the integration layer (compose up -> test -> down)
 make e2e            # just the e2e layer
 make promql-e2e     # PromQL full-stack: real node-exporter -> agent -> store -> PromQL (docker)
+make loki-e2e      # Logs full-stack: agent -> writer store -> read-only reader -> Loki API (docker)
 make fuzz           # longer fuzz soak (FUZZTIME overridable)
 make golden-update  # regenerate golden files (review the diff!)
 make clean
@@ -91,6 +92,15 @@ make clean
   `deploy/docker-compose.promql-e2e.yml` scrapes a real `node-exporter` with the
   prism agent, ships to `prism-store`, and asserts PromQL over the result. It
   builds both images from source, so it is slower and gated on Docker.
+- `make loki-e2e` is the logs counterpart (also standalone, Docker-gated):
+  `deploy/docker-compose.loki-e2e.yml` has the prism agent tail a log fixture into
+  a **writer** store (`RUN_JOBS=true`) and a second **reader** store
+  (`RUN_JOBS=false`, `QUERY_HOT_ONLY=true`, the writer's data dir mounted
+  read-only) answer both `/sql FROM logs` and the Loki API — `query_range` with a
+  line filter, `labels`, `label/job/values` — over the same landed files. It also
+  asserts metric LogQL is rejected with `400`. Logs are file-backed, so this is
+  the acceptance test for reader/writer parity. `LOKI_API_ENABLED` (default
+  `true`) gates the routes; see [`CONFIG.md`](CONFIG.md) §14.
 - `test/e2e/alert_e2e_test.go` drives `prism-alert` end to end (no Docker): the
   canonical `promql` engine evaluates a real `up == 1` expression over an
   in-memory `storage.Queryable` serving the store's `/{ns}/api/v1/query` shape,

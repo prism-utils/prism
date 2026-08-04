@@ -31,6 +31,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **Structured query** | `GET /{ns}/query?start=&end=&step=` — union over hot + tiers + rollups; optional hot-only (`QUERY_HOT_ONLY`). |
 | **Arbitrary SQL** | `POST /{ns}/sql` — read-only SQL in a per-request sandbox; JSON (default) or Arrow IPC stream on the **same route** via `Accept`. |
 | **PromQL API** | `GET`/`POST /{ns}/api/v1/{query,query_range,series,labels,label/<name>/values}` — Prometheus-compatible read API over the tenant metrics view (`PROMQL_API_ENABLED`, default on). Metrics-only. |
+| **Loki logs API** | `GET`/`POST /{ns}/loki/api/v1/{query_range,labels,label/<name>/values}` — Loki-compatible read API over the tenant `logs` relation, LogQL subset (`LOKI_API_ENABLED`, default on). Logs-only. |
 | **SQL queue** | Optional in-flight limiter (`SQL_API_QUEUE_ENABLED`, default off) with `429` + `Retry-After` backpressure on data nodes. |
 | **RBAC** | Optional JWT/OIDC + deny-by-default YAML policy (`AUTHZ_POLICY_FILE`); fixed roles `reader` / `writer` / `admin`. |
 | **Cluster modes** | `MODE=standalone` (all-in-one), `client` (owned tenants + local engine), `cluster` (stateless coordinator proxy). |
@@ -48,7 +49,7 @@ Bootstrap **`MODE`** selects one of three roles (default **`standalone`**):
 |---|---|---|---|
 | `standalone` | Self-contained node | Engine + ingest + jobs on `DATA_DIR` | Local engine |
 | `client` | Data-holding leaf fronted by a coordinator | Same as standalone | Local engine, but only for tenants listed in `CLIENT_TENANTS`; other tenants → `404` before the engine runs |
-| `cluster` | Stateless coordinator/router | **None** — no engine, ingest, or background jobs | Forwards `GET` and `POST` `<prefix>/{ns}/query`, `{ns}/sql`, and `{ns}/api/v1/*` to the owning client URL from `CLUSTER_CLIENTS` |
+| `cluster` | Stateless coordinator/router | **None** — no engine, ingest, or background jobs | Forwards `GET` and `POST` `<prefix>/{ns}/query`, `{ns}/sql`, `{ns}/api/v1/*`, and `{ns}/loki/api/v1/*` to the owning client URL from `CLUSTER_CLIENTS` |
 
 **Isolation guarantee:** identifier == tenant/namespace (`ns`). The coordinator routes
 each query to **exactly one** owning client; unknown/unmapped tenants get `404`
@@ -567,7 +568,11 @@ The **`logs`** relation unions the tenant's landed `logs-*/*.parquet` windows wi
 `union_by_name=true` (variable per-format schemas; missing columns are NULL). It
 is present in every sandbox (empty — zero rows — when a tenant has no logs), is
 tenant-scoped like `metrics`, and is unaffected by `QUERY_HOT_ONLY` (logs have no
-hot/tier split). Typical use — total count per mined template:
+hot/tier split). Logs are **file-backed**: they never enter the metrics hot
+catalog, so they need no hot snapshot export and a **reader** node
+(`RUN_JOBS=false`, read-only mount of the writer's `DATA_DIR`) serves them in
+full — the same rows the writer sees, as soon as a window lands. `make loki-e2e`
+runs exactly that topology. Typical use — total count per mined template:
 
 ```sql
 SELECT template, CAST(sum(count) AS BIGINT) AS count FROM logs GROUP BY template ORDER BY count DESC
@@ -717,6 +722,94 @@ forward every `/{ns}/api/v1/*` pattern to the owning client (authorize-before-pr
 client re-enforces via the owned-tenant guard). Registered when
 `PROMQL_API_ENABLED=true` (default); the API is metrics-only, so logs-only
 deployments simply never receive PromQL traffic.
+
+---
+
+## Loki logs API
+
+Loki-compatible **read** API over a single tenant's `logs` relation, so a stock
+Grafana **Loki datasource** can browse prism logs the same way the Prometheus
+datasource browses prism metrics. It queries the **same per-request DuckDB
+sandbox** `/sql` uses (identical tenant isolation and DuckDB caps) — there is no
+second storage engine, index, or ingest path.
+
+Reference: [Grafana Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/).
+
+### HTTP
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`/`POST` | `<prefix>/{ns}/loki/api/v1/query_range` | Log entries over `start`..`end`. |
+| `GET`/`POST` | `<prefix>/{ns}/loki/api/v1/labels` | Stream label names present in the window. |
+| `GET`/`POST` | `<prefix>/{ns}/loki/api/v1/label/{name}/values` | Values of one stream label. |
+
+Success bodies use the Loki envelope
+`{"status":"success","data":{"resultType":"streams","result":[{"stream":{…},"values":[["<ns>","<line>"],…]}],"stats":{}}}`;
+the label endpoints put a JSON string array in `data`. Errors are
+`{"status":"error","error":"…"}`.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `query` | match-all | LogQL subset (below). Empty/missing selector matches every stream. |
+| `start` / `end` | `end` = now, `start` = `end - 1h` | Nanosecond Unix epoch, fractional-second epoch, or RFC3339. `start` inclusive, `end` exclusive. On the label endpoints an omitted bound means "everything stored". |
+| `limit` | `100` | Entries per query; capped by `SQL_API_MAX_ROWS`. |
+| `direction` | `backward` | `backward` (newest first) or `forward`. |
+
+| Condition | Status |
+|---|---|
+| unsupported LogQL, malformed query/params, invalid label name, `end` before `start` | `400` (`status: error`) |
+| unknown/malformed tenant / missing tenant root | `404` (`unknown tenant`) |
+| query timeout / cancellation | `503` |
+| sandbox or scan failure | `500` (`query failed`) |
+
+A provisioned tenant with **no landed logs** answers `200` with an empty
+`result`, never a `500`.
+
+### LogQL subset
+
+Supported: a stream selector with `=`, `!=`, `=~`, `!~` label matchers (regex
+matchers are fully anchored, as in LogQL) followed by any number of line filters
+`|=`, `!=`, `|~`, `!~` (regex filters match a substring). Label predicates and
+line filters are pushed into DuckDB, and `limit` bounds the scan, so a request
+never materializes more entries than it returns.
+
+```logql
+{format="json"} |= "logged in" !~ "healthz"
+```
+
+**Not supported** (returns `400` with the reason): metric queries (`rate`,
+`count_over_time`, aggregations), parser stages (`| json`, `| logfmt`), label
+filters, and formatters. A clear rejection beats a half-answered query.
+
+### Streams, lines, and timestamps
+
+- **Timestamp:** logs Parquet carries **no event-time column** (see
+  [`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md) §3.2 — storage stamps ingest time),
+  so every row of a landed window is stamped with that **window file's mtime**
+  (its landing time) in nanoseconds. One `Stat` per file, no per-row cost.
+- **Line:** `message` when it has text, else the mined `template`, else empty.
+- **Labels:** the remaining **text** columns (`format`, `template`, extracted
+  fields) plus a synthetic **`job="prism"`** on every stream, so Grafana's default
+  `{job="prism"}` query works out of the box. `count` (from a summary window) is
+  exposed as a label string; other numeric columns are not labels. NULL/empty
+  values and names that are not legal label names are omitted.
+- **Grouping:** rows with an identical label set form one stream; streams are
+  returned in a deterministic order.
+
+### Auth, cluster, gating
+
+RBAC action **`query`** (same as structured query / `/sql`), and the optional
+`/sql` in-flight queue gates these reads too. Cluster coordinators forward every
+`/{ns}/loki/api/v1/*` pattern to the owning client (authorize-before-proxy;
+client re-enforces via the owned-tenant guard). Registered when
+`LOKI_API_ENABLED=true` (default); the API is logs-only, so metrics-only
+deployments simply never receive Loki traffic. Limits are shared with `/sql`:
+`SQL_API_MAX_ROWS` caps entries per query, `SQL_API_TIMEOUT_SECONDS` bounds
+execution, and `DUCKDB_MEMORY_LIMIT` / `DUCKDB_THREADS` govern the sandbox.
+
+Because logs are file-backed, this API is **unaffected by `QUERY_HOT_ONLY`** and
+needs no background jobs: a read-only reader replica serves it identically to the
+writer.
 
 ---
 

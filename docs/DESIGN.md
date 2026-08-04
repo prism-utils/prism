@@ -725,6 +725,39 @@ build is unchanged (verified in CI). Memory is bounded by `PROMQL_MAX_SAMPLES`
 sandbox hot-only union. Rollup projections are excluded (they drop labels).
 Native histograms and PromQL write/rules/remote_write are out of scope.
 
+### Loki-compatible logs read API (2026-08)
+
+**Decision:** serve the Grafana Loki HTTP read API
+(`/{ns}/loki/api/v1/{query_range,labels,label/<name>/values}`) over the existing
+file-backed `logs` relation, with a **LogQL subset** — stream selectors plus line
+filters — parsed in-repo and pushed into DuckDB `WHERE` clauses. It reuses the
+**same per-request `/sql` sandbox** (tenant isolation, `allowed_directories`,
+memory/thread caps), RBAC action `query`, the in-flight queue, and cluster
+routing; registration is gated by `LOKI_API_ENABLED` (default on) and is
+logs-only. Read-only and additive: no ingest, agent, or output-contract change.
+
+Chosen over a custom Grafana datasource plugin (no plugin signing/ship matrix)
+and over embedding Loki (no second storage engine or index). Metric LogQL
+(`rate`, `count_over_time`, aggregations) and pipeline stages (`| json`,
+`| logfmt`, label filters, formatters) return `400` rather than a partial
+answer. A logs Parquet has no event-time column, so a landed window's **file
+mtime** stamps its rows (one `Stat` per file), the `message` (or mined
+`template`) is the line, text columns plus a synthetic `job="prism"` are stream
+labels, and `count` is exposed as a label string.
+
+**References:** Grafana Loki HTTP API —
+https://grafana.com/docs/loki/latest/reference/loki-http-api/ ; LogQL log queries
+— https://grafana.com/docs/loki/latest/query/log_queries/ .
+
+**Consequences:** no new dependency (the subset parser is stdlib `regexp` +
+hand-rolled scanning) and the agent build is untouched. Bounds are the shared
+`/sql` caps: `SQL_API_MAX_ROWS` caps entries per query (`limit` defaults to
+Loki's 100), `SQL_API_TIMEOUT_SECONDS` bounds execution. Because logs never enter
+the metrics hot catalog, the API is unaffected by `QUERY_HOT_ONLY` and a
+`RUN_JOBS=false` reader on a read-only data mount serves it identically to the
+writer (proved by `make loki-e2e`). Tail/websocket, push, `series`, and volume
+endpoints are out of scope.
+
 ### prism-alert — PromQL ruler + Alertmanager webhook (2026-07)
 
 **Status:** accepted (2026-07, issue #68).
