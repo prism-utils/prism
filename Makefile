@@ -115,6 +115,11 @@ promql-e2e: ## PromQL end-to-end: real node-exporter -> agent -> store -> PromQL
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make promql-e2e"; exit 1; }
 	go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestPromQLEndToEnd -timeout 20m -v ./test/e2e/...
 
+.PHONY: loki-e2e
+loki-e2e: ## Logs end-to-end: agent -> writer store -> read-only reader -> Loki API (docker)
+	@command -v docker >/dev/null 2>&1 || { echo "docker required for make loki-e2e"; exit 1; }
+	go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestLokiReaderEndToEnd -timeout 20m -v ./test/e2e/...
+
 .PHONY: full-tests
 full-tests: lint test integration e2e ## The phase-completion gate: everything
 	@echo "full-tests: OK"

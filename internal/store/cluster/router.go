@@ -50,6 +50,10 @@ func NewServeMux(clients map[string]*url.URL, routePrefix string, wrapQuery func
 	for _, pattern := range query.PromQLRoutePatterns(routePrefix) {
 		mux.Handle(pattern, q)
 	}
+	// The Loki logs read API is likewise per-tenant and forwards unchanged.
+	for _, pattern := range query.LokiRoutePatterns(routePrefix) {
+		mux.Handle(pattern, q)
+	}
 	return mux
 }
 

@@ -765,6 +765,7 @@ see [`STORE.md`](STORE.md).
 | `HOT_WINDOW_SECONDS` | int (seconds) | _(unset)_ | Hot-window duration in seconds; overrides minutes when set to a positive integer. |
 | `INGEST_TOKEN` | string | _(empty)_ | Static bearer token when `AUTH_MODE=bearer` (RBAC off). |
 | `LISTEN_ADDR` | string | `:8080` | Primary HTTP bind (`/healthz`, `/readyz`, ingest or combined mux). |
+| `LOKI_API_ENABLED` | bool | `true` | When `false`, the Loki logs read API (`/{ns}/loki/api/v1/*`) is not registered. Logs-only; reuses the `/sql` sandbox, RBAC `query`, the `/sql` in-flight queue, `SQL_API_MAX_ROWS` (entries per query), and `SQL_API_TIMEOUT_SECONDS`. |
 | `MAX_BODY_BYTES` | int64 (bytes) | `268435456` | Maximum HTTP ingest body size (256 MiB). |
 | `MAX_OPEN_TENANTS` | int | `32` | LRU cap on concurrently open per-tenant DuckDB engines (`engine.duckdb`). |
 | `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments are never merge inputs. |
@@ -821,6 +822,7 @@ See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, adm
 | `POST` | `<ROUTE_PREFIX>/{tenant}/sql` | `200 application/json` (default) or `200 application/vnd.apache.arrow.stream` when `Accept` requests Arrow | arbitrary read-only SQL; see [`STORE.md`](STORE.md) § Arbitrary SQL API |
 | `GET`/`POST` | `<ROUTE_PREFIX>/{tenant}/api/v1/query`, `/query_range`, `/series`, `/labels` | `200 application/json` (Prometheus envelope) | PromQL read API; see [`STORE.md`](STORE.md) § PromQL API |
 | `GET` | `<ROUTE_PREFIX>/{tenant}/api/v1/label/{name}/values` | `200 application/json` | PromQL label values; see [`STORE.md`](STORE.md) § PromQL API |
+| `GET`/`POST` | `<ROUTE_PREFIX>/{tenant}/loki/api/v1/query_range`, `/labels`, `/label/{name}/values` | `200 application/json` (Loki envelope) | Loki logs read API; see [`STORE.md`](STORE.md) § Loki logs API |
 | `POST` | `<ROUTE_PREFIX>/{tenant}/ingest/{artifact}` | `204 No Content` | see validation chain below |
 | `POST` | `/admin/tenants/{tenant}/ensure` | `204 No Content` | admin plane; see [`STORE.md`](STORE.md) |
 | `GET` | `/stats?ns=` | `200 application/json` | admin plane; billing contract in [`STORE.md`](STORE.md) |
