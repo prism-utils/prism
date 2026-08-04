@@ -55,9 +55,13 @@ func TestScrape_EmitsExpositionLines(t *testing.T) {
 	if batch.Source != srv.URL {
 		t.Fatalf("source = %q, want %q", batch.Source, srv.URL)
 	}
-	// 4 non-blank lines (2 comments + 2 samples); parser drops comments later.
-	if len(batch.Records) != 4 {
-		t.Fatalf("records = %d, want 4", len(batch.Records))
+	// 4 comments/samples from exposition + 1 synthetic `up 1` from the scraper.
+	if len(batch.Records) != 5 {
+		t.Fatalf("records = %d, want 5", len(batch.Records))
+	}
+	last := string(batch.Records[len(batch.Records)-1])
+	if last != "up 1" {
+		t.Fatalf("last record = %q, want %q", last, "up 1")
 	}
 	cancel()
 	// Drain until the loop closes the channel so no goroutine lingers.
