@@ -102,7 +102,7 @@ func TestE2E_FlightToParquet(t *testing.T) {
 	}
 
 	newest := newestFile(t, ingest, ".parquet")
-	assertParquetRows(t, newest, 2)
+	assertParquetRows(t, newest, 3) // exposition samples + synthetic scrape `up`
 	assertRangeName(t, newest, "metrics", "wire")
 	if strings.Contains(filepath.Base(newest), "unknown") {
 		t.Fatalf("descriptor provenance lost: %s", filepath.Base(newest))

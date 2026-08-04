@@ -210,25 +210,34 @@ func (in *Input) loop(ctx context.Context) {
 func (in *Input) scrapeAll(ctx context.Context) {
 	for _, target := range in.targets {
 		body, err := in.scrape(ctx, target)
+		labels := in.targetLabels(target)
 		if err != nil {
 			if in.log != nil {
 				in.log.Warn("prometheus: scrape failed", "target", target, "err", err)
 			}
+			// Mirror Prometheus: always emit `up` so dashboards/alerts that
+			// key off target health still resolve when the endpoint is down.
+			in.emit(ctx, target, [][]byte{[]byte("up 0")}, labels)
 			continue
 		}
-		batch := data.RawBatch{
-			Source:  target,
-			Records: splitLines(body),
-			Labels:  in.targetLabels(target),
-		}
-		if len(batch.Records) == 0 {
-			continue
-		}
-		select {
-		case in.batches <- batch:
-		case <-ctx.Done():
-			return
-		}
+		records := splitLines(body)
+		// Append scrape-level `up=1` (Prometheus convention). Exporters rarely
+		// expose `up` themselves; when they do, the later sample wins in
+		// PromQL instant-vector collisions after label merge.
+		records = append(records, []byte("up 1"))
+		in.emit(ctx, target, records, labels)
+	}
+}
+
+func (in *Input) emit(ctx context.Context, target string, records [][]byte, labels map[string]string) {
+	batch := data.RawBatch{
+		Source:  target,
+		Records: records,
+		Labels:  labels,
+	}
+	select {
+	case in.batches <- batch:
+	case <-ctx.Done():
 	}
 }
 
