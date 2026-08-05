@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -456,58 +455,6 @@ const emptyLogsViewSQL = `SELECT ` +
 	`CAST(NULL AS VARCHAR) AS template, ` +
 	`CAST(NULL AS BIGINT) AS count ` +
 	`WHERE 1=0`
-
-// sandboxLogsUnionSQL builds the `logs` relation over the tenant's landed log
-// parquet. Logs have a variable, per-format schema (message/format always
-// present; template/count and extracted fields vary by artifact), so the files
-// are unified with union_by_name — missing columns are NULL-filled — rather than
-// the fixed positional union the metrics view uses.
-func sandboxLogsUnionSQL(tenantRoot string) (string, error) {
-	absRoot, err := filepath.Abs(tenantRoot)
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
-		absRoot = resolved
-	}
-	absRoot = filepath.Clean(absRoot)
-
-	paths, err := collectSafeLogParquetPaths(absRoot)
-	if err != nil {
-		return "", err
-	}
-	if len(paths) == 0 {
-		return emptyLogsViewSQL, nil
-	}
-	quoted := make([]string, len(paths))
-	for i, p := range paths {
-		quoted[i] = "'" + escapeSQLLiteral(layout.ToSlash(p)) + "'"
-	}
-	return fmt.Sprintf("SELECT * FROM read_parquet([%s], union_by_name=true)", strings.Join(quoted, ", ")), nil
-}
-
-// collectSafeLogParquetPaths returns landed log parquet files under
-// <tenantRoot>/logs/<artifact>/, each validated to be a regular file that
-// resolves within the tenant root (mirrors the metrics path's symlink guard).
-func collectSafeLogParquetPaths(absTenantRoot string) ([]string, error) {
-	glob := filepath.Join(absTenantRoot, "logs", "*", "*.parquet")
-	matches, err := filepath.Glob(glob)
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(matches)
-	var paths []string
-	for _, match := range matches {
-		ok, err := safeTenantParquetFile(absTenantRoot, match)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			paths = append(paths, match)
-		}
-	}
-	return paths, nil
-}
 
 func validateReadOnlySQL(raw string) error {
 	s := stripSQLComments(strings.TrimSpace(raw))

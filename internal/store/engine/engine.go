@@ -28,12 +28,14 @@ const (
 
 // Config holds per-tenant DuckDB engine settings.
 type Config struct {
-	DataDir        string
-	HotWindow      time.Duration
-	MaxOpenTenants int
-	RowGroupSize   int
-	Threads        int
-	MemoryLimit    string
+	DataDir             string
+	HotWindow           time.Duration
+	MaxOpenTenants      int
+	RowGroupSize        int
+	Threads             int
+	MemoryLimit         string
+	LogCoalesceMaxAge   time.Duration
+	LogCoalesceMaxBytes int64
 }
 
 // Engine manages lazy-open DuckDB databases per tenant namespace.
@@ -44,10 +46,13 @@ type Engine struct {
 	mu      sync.Mutex
 	lru     *tenantLRU
 	flushAt map[string]time.Time // next scheduled flush instant per tenant
+
+	coalesceMu sync.Mutex
+	coalesce   map[logCoalesceKey]*logCoalesceBuf
 }
 
 // New builds an Engine. now defaults to time.Now when nil.
-func New(cfg Config, now func() time.Time) *Engine {
+func New(cfg Config, now func() time.Time) *Engine { //nolint:gocritic // Config is an options bag copied once at construction.
 	if cfg.HotWindow <= 0 {
 		cfg.HotWindow = 10 * time.Minute
 	}
@@ -61,10 +66,11 @@ func New(cfg Config, now func() time.Time) *Engine {
 		now = time.Now
 	}
 	return &Engine{
-		cfg:     cfg,
-		clock:   now,
-		lru:     newTenantLRU(cfg.MaxOpenTenants),
-		flushAt: make(map[string]time.Time),
+		cfg:      cfg,
+		clock:    now,
+		lru:      newTenantLRU(cfg.MaxOpenTenants),
+		flushAt:  make(map[string]time.Time),
+		coalesce: make(map[logCoalesceKey]*logCoalesceBuf),
 	}
 }
 
@@ -148,10 +154,21 @@ func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, 
 		_ = os.Remove(tmpPath)
 		return 0, nil
 	}
+	bodyBytes, err := os.ReadFile(tmpPath)
+	_ = os.Remove(tmpPath)
+	if err != nil {
+		return 0, err
+	}
+	if e.coalesceEnabled() {
+		return e.landLogCoalesced(tenant, artifact, bodyBytes)
+	}
 	final := filepath.Join(dir, segmentName(e.clock()))
-	if err := os.Rename(tmpPath, final); err != nil {
-		_ = os.Remove(tmpPath)
+	//nolint:gosec // G703: dir is tenant/logs/<validated-artifact>; name is segmentName
+	if err := os.WriteFile(final, bodyBytes, 0o600); err != nil {
 		return 0, fmt.Errorf("engine: land log window: %w", err)
+	}
+	if err := e.finishLogLand(tenant, artifact, final); err != nil {
+		return n, err
 	}
 	return n, nil
 }
@@ -370,7 +387,7 @@ func segmentName(now time.Time) string {
 	return fmt.Sprintf("%d-%s.parquet", now.UnixNano(), hex.EncodeToString(buf[:]))
 }
 
-func openTenant(dataDir, tenant string, cfg Config) (*tenantEntry, error) {
+func openTenant(dataDir, tenant string, cfg Config) (*tenantEntry, error) { //nolint:gocritic // Config options bag.
 	dir := filepath.Join(dataDir, tenant)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err

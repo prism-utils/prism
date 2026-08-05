@@ -756,7 +756,8 @@ see [`STORE.md`](STORE.md).
 | `CLUSTER_CLIENTS` | string | _(empty)_ | Static `tenant=http://host:port,...` map for `cluster` mode; **required** when `MODE=cluster`. |
 | `DATA_DIR` | string | `/data` | Shared data root for all tenants. |
 | `DUCKDB_MEMORY_LIMIT` | string | _(empty)_ | DuckDB `memory_limit` for tenant engines, `/sql` sandboxes, merge, and rollup workers when set. Unset ⇒ DuckDB default (~80% RAM per instance). |
-| `DUCKDB_THREADS` | int | `0` (unset) | DuckDB `threads` when `> 0` on all governed instances. Unset ⇒ DuckDB default. |
+| `DUCKDB_THREADS` | int | `0` (unset) | DuckDB `threads` when `> 0` on **merge/lifecycle** (and query when `QUERY_DUCKDB_THREADS` unset). Unset ⇒ DuckDB default. Keep at `1` on small memory envelopes. |
+| `QUERY_DUCKDB_THREADS` | int | _(falls back to `DUCKDB_THREADS`)_ | DuckDB `threads` for `/sql`, Loki, and PromQL sandboxes only. When the logs open set exceeds 500 files, sandboxes fall back to 1 thread. |
 | `E2E_EXPOSE_QUERY_SQL` | string | _(empty — off)_ | When `1`, structured query JSON includes generated SQL (e2e/regression only). |
 | `FLIGHT_ADDR` | string | _(empty — off)_ | When set, binds an Arrow Flight `DoPut` receiver on this address. |
 | `FLUSH_TICK_SECONDS` | int (seconds) | `30` | Hot→L0 flush ticker interval. |
@@ -766,6 +767,10 @@ see [`STORE.md`](STORE.md).
 | `INGEST_TOKEN` | string | _(empty)_ | Static bearer token when `AUTH_MODE=bearer` (RBAC off). |
 | `LISTEN_ADDR` | string | `:8080` | Primary HTTP bind (`/healthz`, `/readyz`, ingest or combined mux). |
 | `LOKI_API_ENABLED` | bool | `true` | When `false`, the Loki logs read API (`/{ns}/loki/api/v1/*`) is not registered. Logs-only; reuses the `/sql` sandbox, RBAC `query`, the `/sql` in-flight queue, `SQL_API_MAX_ROWS` (entries per query), and `SQL_API_TIMEOUT_SECONDS`. |
+| `LOGS_RECENT_LOOKBACK_HOURS` | int (hours) | `0` (off) | When `> 0`, Loki label/browse requests with omitted `start` only open log files within now−lookback. Explicit `start`/`end` still reach cold history. |
+| `MAX_LOG_FILES` | int | `0` (off) | Per-artifact cap across landing + `logs/<artifact>/tiers/`. When exceeded, retention deletes oldest windows first. |
+| `LOG_COALESCE_MAX_AGE_SECONDS` | int (seconds) | `0` (off) | When `> 0` (or bytes set), buffer same-artifact lands and seal one Parquet after this age. |
+| `LOG_COALESCE_MAX_BYTES` | int (bytes) | `0` (off) | Seal coalesced log buffer when pending bytes reach this size. |
 | `MAX_BODY_BYTES` | int64 (bytes) | `268435456` | Maximum HTTP ingest body size (256 MiB). |
 | `MAX_OPEN_TENANTS` | int | `32` | LRU cap on concurrently open per-tenant DuckDB engines (`engine.duckdb`). |
 | `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments are never merge inputs. |
@@ -788,7 +793,7 @@ see [`STORE.md`](STORE.md).
 | `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. |
 | `ROUTE_PREFIX` | string | _(empty)_ | Optional path prefix for ingest/query/SQL routes (e.g. `/prism-proxy`). |
 | `RUN_JOBS` | bool | `true` | When `false`, skip background maintenance (snapshot, flush, merge, rollups, retention). Ingest/query still run. |
-| `SEGMENTS_PER_TIER` | int | `6` | Minimum live segments at a tier before merge compaction runs. |
+| `SEGMENTS_PER_TIER` | int | `6` | Minimum live segments at a tier before merge compaction runs (metrics tiers **and** per-artifact logs landing → `logs/<artifact>/tiers/L0`). |
 | `SQL_API_ENABLED` | bool | `true` | When `false`, `POST /{ns}/sql` is not registered. |
 | `SQL_API_MAX_BODY_BYTES` | int64 (bytes) | `1048576` | Maximum POST `/sql` JSON body (1 MiB). |
 | `SQL_API_MAX_INFLIGHT` | int | `4` | Max concurrent `/sql` executions when `SQL_API_QUEUE_ENABLED=true`. |

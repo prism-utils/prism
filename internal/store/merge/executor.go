@@ -56,6 +56,11 @@ func (x *Executor) Close() error {
 	return err
 }
 
+// DB exposes the executor DuckDB handle for tests and diagnostics.
+func (x *Executor) DB() *sql.DB {
+	return x.db
+}
+
 // ExecuteMerge merges sources into L{DestTier} with rows ordered by ts.
 func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, error) {
 	if len(action.Sources) == 0 {

@@ -2,17 +2,13 @@ package query
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/elk-utilities/prism/internal/store/layout"
+	"time"
 )
 
 // lokiTSColumn is the synthetic ingest-time column projected onto every log row.
 // The prism output contract forbids event timestamps inside a logs Parquet, so a
-// window's landing time — its file mtime — is the only honest time axis, and it
-// is broadcast to every row that file holds.
+// window's landing time is the only honest time axis, broadcast to every row
+// that file holds (from window id or mtime).
 const lokiTSColumn = "__prism_ts_ns"
 
 // lokiLineColumns are the columns that can carry the log line text, in the order
@@ -20,9 +16,8 @@ const lokiTSColumn = "__prism_ts_ns"
 var lokiLineColumns = []string{"message", "template"}
 
 // emptyLokiLogsViewSQL is the body of the logs relation when a tenant has no
-// landed log parquet: zero rows with the guaranteed logs columns plus the summary
-// columns and the ingest-time column, so a query against a logs-empty tenant
-// returns an empty result instead of failing.
+// landed log parquet: zero rows with the guaranteed logs columns plus the
+// ingest-time column, so a query against a logs-empty tenant returns empty.
 const emptyLokiLogsViewSQL = `SELECT ` +
 	`CAST(NULL AS VARCHAR) AS message, ` +
 	`CAST(NULL AS VARCHAR) AS format, ` +
@@ -31,43 +26,67 @@ const emptyLokiLogsViewSQL = `SELECT ` +
 	`CAST(NULL AS BIGINT) AS ` + lokiTSColumn + ` ` +
 	`WHERE 1=0`
 
-// sandboxLokiLogsSQL builds a logs relation over the tenant's landed log parquet
-// where every row carries its file's landing time in nanoseconds. Files are
-// unified by column name — logs have a variable, per-format schema, and missing
-// columns must NULL-fill rather than fail the union.
-func sandboxLokiLogsSQL(tenantRoot string) (string, error) {
-	absRoot, err := filepath.Abs(tenantRoot)
+// sandboxLokiLogsSQL builds the Loki logs relation: shared list read_parquet plus
+// ingest-time column, optionally time-pruned and optionally without message.
+func sandboxLokiLogsSQL(tenantRoot string, startNs, endNs int64, omitMessage bool, recentLookback time.Duration) (string, []logFileMeta, error) {
+	opts := logsCatalogOpts{
+		StartNs:        startNs,
+		EndNs:          endNs,
+		WithIngestTS:   true,
+		OmitMessage:    omitMessage,
+		RecentOnly:     recentLookback > 0 && endNs <= startNs,
+		RecentLookback: recentLookback,
+		Now:            time.Now().UTC(),
+	}
+	// When start is omitted (0), a configured lookback raises the open-set floor
+	// so label browsers default to recent segments. Explicit start>0 keeps cold
+	// history reachable.
+	if recentLookback > 0 && startNs == 0 {
+		opts.RecentOnly = true
+	} else {
+		opts.RecentOnly = false
+	}
+	sqlText, files, err := sandboxLogsRelationSQL(tenantRoot, opts)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
-		absRoot = resolved
-	}
-	absRoot = filepath.Clean(absRoot)
+	return sqlText, files, nil
+}
 
-	paths, err := collectSafeLogParquetPaths(absRoot)
+// sandboxLogsUnionSQL builds the /sql `logs` relation (no ingest-ts column).
+func sandboxLogsUnionSQL(tenantRoot string) (string, error) {
+	sqlText, _, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	return sqlText, err
+}
+
+// logsRelationFingerprint returns the normalized path list shared by /sql and Loki
+// so tests can prove both planners open the same files.
+func logsRelationFingerprint(tenantRoot string) (string, error) {
+	_, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
 	if err != nil {
 		return "", err
 	}
-	if len(paths) == 0 {
-		return emptyLokiLogsViewSQL, nil
+	parts := make([]string, len(files))
+	for i, f := range files {
+		parts[i] = f.Path
 	}
-	parts := make([]string, 0, len(paths))
-	for _, p := range paths {
-		fi, statErr := os.Stat(p) //nolint:gosec // G703: p comes from tenant-scoped globs already validated to resolve inside the tenant root
-		if statErr != nil {
-			if os.IsNotExist(statErr) {
-				continue
-			}
-			return "", fmt.Errorf("query: stat log window: %w", statErr)
-		}
-		parts = append(parts, fmt.Sprintf(
-			`SELECT *, %d::BIGINT AS %s FROM read_parquet('%s')`,
-			fi.ModTime().UnixNano(), lokiTSColumn, escapeSQLLiteral(layout.ToSlash(p)),
-		))
-	}
+	return fmt.Sprintf("%d:%s", len(parts), joinComma(parts)), nil
+}
+
+func joinComma(parts []string) string {
 	if len(parts) == 0 {
-		return emptyLokiLogsViewSQL, nil
+		return ""
 	}
-	return strings.Join(parts, " UNION ALL BY NAME "), nil
+	n := 0
+	for _, p := range parts {
+		n += len(p) + 1
+	}
+	b := make([]byte, 0, n)
+	for i, p := range parts {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, p...)
+	}
+	return string(b)
 }
