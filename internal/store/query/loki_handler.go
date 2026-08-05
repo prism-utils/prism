@@ -12,9 +12,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/elk-utilities/prism/internal/store/logmeta"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
 
@@ -136,7 +138,7 @@ func (h *lokiHandler) handleQueryRange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.withSandbox(w, r, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
+	h.withSandbox(w, r, startNs, endNs, false, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
 		data := lokiStreamsData{ResultType: "streams", Result: []lokiStreamJSON{}, Stats: map[string]any{}}
 		pred := rel.predicates(q, startNs, endNs)
 		if pred.matchNothing {
@@ -166,7 +168,7 @@ func (h *lokiHandler) handleLabelNames(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, apiErr)
 		return
 	}
-	h.withSandbox(w, r, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
+	h.withSandbox(w, r, startNs, endNs, true, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
 		pred := rel.predicates(q, startNs, endNs)
 		if pred.matchNothing {
 			return []string{}, nil
@@ -199,7 +201,7 @@ func (h *lokiHandler) handleLabelValues(w http.ResponseWriter, r *http.Request) 
 		h.writeError(w, apiErr)
 		return
 	}
-	h.withSandbox(w, r, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
+	h.withSandbox(w, r, startNs, endNs, true, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
 		if name == lokiJobLabel {
 			return []string{lokiJobValue}, nil
 		}
@@ -207,7 +209,7 @@ func (h *lokiHandler) handleLabelValues(w http.ResponseWriter, r *http.Request) 
 		if pred.matchNothing || !rel.has(name) {
 			return []string{}, nil
 		}
-		values, err := rel.labelValues(ctx, name, pred.where, h.cfg.MaxEntries)
+		values, err := rel.labelValues(ctx, name, pred.where, h.cfg.MaxEntries, q)
 		if err != nil {
 			return nil, h.execError("loki label values", err)
 		}
@@ -218,7 +220,9 @@ func (h *lokiHandler) handleLabelValues(w http.ResponseWriter, r *http.Request) 
 // withSandbox validates the tenant, opens the hardened per-request DuckDB
 // sandbox over the tenant's log files, and invokes fn with the resulting
 // relation. It centralizes the tenant/isolation flow shared by every endpoint.
-func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, rel *lokiRelation) (any, *lokiError)) {
+// startNs/endNs prune the Parquet open set; omitMessage drops line bodies for
+// label APIs.
+func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startNs, endNs int64, omitMessage bool, fn func(ctx context.Context, rel *lokiRelation) (any, *lokiError)) {
 	ns := r.PathValue("ns")
 	if !storeingest.ValidateTenant(ns) {
 		http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
@@ -239,7 +243,7 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn fun
 	conn, cleanup, err := openLokiSandbox(ctx, absRoot, sandboxLimits{
 		MemoryLimit: h.cfg.MemoryLimit,
 		Threads:     h.cfg.Threads,
-	})
+	}, startNs, endNs, omitMessage, h.cfg.RecentLookback)
 	if err != nil {
 		h.log().Error("loki sandbox", "ns", ns, "err", err)
 		h.writeError(w, &lokiError{status: http.StatusInternalServerError, msg: "query failed"})
@@ -247,7 +251,7 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn fun
 	}
 	defer cleanup()
 
-	rel, err := newLokiRelation(ctx, conn)
+	rel, err := newLokiRelation(ctx, conn, h.cfg.DataDir, ns)
 	if err != nil {
 		h.log().Error("loki relation", "ns", ns, "err", err)
 		h.writeError(w, &lokiError{status: http.StatusInternalServerError, msg: "query failed"})
@@ -261,22 +265,56 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn fun
 	h.writeSuccess(w, data)
 }
 
+// lastLokiSandbox is test-only observation of the most recent Loki view build.
+var lastLokiSandbox struct {
+	mu      sync.Mutex
+	viewSQL string
+	openSet int
+	omitMsg bool
+}
+
+func recordLokiSandbox(viewSQL string, openSet int, omitMsg bool) {
+	lastLokiSandbox.mu.Lock()
+	lastLokiSandbox.viewSQL = viewSQL
+	lastLokiSandbox.openSet = openSet
+	lastLokiSandbox.omitMsg = omitMsg
+	lastLokiSandbox.mu.Unlock()
+}
+
 // openLokiSandbox opens a locked-down :memory: DuckDB connection whose only
 // visible relation is the tenant's log windows, timestamped by landing time.
-func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimits) (*sql.Conn, func(), error) {
+func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimits, startNs, endNs int64, omitMessage bool, recentLookback time.Duration) (*sql.Conn, func(), error) {
+	viewSQL, files, err := sandboxLokiLogsSQL(tenantRoot, startNs, endNs, omitMessage, recentLookback)
+	if err != nil {
+		return nil, nil, wrapSandboxErr(err)
+	}
+	effective := EffectiveSandboxThreads(limits.Threads, len(files))
+	recordAppliedSandboxThreads(effective)
+	limits.Threads = effective
+
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
 		return nil, nil, err
 	}
-	viewSQL, err := sandboxLokiLogsSQL(tenantRoot)
-	if err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(err)
-	}
 	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxLogsView+" AS "+viewSQL); err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(fmt.Errorf("create logs view: %w", err))
+		if omitMessage {
+			// Summary-only tenants have no message column; EXCLUDE would fail.
+			viewSQL, files, err = sandboxLokiLogsSQL(tenantRoot, startNs, endNs, false, recentLookback)
+			if err != nil {
+				cleanup()
+				return nil, nil, wrapSandboxErr(err)
+			}
+			if _, err = conn.ExecContext(ctx, "CREATE VIEW "+sandboxLogsView+" AS "+viewSQL); err != nil {
+				cleanup()
+				return nil, nil, wrapSandboxErr(fmt.Errorf("create logs view: %w", err))
+			}
+			omitMessage = false
+		} else {
+			cleanup()
+			return nil, nil, wrapSandboxErr(fmt.Errorf("create logs view: %w", err))
+		}
 	}
+	recordLokiSandbox(viewSQL, len(files), omitMessage)
 	if err := lockSandbox(ctx, conn); err != nil {
 		cleanup()
 		return nil, nil, err
@@ -290,9 +328,11 @@ func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimit
 type lokiRelation struct {
 	conn    *sql.Conn
 	columns []string
+	dataDir string
+	tenant  string
 }
 
-func newLokiRelation(ctx context.Context, conn *sql.Conn) (*lokiRelation, error) {
+func newLokiRelation(ctx context.Context, conn *sql.Conn, dataDir, tenant string) (*lokiRelation, error) {
 	rows, err := conn.QueryContext(ctx, "SELECT * FROM "+sandboxLogsView+" LIMIT 0")
 	if err != nil {
 		return nil, wrapSandboxErr(err)
@@ -305,7 +345,7 @@ func newLokiRelation(ctx context.Context, conn *sql.Conn) (*lokiRelation, error)
 	if err := rows.Err(); err != nil {
 		return nil, wrapSandboxErr(err)
 	}
-	return &lokiRelation{conn: conn, columns: cols}, nil
+	return &lokiRelation{conn: conn, columns: cols, dataDir: dataDir, tenant: tenant}, nil
 }
 
 func (rel *lokiRelation) has(column string) bool {
@@ -489,12 +529,21 @@ func (rel *lokiRelation) labelNames(ctx context.Context, where []string) ([]stri
 }
 
 // labelValues reports the distinct values of one label in the selected window.
-func (rel *lokiRelation) labelValues(ctx context.Context, name string, where []string, limit int) ([]string, error) {
+func (rel *lokiRelation) labelValues(ctx context.Context, name string, where []string, limit int, sel *logQLQuery) ([]string, error) {
+	if logmeta.IsIndexedLabel(name) && selectorAllowsLabelIndex(sel) {
+		// Index reads are file/DuckDB helpers without a request-scoped DB handle.
+		vals, err := labelValuesFromIndex(rel.dataDir, rel.tenant, name, limit) //nolint:contextcheck // logmeta index path has no conn ctx
+		if err != nil {
+			return nil, wrapSandboxErr(err)
+		}
+		return vals, nil
+	}
 	expr := fmt.Sprintf("NULLIF(CAST(%s AS VARCHAR), '')", quoteSQLIdent(name))
 	//nolint:gosec // G202: name is a DuckDB-reported column identifier and the literals are escaped.
-	q := fmt.Sprintf("SELECT DISTINCT %s AS v FROM %s WHERE %s AND %s IS NOT NULL ORDER BY v LIMIT %d",
+	sqlQ := fmt.Sprintf("SELECT DISTINCT %s AS v FROM %s WHERE %s AND %s IS NOT NULL ORDER BY v LIMIT %d",
 		expr, sandboxLogsView, strings.Join(where, " AND "), expr, limit)
-	rows, err := rel.conn.QueryContext(ctx, q)
+	recordLabelValuesObservation("scan", sqlQ)
+	rows, err := rel.conn.QueryContext(ctx, sqlQ)
 	if err != nil {
 		return nil, wrapSandboxErr(err)
 	}

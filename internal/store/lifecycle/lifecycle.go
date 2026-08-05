@@ -7,6 +7,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/store/engine"
 	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/elk-utilities/prism/internal/store/logmeta"
 	"github.com/elk-utilities/prism/internal/store/merge"
 	"github.com/elk-utilities/prism/internal/store/rollup"
 	"github.com/elk-utilities/prism/internal/store/stats"
@@ -19,6 +20,7 @@ type Config struct {
 	MaxSegmentBytes int64
 	FloorBytes      int64
 	RetentionDays   int
+	MaxLogFiles     int // 0 = disabled
 	RollupSteps     string
 	MaxTier         int
 	Threads         int
@@ -73,6 +75,9 @@ func (r *Runner) TickMerge() error {
 		if err := r.mergeTenant(tenant, planner); err != nil {
 			return err
 		}
+		if err := r.mergeLogsTenant(tenant, planner); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -125,6 +130,57 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 	return nil
 }
 
+func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
+	artifacts, err := merge.ListLogArtifacts(r.cfg.DataDir, tenant)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range artifacts {
+		landing, err := merge.ScanLogLanding(r.cfg.DataDir, tenant, artifact)
+		if err != nil {
+			return err
+		}
+		tiers, err := merge.ScanLogTiers(r.cfg.DataDir, tenant, artifact, r.cfg.MaxTier)
+		if err != nil {
+			return err
+		}
+		actions := planner.FindLogMerges(landing, tiers)
+		if len(actions) == 0 {
+			continue
+		}
+		action := actions[0]
+		action.Artifact = artifact
+		x, err := merge.NewExecutor(merge.ExecutorConfig{
+			DataDir:     r.cfg.DataDir,
+			Tenant:      tenant,
+			Threads:     r.cfg.Threads,
+			MemoryLimit: r.cfg.MemoryLimit,
+		})
+		if err != nil {
+			return err
+		}
+		mergeStart := r.clock()
+		out, err := x.ExecuteLogMerge(artifact, action, mergeStart)
+		_ = x.Close()
+		if err != nil {
+			return err
+		}
+		if elapsed := r.clock().Sub(mergeStart).Seconds(); elapsed > 0 {
+			if err := stats.AddCompactionCPUSeconds(r.cfg.DataDir, tenant, elapsed); err != nil {
+				return err
+			}
+		}
+		_ = out
+		if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
+			return err
+		}
+		if err := logmeta.SyncManifest(r.cfg.DataDir, tenant, artifact); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // TickRetention deletes expired tier segments and rollup files.
 func (r *Runner) TickRetention() error {
 	tenants, err := listTenants(r.cfg.DataDir)
@@ -153,6 +209,51 @@ func (r *Runner) TickRetention() error {
 		}
 		if err := r.deleteExpiredRollups(tenant, cutoff); err != nil {
 			return err
+		}
+		if err := r.retainLogsTenant(tenant, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) retainLogsTenant(tenant string, now time.Time) error {
+	artifacts, err := merge.ListLogArtifacts(r.cfg.DataDir, tenant)
+	if err != nil {
+		return err
+	}
+	retCfg := merge.LogRetentionConfig{
+		RetentionDays: r.cfg.RetentionDays,
+		MaxLogFiles:   r.cfg.MaxLogFiles,
+	}
+	var changed bool
+	for _, artifact := range artifacts {
+		landing, err := merge.ScanLogLanding(r.cfg.DataDir, tenant, artifact)
+		if err != nil {
+			return err
+		}
+		tiers, err := merge.ScanLogTiers(r.cfg.DataDir, tenant, artifact, r.cfg.MaxTier)
+		if err != nil {
+			return err
+		}
+		all := make([]merge.Segment, 0, len(landing)+len(tiers))
+		all = append(all, landing...)
+		all = append(all, tiers...)
+		for _, del := range merge.LogRetention(all, now, retCfg) {
+			if err := removePath(del.Segment.Path); err != nil {
+				return err
+			}
+			changed = true
+		}
+	}
+	if changed {
+		if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
+			return err
+		}
+		for _, artifact := range artifacts {
+			if err := logmeta.SyncManifest(r.cfg.DataDir, tenant, artifact); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

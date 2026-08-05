@@ -50,6 +50,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		// immutable parquet files (queried later with union_by_name) instead of
 		// being inserted into the fixed metrics hot catalog.
 		if isLogArtifact(artifact) {
+			//nolint:contextcheck // engine.LandLogWindow manages its own DB context internally
 			landLogWindow(w, r, cfg, eng, logger, ns, artifact)
 			return
 		}

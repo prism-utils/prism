@@ -731,7 +731,28 @@ Loki-compatible **read** API over a single tenant's `logs` relation, so a stock
 Grafana **Loki datasource** can browse prism logs the same way the Prometheus
 datasource browses prism metrics. It queries the **same per-request DuckDB
 sandbox** `/sql` uses (identical tenant isolation and DuckDB caps) — there is no
-second storage engine, index, or ingest path.
+second storage engine. Both surfaces share one list-based `read_parquet([...],
+union_by_name=true)` relation builder (not a per-file `UNION`), so expression
+depth stays O(1) as window count grows.
+
+### Logs lifecycle (parity with metrics)
+
+Landed windows live under `<tenant>/logs/<artifact>/*.parquet`. Background jobs
+(`RUN_JOBS=true`) also compact logs:
+
+| Path | Role |
+|---|---|
+| `logs/<artifact>/*.parquet` | Landing windows (agent seals) |
+| `logs/<artifact>/tiers/L{n}/*.parquet` | Compacted segments (merge when ≥ `SEGMENTS_PER_TIER`) |
+| `logs/<artifact>/_manifest.json` | Atomic file catalog for planners |
+| `logs/.meta_generation` | Cache invalidation stamp |
+
+Planners **time-prune** the open set using the window id in
+`<unix_ns>-*.parquet` (else mtime) before opening Parquet. Label APIs omit the
+`message` column and prefer an in-process cardinality index for
+`format`/`template`/`stream`/`job`. Optional knobs: `MAX_LOG_FILES`,
+`LOG_COALESCE_MAX_*`, `LOGS_RECENT_LOOKBACK_HOURS`, `QUERY_DUCKDB_THREADS`
+(see [`CONFIG.md`](CONFIG.md)).
 
 Reference: [Grafana Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/).
 
@@ -751,7 +772,7 @@ the label endpoints put a JSON string array in `data`. Errors are
 | Parameter | Default | Notes |
 |---|---|---|
 | `query` | match-all | LogQL subset (below). Empty/missing selector matches every stream. |
-| `start` / `end` | `end` = now, `start` = `end - 1h` | Nanosecond Unix epoch, fractional-second epoch, or RFC3339. `start` inclusive, `end` exclusive. On the label endpoints an omitted bound means "everything stored". |
+| `start` / `end` | `end` = now; `start` = `end - 1h` on `query_range`; on label endpoints omitted `start` means “everything” unless `LOGS_RECENT_LOOKBACK_HOURS` raises the floor | Nanosecond Unix epoch, fractional-second epoch, or RFC3339. `start` inclusive, `end` exclusive. Explicit wide ranges still open cold files. |
 | `limit` | `100` | Entries per query; capped by `SQL_API_MAX_ROWS`. |
 | `direction` | `backward` | `backward` (newest first) or `forward`. |
 
@@ -785,9 +806,11 @@ filters, and formatters. A clear rejection beats a half-answered query.
 
 - **Timestamp:** logs Parquet carries **no event-time column** (see
   [`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md) §3.2 — storage stamps ingest time),
-  so every row of a landed window is stamped with that **window file's mtime**
-  (its landing time) in nanoseconds. One `Stat` per file, no per-row cost.
+  so every row of a landed window is stamped with that window's **ingest time**
+  in nanoseconds: prefer the leading `<unix_ns>` from the filename
+  (`layout.SegmentName`), else the file mtime.
 - **Line:** `message` when it has text, else the mined `template`, else empty.
+  Label endpoints never project `message`.
 - **Labels:** the remaining **text** columns (`format`, `template`, extracted
   fields) plus a synthetic **`job="prism"`** on every stream, so Grafana's default
   `{job="prism"}` query works out of the box. `count` (from a summary window) is
@@ -805,11 +828,14 @@ client re-enforces via the owned-tenant guard). Registered when
 `LOKI_API_ENABLED=true` (default); the API is logs-only, so metrics-only
 deployments simply never receive Loki traffic. Limits are shared with `/sql`:
 `SQL_API_MAX_ROWS` caps entries per query, `SQL_API_TIMEOUT_SECONDS` bounds
-execution, and `DUCKDB_MEMORY_LIMIT` / `DUCKDB_THREADS` govern the sandbox.
+execution, `DUCKDB_MEMORY_LIMIT` governs memory, and `QUERY_DUCKDB_THREADS`
+(falling back to `DUCKDB_THREADS`) governs the query sandbox — merge workers
+keep `DUCKDB_THREADS` separately so a raised query thread count does not reopen
+merge OOM risk.
 
-Because logs are file-backed, this API is **unaffected by `QUERY_HOT_ONLY`** and
-needs no background jobs: a read-only reader replica serves it identically to the
-writer.
+Because logs are file-backed, this API is **unaffected by `QUERY_HOT_ONLY`**.
+With `RUN_JOBS=true`, logs compaction/retention run alongside metrics jobs; a
+read-only reader replica still serves queries from the shared tree.
 
 ---
 

@@ -94,86 +94,96 @@ const (
 )
 
 type serverConfig struct {
-	listenAddr         string
-	adminListenAddr    string
-	flightAddr         string
-	dataDir            string
-	allowedArtifacts   []string
-	maxBodyBytes       int64
-	ingestToken        string
-	adminToken         string
-	authMode           string
-	routePrefix        string
-	hotWindow          time.Duration
-	segmentsPerTier    int
-	maxSegmentBytes    int64
-	retentionDays      int
-	rollupSteps        string
-	maxTier            int
-	snapshotTick       time.Duration
-	flushTick          time.Duration
-	mergeTick          time.Duration
-	retentionTick      time.Duration
-	duckdbThreads      int
-	duckdbMemoryLimit  string
-	queryHotOnly       bool
-	sqlAPIEnabled      bool
-	sqlAPIMaxRows      int
-	sqlAPITimeout      time.Duration
-	sqlAPIMaxBodyBytes int64
-	promqlAPIEnabled   bool
-	lokiAPIEnabled     bool
-	runJobs            bool
-	mode               string
-	clientTenants      string
-	clusterClients     string
-	sqlAPIQueueEnabled bool
-	sqlAPIMaxInFlight  int
-	sqlAPIMaxQueue     int
-	sqlAPIQueueTimeout time.Duration
-	maxOpenTenants     int
-	rbac               *rbacConfig
+	listenAddr          string
+	adminListenAddr     string
+	flightAddr          string
+	dataDir             string
+	allowedArtifacts    []string
+	maxBodyBytes        int64
+	ingestToken         string
+	adminToken          string
+	authMode            string
+	routePrefix         string
+	hotWindow           time.Duration
+	segmentsPerTier     int
+	maxSegmentBytes     int64
+	retentionDays       int
+	maxLogFiles         int
+	logCoalesceMaxAge   time.Duration
+	logCoalesceMaxBytes int64
+	logsRecentLookback  time.Duration
+	rollupSteps         string
+	maxTier             int
+	snapshotTick        time.Duration
+	flushTick           time.Duration
+	mergeTick           time.Duration
+	retentionTick       time.Duration
+	duckdbThreads       int
+	queryDuckdbThreads  int
+	duckdbMemoryLimit   string
+	queryHotOnly        bool
+	sqlAPIEnabled       bool
+	sqlAPIMaxRows       int
+	sqlAPITimeout       time.Duration
+	sqlAPIMaxBodyBytes  int64
+	promqlAPIEnabled    bool
+	lokiAPIEnabled      bool
+	runJobs             bool
+	mode                string
+	clientTenants       string
+	clusterClients      string
+	sqlAPIQueueEnabled  bool
+	sqlAPIMaxInFlight   int
+	sqlAPIMaxQueue      int
+	sqlAPIQueueTimeout  time.Duration
+	maxOpenTenants      int
+	rbac                *rbacConfig
 }
 
 func loadConfig() serverConfig {
 	c := serverConfig{
-		listenAddr:         envOr("LISTEN_ADDR", defaultListenAddr),
-		adminListenAddr:    os.Getenv("ADMIN_LISTEN_ADDR"),
-		adminToken:         os.Getenv("ADMIN_TOKEN"),
-		flightAddr:         os.Getenv("FLIGHT_ADDR"),
-		dataDir:            envOr("DATA_DIR", defaultDataDir),
-		maxBodyBytes:       defaultMaxBodyBytes,
-		ingestToken:        os.Getenv("INGEST_TOKEN"),
-		authMode:           envOr("AUTH_MODE", defaultAuthMode),
-		routePrefix:        os.Getenv("ROUTE_PREFIX"),
-		hotWindow:          loadHotWindow(),
-		segmentsPerTier:    envInt("SEGMENTS_PER_TIER", defaultSegmentsPerTier),
-		maxSegmentBytes:    envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
-		retentionDays:      envInt("RETENTION_DAYS", defaultRetentionDays),
-		rollupSteps:        envOr("ROLLUP_STEPS", defaultRollupSteps),
-		maxTier:            envInt("MAX_TIER", defaultMaxTier),
-		snapshotTick:       time.Duration(envInt("HOT_SNAPSHOT_SECONDS", defaultHotSnapshotSec)) * time.Second,
-		flushTick:          time.Duration(envInt("FLUSH_TICK_SECONDS", defaultFlushTickSec)) * time.Second,
-		mergeTick:          time.Duration(envInt("MERGE_TICK_SECONDS", defaultMergeTickSec)) * time.Second,
-		retentionTick:      loadRetentionTick(),
-		duckdbThreads:      envIntZero("DUCKDB_THREADS"),
-		duckdbMemoryLimit:  os.Getenv("DUCKDB_MEMORY_LIMIT"),
-		queryHotOnly:       envBool("QUERY_HOT_ONLY", false),
-		sqlAPIEnabled:      envBool("SQL_API_ENABLED", true),
-		sqlAPIMaxRows:      envInt("SQL_API_MAX_ROWS", 100000),
-		sqlAPITimeout:      time.Duration(envInt("SQL_API_TIMEOUT_SECONDS", 30)) * time.Second,
-		sqlAPIMaxBodyBytes: envInt64("SQL_API_MAX_BODY_BYTES", 1<<20),
-		promqlAPIEnabled:   envBool("PROMQL_API_ENABLED", true),
-		lokiAPIEnabled:     envBool("LOKI_API_ENABLED", true),
-		runJobs:            envBool("RUN_JOBS", true),
-		mode:               envOr("MODE", "standalone"),
-		clientTenants:      os.Getenv("CLIENT_TENANTS"),
-		clusterClients:     os.Getenv("CLUSTER_CLIENTS"),
-		sqlAPIQueueEnabled: envBool("SQL_API_QUEUE_ENABLED", false),
-		sqlAPIMaxInFlight:  envInt("SQL_API_MAX_INFLIGHT", defaultSQLAPIMaxInFlight),
-		sqlAPIMaxQueue:     envInt("SQL_API_MAX_QUEUE", defaultSQLAPIMaxQueue),
-		sqlAPIQueueTimeout: time.Duration(envInt("SQL_API_QUEUE_TIMEOUT_MS", defaultSQLAPIQueueTimeout)) * time.Millisecond,
-		maxOpenTenants:     envInt("MAX_OPEN_TENANTS", defaultMaxOpenTenants),
+		listenAddr:          envOr("LISTEN_ADDR", defaultListenAddr),
+		adminListenAddr:     os.Getenv("ADMIN_LISTEN_ADDR"),
+		adminToken:          os.Getenv("ADMIN_TOKEN"),
+		flightAddr:          os.Getenv("FLIGHT_ADDR"),
+		dataDir:             envOr("DATA_DIR", defaultDataDir),
+		maxBodyBytes:        defaultMaxBodyBytes,
+		ingestToken:         os.Getenv("INGEST_TOKEN"),
+		authMode:            envOr("AUTH_MODE", defaultAuthMode),
+		routePrefix:         os.Getenv("ROUTE_PREFIX"),
+		hotWindow:           loadHotWindow(),
+		segmentsPerTier:     envInt("SEGMENTS_PER_TIER", defaultSegmentsPerTier),
+		maxSegmentBytes:     envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
+		retentionDays:       envInt("RETENTION_DAYS", defaultRetentionDays),
+		maxLogFiles:         envInt("MAX_LOG_FILES", 0),
+		logCoalesceMaxAge:   time.Duration(envInt("LOG_COALESCE_MAX_AGE_SECONDS", 0)) * time.Second,
+		logCoalesceMaxBytes: envInt64("LOG_COALESCE_MAX_BYTES", 0),
+		logsRecentLookback:  time.Duration(envInt("LOGS_RECENT_LOOKBACK_HOURS", 0)) * time.Hour,
+		rollupSteps:         envOr("ROLLUP_STEPS", defaultRollupSteps),
+		maxTier:             envInt("MAX_TIER", defaultMaxTier),
+		snapshotTick:        time.Duration(envInt("HOT_SNAPSHOT_SECONDS", defaultHotSnapshotSec)) * time.Second,
+		flushTick:           time.Duration(envInt("FLUSH_TICK_SECONDS", defaultFlushTickSec)) * time.Second,
+		mergeTick:           time.Duration(envInt("MERGE_TICK_SECONDS", defaultMergeTickSec)) * time.Second,
+		retentionTick:       loadRetentionTick(),
+		duckdbThreads:       envIntZero("DUCKDB_THREADS"),
+		queryDuckdbThreads:  envIntZero("QUERY_DUCKDB_THREADS"),
+		duckdbMemoryLimit:   os.Getenv("DUCKDB_MEMORY_LIMIT"),
+		queryHotOnly:        envBool("QUERY_HOT_ONLY", false),
+		sqlAPIEnabled:       envBool("SQL_API_ENABLED", true),
+		sqlAPIMaxRows:       envInt("SQL_API_MAX_ROWS", 100000),
+		sqlAPITimeout:       time.Duration(envInt("SQL_API_TIMEOUT_SECONDS", 30)) * time.Second,
+		sqlAPIMaxBodyBytes:  envInt64("SQL_API_MAX_BODY_BYTES", 1<<20),
+		promqlAPIEnabled:    envBool("PROMQL_API_ENABLED", true),
+		lokiAPIEnabled:      envBool("LOKI_API_ENABLED", true),
+		runJobs:             envBool("RUN_JOBS", true),
+		mode:                envOr("MODE", "standalone"),
+		clientTenants:       os.Getenv("CLIENT_TENANTS"),
+		clusterClients:      os.Getenv("CLUSTER_CLIENTS"),
+		sqlAPIQueueEnabled:  envBool("SQL_API_QUEUE_ENABLED", false),
+		sqlAPIMaxInFlight:   envInt("SQL_API_MAX_INFLIGHT", defaultSQLAPIMaxInFlight),
+		sqlAPIMaxQueue:      envInt("SQL_API_MAX_QUEUE", defaultSQLAPIMaxQueue),
+		sqlAPIQueueTimeout:  time.Duration(envInt("SQL_API_QUEUE_TIMEOUT_MS", defaultSQLAPIQueueTimeout)) * time.Millisecond,
+		maxOpenTenants:      envInt("MAX_OPEN_TENANTS", defaultMaxOpenTenants),
 	}
 	c.rbac = loadRBACConfig()
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
@@ -187,6 +197,13 @@ func loadConfig() serverConfig {
 		}
 	}
 	return c
+}
+
+func (cfg *serverConfig) queryThreads() int {
+	if cfg.queryDuckdbThreads > 0 {
+		return cfg.queryDuckdbThreads
+	}
+	return cfg.duckdbThreads
 }
 
 func loadHotWindow() time.Duration {
@@ -349,7 +366,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 				MaxRows:      cfg.sqlAPIMaxRows,
 				Timeout:      cfg.sqlAPITimeout,
 				MemoryLimit:  cfg.duckdbMemoryLimit,
-				Threads:      cfg.duckdbThreads,
+				Threads:      cfg.queryThreads(),
 				MaxBodyBytes: cfg.sqlAPIMaxBodyBytes,
 				HotOnly:      cfg.queryHotOnly,
 				RunJobs:      cfg.runJobs,
@@ -363,7 +380,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		}
 
 		if cfg.promqlAPIEnabled {
-			promqlCfg := query.PromQLConfigFromEnv(cfg.dataDir, cfg.routePrefix, cfg.duckdbMemoryLimit, cfg.duckdbThreads)
+			promqlCfg := query.PromQLConfigFromEnv(cfg.dataDir, cfg.routePrefix, cfg.duckdbMemoryLimit, cfg.queryThreads())
 			promqlCfg.HotOnly = cfg.queryHotOnly
 			promqlCfg.RunJobs = cfg.runJobs
 			ph := query.PromQLHandler(&promqlCfg, eng, logger)
@@ -382,12 +399,13 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 
 		if cfg.lokiAPIEnabled {
 			lokiCfg := &query.LokiConfig{
-				DataDir:     cfg.dataDir,
-				RoutePrefix: cfg.routePrefix,
-				MaxEntries:  cfg.sqlAPIMaxRows,
-				Timeout:     cfg.sqlAPITimeout,
-				MemoryLimit: cfg.duckdbMemoryLimit,
-				Threads:     cfg.duckdbThreads,
+				DataDir:        cfg.dataDir,
+				RoutePrefix:    cfg.routePrefix,
+				MaxEntries:     cfg.sqlAPIMaxRows,
+				Timeout:        cfg.sqlAPITimeout,
+				MemoryLimit:    cfg.duckdbMemoryLimit,
+				Threads:        cfg.queryThreads(),
+				RecentLookback: cfg.logsRecentLookback,
 			}
 			lh := query.LokiHandler(lokiCfg, logger)
 			// Logs reads scan Parquet like /sql, so they share the same in-flight
@@ -548,11 +566,13 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		Wait:        cfg.sqlAPIQueueTimeout,
 	})
 	eng := engine.New(engine.Config{
-		DataDir:        cfg.dataDir,
-		HotWindow:      cfg.hotWindow,
-		Threads:        cfg.duckdbThreads,
-		MemoryLimit:    cfg.duckdbMemoryLimit,
-		MaxOpenTenants: cfg.maxOpenTenants,
+		DataDir:             cfg.dataDir,
+		HotWindow:           cfg.hotWindow,
+		Threads:             cfg.duckdbThreads,
+		MemoryLimit:         cfg.duckdbMemoryLimit,
+		MaxOpenTenants:      cfg.maxOpenTenants,
+		LogCoalesceMaxAge:   cfg.logCoalesceMaxAge,
+		LogCoalesceMaxBytes: cfg.logCoalesceMaxBytes,
 	}, now)
 	defer func() { _ = eng.Close() }()
 
@@ -562,6 +582,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		MaxSegmentBytes: cfg.maxSegmentBytes,
 		FloorBytes:      lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
 		RetentionDays:   cfg.retentionDays,
+		MaxLogFiles:     cfg.maxLogFiles,
 		RollupSteps:     cfg.rollupSteps,
 		MaxTier:         cfg.maxTier,
 		Threads:         cfg.duckdbThreads,

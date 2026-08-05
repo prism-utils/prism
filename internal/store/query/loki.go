@@ -31,6 +31,10 @@ type LokiConfig struct {
 	// MemoryLimit / Threads apply the shared DuckDB governance to the sandbox.
 	MemoryLimit string
 	Threads     int
+	// RecentLookback, when >0, bounds label/browse open sets that omit an
+	// explicit time range to files within now-lookback (cold history still
+	// reachable when start/end cover it).
+	RecentLookback time.Duration
 }
 
 // Validate reports configuration errors with the offending field named.
