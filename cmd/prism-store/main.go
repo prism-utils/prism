@@ -7,6 +7,7 @@
 //	prism-store          start the HTTP server (default)
 //	prism-store serve    start the HTTP server
 //	prism-store print-view-sql --tenant <ns> [--data-dir <dir>]
+//	prism-store convert-duckdb-to-parquet [--data-dir <dir>] [--tenant <ns>]
 //	prism-store version  print version
 //
 // Query hot-only mode: set QUERY_HOT_ONLY=true to serve HTTP queries from the
@@ -58,6 +59,7 @@ import (
 	"github.com/elk-utilities/prism/internal/store/lifecycle"
 	"github.com/elk-utilities/prism/internal/store/query"
 	"github.com/elk-utilities/prism/internal/store/queue"
+	"github.com/elk-utilities/prism/internal/store/segformat"
 	"github.com/elk-utilities/prism/internal/version"
 )
 
@@ -94,96 +96,102 @@ const (
 )
 
 type serverConfig struct {
-	listenAddr          string
-	adminListenAddr     string
-	flightAddr          string
-	dataDir             string
-	allowedArtifacts    []string
-	maxBodyBytes        int64
-	ingestToken         string
-	adminToken          string
-	authMode            string
-	routePrefix         string
-	hotWindow           time.Duration
-	segmentsPerTier     int
-	maxSegmentBytes     int64
-	retentionDays       int
-	maxLogFiles         int
-	logCoalesceMaxAge   time.Duration
-	logCoalesceMaxBytes int64
-	logsRecentLookback  time.Duration
-	rollupSteps         string
-	maxTier             int
-	snapshotTick        time.Duration
-	flushTick           time.Duration
-	mergeTick           time.Duration
-	retentionTick       time.Duration
-	duckdbThreads       int
-	queryDuckdbThreads  int
-	duckdbMemoryLimit   string
-	queryHotOnly        bool
-	sqlAPIEnabled       bool
-	sqlAPIMaxRows       int
-	sqlAPITimeout       time.Duration
-	sqlAPIMaxBodyBytes  int64
-	promqlAPIEnabled    bool
-	lokiAPIEnabled      bool
-	runJobs             bool
-	mode                string
-	clientTenants       string
-	clusterClients      string
-	sqlAPIQueueEnabled  bool
-	sqlAPIMaxInFlight   int
-	sqlAPIMaxQueue      int
-	sqlAPIQueueTimeout  time.Duration
-	maxOpenTenants      int
-	rbac                *rbacConfig
+	listenAddr           string
+	adminListenAddr      string
+	flightAddr           string
+	dataDir              string
+	allowedArtifacts     []string
+	maxBodyBytes         int64
+	ingestToken          string
+	adminToken           string
+	authMode             string
+	routePrefix          string
+	hotWindow            time.Duration
+	segmentsPerTier      int
+	maxSegmentBytes      int64
+	retentionDays        int
+	maxLogFiles          int
+	logCoalesceMaxAge    time.Duration
+	logCoalesceMaxBytes  int64
+	logsRecentLookback   time.Duration
+	rollupSteps          string
+	maxTier              int
+	snapshotTick         time.Duration
+	flushTick            time.Duration
+	mergeTick            time.Duration
+	retentionTick        time.Duration
+	duckdbThreads        int
+	queryDuckdbThreads   int
+	duckdbMemoryLimit    string
+	queryHotOnly         bool
+	sqlAPIEnabled        bool
+	sqlAPIMaxRows        int
+	sqlAPITimeout        time.Duration
+	sqlAPIMaxBodyBytes   int64
+	promqlAPIEnabled     bool
+	lokiAPIEnabled       bool
+	runJobs              bool
+	mode                 string
+	clientTenants        string
+	clusterClients       string
+	sqlAPIQueueEnabled   bool
+	sqlAPIMaxInFlight    int
+	sqlAPIMaxQueue       int
+	sqlAPIQueueTimeout   time.Duration
+	maxOpenTenants       int
+	hotSegmentFormat     string
+	mergeSegmentFormat   string
+	duckdbStorageVersion string
+	rbac                 *rbacConfig
 }
 
 func loadConfig() serverConfig {
 	c := serverConfig{
-		listenAddr:          envOr("LISTEN_ADDR", defaultListenAddr),
-		adminListenAddr:     os.Getenv("ADMIN_LISTEN_ADDR"),
-		adminToken:          os.Getenv("ADMIN_TOKEN"),
-		flightAddr:          os.Getenv("FLIGHT_ADDR"),
-		dataDir:             envOr("DATA_DIR", defaultDataDir),
-		maxBodyBytes:        defaultMaxBodyBytes,
-		ingestToken:         os.Getenv("INGEST_TOKEN"),
-		authMode:            envOr("AUTH_MODE", defaultAuthMode),
-		routePrefix:         os.Getenv("ROUTE_PREFIX"),
-		hotWindow:           loadHotWindow(),
-		segmentsPerTier:     envInt("SEGMENTS_PER_TIER", defaultSegmentsPerTier),
-		maxSegmentBytes:     envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
-		retentionDays:       envInt("RETENTION_DAYS", defaultRetentionDays),
-		maxLogFiles:         envInt("MAX_LOG_FILES", 0),
-		logCoalesceMaxAge:   time.Duration(envInt("LOG_COALESCE_MAX_AGE_SECONDS", 0)) * time.Second,
-		logCoalesceMaxBytes: envInt64("LOG_COALESCE_MAX_BYTES", 0),
-		logsRecentLookback:  time.Duration(envInt("LOGS_RECENT_LOOKBACK_HOURS", 0)) * time.Hour,
-		rollupSteps:         envOr("ROLLUP_STEPS", defaultRollupSteps),
-		maxTier:             envInt("MAX_TIER", defaultMaxTier),
-		snapshotTick:        time.Duration(envInt("HOT_SNAPSHOT_SECONDS", defaultHotSnapshotSec)) * time.Second,
-		flushTick:           time.Duration(envInt("FLUSH_TICK_SECONDS", defaultFlushTickSec)) * time.Second,
-		mergeTick:           time.Duration(envInt("MERGE_TICK_SECONDS", defaultMergeTickSec)) * time.Second,
-		retentionTick:       loadRetentionTick(),
-		duckdbThreads:       envIntZero("DUCKDB_THREADS"),
-		queryDuckdbThreads:  envIntZero("QUERY_DUCKDB_THREADS"),
-		duckdbMemoryLimit:   os.Getenv("DUCKDB_MEMORY_LIMIT"),
-		queryHotOnly:        envBool("QUERY_HOT_ONLY", false),
-		sqlAPIEnabled:       envBool("SQL_API_ENABLED", true),
-		sqlAPIMaxRows:       envInt("SQL_API_MAX_ROWS", 100000),
-		sqlAPITimeout:       time.Duration(envInt("SQL_API_TIMEOUT_SECONDS", 30)) * time.Second,
-		sqlAPIMaxBodyBytes:  envInt64("SQL_API_MAX_BODY_BYTES", 1<<20),
-		promqlAPIEnabled:    envBool("PROMQL_API_ENABLED", true),
-		lokiAPIEnabled:      envBool("LOKI_API_ENABLED", true),
-		runJobs:             envBool("RUN_JOBS", true),
-		mode:                envOr("MODE", "standalone"),
-		clientTenants:       os.Getenv("CLIENT_TENANTS"),
-		clusterClients:      os.Getenv("CLUSTER_CLIENTS"),
-		sqlAPIQueueEnabled:  envBool("SQL_API_QUEUE_ENABLED", false),
-		sqlAPIMaxInFlight:   envInt("SQL_API_MAX_INFLIGHT", defaultSQLAPIMaxInFlight),
-		sqlAPIMaxQueue:      envInt("SQL_API_MAX_QUEUE", defaultSQLAPIMaxQueue),
-		sqlAPIQueueTimeout:  time.Duration(envInt("SQL_API_QUEUE_TIMEOUT_MS", defaultSQLAPIQueueTimeout)) * time.Millisecond,
-		maxOpenTenants:      envInt("MAX_OPEN_TENANTS", defaultMaxOpenTenants),
+		listenAddr:           envOr("LISTEN_ADDR", defaultListenAddr),
+		adminListenAddr:      os.Getenv("ADMIN_LISTEN_ADDR"),
+		adminToken:           os.Getenv("ADMIN_TOKEN"),
+		flightAddr:           os.Getenv("FLIGHT_ADDR"),
+		dataDir:              envOr("DATA_DIR", defaultDataDir),
+		maxBodyBytes:         defaultMaxBodyBytes,
+		ingestToken:          os.Getenv("INGEST_TOKEN"),
+		authMode:             envOr("AUTH_MODE", defaultAuthMode),
+		routePrefix:          os.Getenv("ROUTE_PREFIX"),
+		hotWindow:            loadHotWindow(),
+		segmentsPerTier:      envInt("SEGMENTS_PER_TIER", defaultSegmentsPerTier),
+		maxSegmentBytes:      envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
+		retentionDays:        envInt("RETENTION_DAYS", defaultRetentionDays),
+		maxLogFiles:          envInt("MAX_LOG_FILES", 0),
+		logCoalesceMaxAge:    time.Duration(envInt("LOG_COALESCE_MAX_AGE_SECONDS", 0)) * time.Second,
+		logCoalesceMaxBytes:  envInt64("LOG_COALESCE_MAX_BYTES", 0),
+		logsRecentLookback:   time.Duration(envInt("LOGS_RECENT_LOOKBACK_HOURS", 0)) * time.Hour,
+		rollupSteps:          envOr("ROLLUP_STEPS", defaultRollupSteps),
+		maxTier:              envInt("MAX_TIER", defaultMaxTier),
+		snapshotTick:         time.Duration(envInt("HOT_SNAPSHOT_SECONDS", defaultHotSnapshotSec)) * time.Second,
+		flushTick:            time.Duration(envInt("FLUSH_TICK_SECONDS", defaultFlushTickSec)) * time.Second,
+		mergeTick:            time.Duration(envInt("MERGE_TICK_SECONDS", defaultMergeTickSec)) * time.Second,
+		retentionTick:        loadRetentionTick(),
+		duckdbThreads:        envIntZero("DUCKDB_THREADS"),
+		queryDuckdbThreads:   envIntZero("QUERY_DUCKDB_THREADS"),
+		duckdbMemoryLimit:    os.Getenv("DUCKDB_MEMORY_LIMIT"),
+		queryHotOnly:         envBool("QUERY_HOT_ONLY", false),
+		sqlAPIEnabled:        envBool("SQL_API_ENABLED", true),
+		sqlAPIMaxRows:        envInt("SQL_API_MAX_ROWS", 100000),
+		sqlAPITimeout:        time.Duration(envInt("SQL_API_TIMEOUT_SECONDS", 30)) * time.Second,
+		sqlAPIMaxBodyBytes:   envInt64("SQL_API_MAX_BODY_BYTES", 1<<20),
+		promqlAPIEnabled:     envBool("PROMQL_API_ENABLED", true),
+		lokiAPIEnabled:       envBool("LOKI_API_ENABLED", true),
+		runJobs:              envBool("RUN_JOBS", true),
+		mode:                 envOr("MODE", "standalone"),
+		clientTenants:        os.Getenv("CLIENT_TENANTS"),
+		clusterClients:       os.Getenv("CLUSTER_CLIENTS"),
+		sqlAPIQueueEnabled:   envBool("SQL_API_QUEUE_ENABLED", false),
+		sqlAPIMaxInFlight:    envInt("SQL_API_MAX_INFLIGHT", defaultSQLAPIMaxInFlight),
+		sqlAPIMaxQueue:       envInt("SQL_API_MAX_QUEUE", defaultSQLAPIMaxQueue),
+		sqlAPIQueueTimeout:   time.Duration(envInt("SQL_API_QUEUE_TIMEOUT_MS", defaultSQLAPIQueueTimeout)) * time.Millisecond,
+		maxOpenTenants:       envInt("MAX_OPEN_TENANTS", defaultMaxOpenTenants),
+		hotSegmentFormat:     strings.ToLower(envOr("HOT_SEGMENT_FORMAT", "parquet")),
+		mergeSegmentFormat:   strings.ToLower(envOr("MERGE_SEGMENT_FORMAT", "parquet")),
+		duckdbStorageVersion: envOr("DUCKDB_STORAGE_VERSION", segformat.DefaultStorageVersion),
 	}
 	c.rbac = loadRBACConfig()
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
@@ -204,6 +212,29 @@ func (cfg *serverConfig) queryThreads() int {
 		return cfg.queryDuckdbThreads
 	}
 	return cfg.duckdbThreads
+}
+
+func (cfg *serverConfig) validateSegmentFormats() error {
+	if _, err := segformat.Parse(cfg.hotSegmentFormat); err != nil {
+		return fmt.Errorf("HOT_SEGMENT_FORMAT: %w", err)
+	}
+	if _, err := segformat.Parse(cfg.mergeSegmentFormat); err != nil {
+		return fmt.Errorf("MERGE_SEGMENT_FORMAT: %w", err)
+	}
+	if strings.TrimSpace(cfg.duckdbStorageVersion) == "" {
+		return fmt.Errorf("DUCKDB_STORAGE_VERSION: must be non-empty")
+	}
+	return nil
+}
+
+func (cfg *serverConfig) parsedHotFormat() segformat.Format {
+	f, _ := segformat.Parse(cfg.hotSegmentFormat)
+	return f
+}
+
+func (cfg *serverConfig) parsedMergeFormat() segformat.Format {
+	f, _ := segformat.Parse(cfg.mergeSegmentFormat)
+	return f
 }
 
 func loadHotWindow() time.Duration {
@@ -566,27 +597,32 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		Wait:        cfg.sqlAPIQueueTimeout,
 	})
 	eng := engine.New(engine.Config{
-		DataDir:             cfg.dataDir,
-		HotWindow:           cfg.hotWindow,
-		Threads:             cfg.duckdbThreads,
-		MemoryLimit:         cfg.duckdbMemoryLimit,
-		MaxOpenTenants:      cfg.maxOpenTenants,
-		LogCoalesceMaxAge:   cfg.logCoalesceMaxAge,
-		LogCoalesceMaxBytes: cfg.logCoalesceMaxBytes,
+		DataDir:              cfg.dataDir,
+		HotWindow:            cfg.hotWindow,
+		Threads:              cfg.duckdbThreads,
+		MemoryLimit:          cfg.duckdbMemoryLimit,
+		MaxOpenTenants:       cfg.maxOpenTenants,
+		LogCoalesceMaxAge:    cfg.logCoalesceMaxAge,
+		LogCoalesceMaxBytes:  cfg.logCoalesceMaxBytes,
+		HotSegmentFormat:     cfg.parsedHotFormat(),
+		MergeSegmentFormat:   cfg.parsedMergeFormat(),
+		DuckDBStorageVersion: cfg.duckdbStorageVersion,
 	}, now)
 	defer func() { _ = eng.Close() }()
 
 	runner := lifecycle.NewRunner(&lifecycle.Config{
-		DataDir:         cfg.dataDir,
-		SegmentsPerTier: cfg.segmentsPerTier,
-		MaxSegmentBytes: cfg.maxSegmentBytes,
-		FloorBytes:      lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
-		RetentionDays:   cfg.retentionDays,
-		MaxLogFiles:     cfg.maxLogFiles,
-		RollupSteps:     cfg.rollupSteps,
-		MaxTier:         cfg.maxTier,
-		Threads:         cfg.duckdbThreads,
-		MemoryLimit:     cfg.duckdbMemoryLimit,
+		DataDir:              cfg.dataDir,
+		SegmentsPerTier:      cfg.segmentsPerTier,
+		MaxSegmentBytes:      cfg.maxSegmentBytes,
+		FloorBytes:           lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
+		RetentionDays:        cfg.retentionDays,
+		MaxLogFiles:          cfg.maxLogFiles,
+		RollupSteps:          cfg.rollupSteps,
+		MaxTier:              cfg.maxTier,
+		Threads:              cfg.duckdbThreads,
+		MemoryLimit:          cfg.duckdbMemoryLimit,
+		MergeSegmentFormat:   cfg.parsedMergeFormat(),
+		DuckDBStorageVersion: cfg.duckdbStorageVersion,
 	}, eng, now)
 
 	if cfg.runJobs {
@@ -710,6 +746,40 @@ func runPrintViewSQL(args []string) error {
 	return nil
 }
 
+func runConvertDuckDBToParquet(args []string) error {
+	fs := flag.NewFlagSet("convert-duckdb-to-parquet", flag.ContinueOnError)
+	tenant := fs.String("tenant", "", "optional tenant namespace (all tenants when empty)")
+	dataDir := fs.String("data-dir", envOr("DATA_DIR", defaultDataDir), "shared data root")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *tenant != "" {
+		n, err := segformat.ConvertTenantDuckDBToParquet(*dataDir, *tenant)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("converted %d duckdb segment(s) under %s/%s\n", n, *dataDir, *tenant)
+		return nil
+	}
+	entries, err := os.ReadDir(*dataDir)
+	if err != nil {
+		return err
+	}
+	total := 0
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		n, err := segformat.ConvertTenantDuckDBToParquet(*dataDir, e.Name())
+		if err != nil {
+			return fmt.Errorf("tenant %s: %w", e.Name(), err)
+		}
+		total += n
+	}
+	fmt.Printf("converted %d duckdb segment(s) under %s\n", total, *dataDir)
+	return nil
+}
+
 func main() {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -722,6 +792,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "convert-duckdb-to-parquet":
+			if err := runConvertDuckDBToParquet(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "convert-duckdb-to-parquet: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "serve":
 			// default server path below
 		}
@@ -729,6 +805,10 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := loadConfig()
+	if err := cfg.validateSegmentFormats(); err != nil {
+		logger.Error("prism-store config", "err", err)
+		os.Exit(1)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	err := runStore(ctx, &cfg, logger)
 	stop()

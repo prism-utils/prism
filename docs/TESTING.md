@@ -79,6 +79,7 @@ make integration    # just the integration layer (compose up -> test -> down)
 make e2e            # just the e2e layer
 make promql-e2e     # PromQL full-stack: real node-exporter -> agent -> store -> PromQL (docker)
 make loki-e2e      # Logs full-stack: agent -> writer store -> read-only reader -> Loki API (docker)
+make format-matrix-e2e  # HOT×MERGE format matrix (parquet|duckdb) metrics+logs /sql (docker)
 make fuzz           # longer fuzz soak (FUZZTIME overridable)
 make golden-update  # regenerate golden files (review the diff!)
 make clean
@@ -101,6 +102,9 @@ make clean
   asserts metric LogQL is rejected with `400`. Logs are file-backed, so this is
   the acceptance test for reader/writer parity. `LOKI_API_ENABLED` (default
   `true`) gates the routes; see [`CONFIG.md`](CONFIG.md) §14.
+- `make format-matrix-e2e` proves `HOT_SEGMENT_FORMAT` × `MERGE_SEGMENT_FORMAT`
+  (`parquet`\|`duckdb`, four combos) for metrics + logs: HTTP ingest → flush/merge
+  → `/sql` against `deploy/docker-compose.format-matrix.yml`.
 - `test/e2e/alert_e2e_test.go` drives `prism-alert` end to end (no Docker): the
   canonical `promql` engine evaluates a real `up == 1` expression over an
   in-memory `storage.Queryable` serving the store's `/{ns}/api/v1/query` shape,

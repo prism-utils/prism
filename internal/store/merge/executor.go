@@ -9,19 +9,22 @@ import (
 	"time"
 
 	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/elk-utilities/prism/internal/store/segformat"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 // ExecutorConfig holds merge execution parameters.
 type ExecutorConfig struct {
-	DataDir      string
-	Tenant       string
-	RowGroupSize int
-	Threads      int
-	MemoryLimit  string
+	DataDir              string
+	Tenant               string
+	RowGroupSize         int
+	Threads              int
+	MemoryLimit          string
+	SegmentFormat        segformat.Format // parquet (default) or duckdb
+	DuckDBStorageVersion string
 }
 
-// Executor runs planned merges via DuckDB COPY.
+// Executor runs planned merges via DuckDB COPY / ATTACH export.
 type Executor struct {
 	cfg       ExecutorConfig
 	db        *sql.DB
@@ -29,9 +32,15 @@ type Executor struct {
 }
 
 // NewExecutor opens a temporary in-process DuckDB for merge COPY operations.
-func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
+func NewExecutor(cfg ExecutorConfig) (*Executor, error) { //nolint:gocritic // Config options bag copied once at construction.
 	if cfg.RowGroupSize <= 0 {
 		cfg.RowGroupSize = 1_000_000
+	}
+	if cfg.SegmentFormat == "" {
+		cfg.SegmentFormat = segformat.Parquet
+	}
+	if cfg.DuckDBStorageVersion == "" {
+		cfg.DuckDBStorageVersion = segformat.DefaultStorageVersion
 	}
 	connector, err := newInMemoryConnector(DuckDBCaps{Threads: cfg.Threads, MemoryLimit: cfg.MemoryLimit})
 	if err != nil {
@@ -71,29 +80,40 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		return Segment{}, err
 	}
-	final := filepath.Join(destDir, layout.SegmentName(now))
+	final := filepath.Join(destDir, layout.SegmentNameFormat(now, x.cfg.SegmentFormat.Ext()))
 	tmp := final + ".tmp"
 
-	fromParts := make([]string, len(action.Sources))
-	for i, s := range action.Sources {
-		fromParts[i] = fmt.Sprintf("SELECT * FROM read_parquet('%s')", layout.ToSlash(s.Path))
+	fromParts, cleanup, err := x.sourcesSelectSQL(action.Sources, segformat.MetricsTable)
+	if err != nil {
+		return Segment{}, err
 	}
+	defer cleanup()
+
 	union := fromParts[0]
 	for _, p := range fromParts[1:] {
 		union += " UNION ALL " + p
 	}
-	// DuckDB read_parquet paths must be literal strings; server-owned paths only.
-	//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
-	copySQL := fmt.Sprintf(`
-		COPY (SELECT * FROM (%s) ORDER BY ts) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
-	`, union, layout.ToSlash(tmp), x.cfg.RowGroupSize)
-	if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
-		_ = os.Remove(tmp)
-		return Segment{}, fmt.Errorf("merge copy: %w", err)
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		_ = os.Remove(tmp)
-		return Segment{}, err
+	selectSQL := fmt.Sprintf("SELECT * FROM (%s) ORDER BY ts", union)
+
+	switch x.cfg.SegmentFormat {
+	case segformat.DuckDB:
+		if err := segformat.AtomicExportDuckDB(x.db, selectSQL, final, x.cfg.DuckDBStorageVersion, segformat.MetricsTable); err != nil {
+			return Segment{}, fmt.Errorf("merge duckdb export: %w", err)
+		}
+	default:
+		// DuckDB read_parquet paths must be literal strings; server-owned paths only.
+		//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
+		copySQL := fmt.Sprintf(`
+			COPY (%s) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
+		`, selectSQL, layout.ToSlash(tmp), x.cfg.RowGroupSize)
+		if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
+			_ = os.Remove(tmp)
+			return Segment{}, fmt.Errorf("merge copy: %w", err)
+		}
+		if err := os.Rename(tmp, final); err != nil {
+			_ = os.Remove(tmp)
+			return Segment{}, err
+		}
 	}
 
 	seg, err := StatSegment(final, destTier, DuckDBCaps{Threads: x.cfg.Threads, MemoryLimit: x.cfg.MemoryLimit})
@@ -109,7 +129,33 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	return seg, nil
 }
 
-// StatSegment reads parquet metadata for min/max ts and byte size.
+func (x *Executor) sourcesSelectSQL(sources []Segment, duckTable string) ([]string, func(), error) {
+	var aliases []string
+	cleanup := func() {
+		for _, a := range aliases {
+			_, _ = x.db.ExecContext(context.Background(), "DETACH "+a)
+		}
+	}
+	parts := make([]string, len(sources))
+	for i, s := range sources {
+		switch {
+		case segformat.IsDuckDB(s.Path):
+			alias := fmt.Sprintf("msrc_%d", i)
+			q := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(s.Path), alias)
+			if _, err := x.db.ExecContext(context.Background(), q); err != nil {
+				cleanup()
+				return nil, func() {}, fmt.Errorf("merge: attach source %s: %w", s.Path, err)
+			}
+			aliases = append(aliases, alias)
+			parts[i] = fmt.Sprintf("SELECT * FROM %s.%s", alias, duckTable)
+		default:
+			parts[i] = fmt.Sprintf("SELECT * FROM read_parquet('%s')", layout.ToSlash(s.Path))
+		}
+	}
+	return parts, cleanup, nil
+}
+
+// StatSegment reads segment metadata for min/max ts and byte size.
 func StatSegment(path string, tier int, caps DuckDBCaps) (Segment, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -124,9 +170,22 @@ func StatSegment(path string, tier int, caps DuckDBCaps) (Segment, error) {
 	defer func() { _ = db.Close() }()
 
 	var minTs, maxTs time.Time
-	err = db.QueryRowContext(context.Background(), fmt.Sprintf(`
-		SELECT MIN(ts), MAX(ts) FROM read_parquet('%s')
-	`, layout.ToSlash(path))).Scan(&minTs, &maxTs)
+	ctx := context.Background()
+	if segformat.IsDuckDB(path) {
+		alias := "stat"
+		attach := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(path), alias)
+		if _, err := db.ExecContext(ctx, attach); err != nil {
+			return Segment{}, err
+		}
+		err = db.QueryRowContext(ctx, fmt.Sprintf(
+			`SELECT MIN(ts), MAX(ts) FROM %s.%s`, alias, segformat.MetricsTable,
+		)).Scan(&minTs, &maxTs)
+		_, _ = db.ExecContext(ctx, "DETACH "+alias)
+	} else {
+		err = db.QueryRowContext(ctx, fmt.Sprintf(`
+			SELECT MIN(ts), MAX(ts) FROM read_parquet('%s')
+		`, layout.ToSlash(path))).Scan(&minTs, &maxTs)
+	}
 	if err != nil {
 		return Segment{}, err
 	}
@@ -137,6 +196,14 @@ func StatSegment(path string, tier int, caps DuckDBCaps) (Segment, error) {
 		MinTs: minTs.UTC(),
 		MaxTs: maxTs.UTC(),
 	}, nil
+}
+
+func isSegmentFile(name string) bool {
+	if name == "" || name[0] == '.' {
+		return false
+	}
+	ext := filepath.Ext(name)
+	return ext == ".parquet" || ext == ".duckdb"
 }
 
 // ScanTier lists segments in a tier directory with stats.
@@ -151,10 +218,7 @@ func ScanTier(dataDir, tenant string, tier int, caps DuckDBCaps) ([]Segment, err
 	}
 	var out []Segment
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".parquet" {
-			continue
-		}
-		if e.Name()[0] == '.' {
+		if e.IsDir() || !isSegmentFile(e.Name()) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())

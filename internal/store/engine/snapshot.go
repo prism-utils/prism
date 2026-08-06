@@ -9,12 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/elk-utilities/prism/internal/store/segformat"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
 
 const (
 	hotDirName          = "hot"
-	hotSnapshotName     = "current.parquet"
+	hotSnapshotParquet  = "current.parquet"
+	hotSnapshotDuckDB   = "current.duckdb"
 	legacyImportMarker  = ".legacy-import-done"
 	legacyMetricsRawDir = "metrics-raw"
 )
@@ -52,12 +54,28 @@ func (e *Engine) exportHotSnapshot(tenant string) error {
 	if err := os.MkdirAll(hotDir, 0o750); err != nil {
 		return err
 	}
-	final := filepath.Join(hotDir, hotSnapshotName)
 	selectSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY ts", hotCurrentTable)
 	te.mu.RLock()
 	defer te.mu.RUnlock()
-	if err := atomicCopyTo(te.db, selectSQL, final, e.cfg.RowGroupSize); err != nil {
-		return fmt.Errorf("engine: hot snapshot copy: %w", err)
+
+	format := e.cfg.HotSegmentFormat
+	if format == "" {
+		format = segformat.Parquet
+	}
+	switch format {
+	case segformat.DuckDB:
+		final := filepath.Join(hotDir, hotSnapshotDuckDB)
+		if err := segformat.AtomicExportDuckDB(te.db, selectSQL, final, e.cfg.DuckDBStorageVersion, segformat.MetricsTable); err != nil {
+			return fmt.Errorf("engine: hot snapshot duckdb: %w", err)
+		}
+		_ = os.Remove(filepath.Join(hotDir, hotSnapshotParquet))
+	default:
+		final := filepath.Join(hotDir, hotSnapshotParquet)
+		if err := atomicCopyTo(te.db, selectSQL, final, e.cfg.RowGroupSize); err != nil {
+			return fmt.Errorf("engine: hot snapshot copy: %w", err)
+		}
+		_ = os.Remove(filepath.Join(hotDir, hotSnapshotDuckDB))
+		_ = os.Remove(filepath.Join(hotDir, hotSnapshotDuckDB+".wal"))
 	}
 	return nil
 }

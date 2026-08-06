@@ -17,7 +17,6 @@ import (
 
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/layout"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
@@ -40,7 +39,7 @@ var (
 	errNonSelect        = errors.New("query: non-select sql")
 	errMultiStatement   = errors.New("query: multi-statement sql")
 	errSandboxExec      = errors.New("query: sandbox exec")
-	errNoParquetSources = errors.New("query: no parquet sources")
+	errNoParquetSources = errors.New("query: no segment sources")
 	errUnknownTenant    = errors.New("query: unknown tenant")
 )
 
@@ -56,8 +55,9 @@ type SQLConfig struct {
 	HotOnly      bool
 	// RunJobs mirrors the process-wide RUN_JOBS flag. When false this store is a
 	// read-only replica (it owns no writes to the tenant data dir), so /sql must
-	// serve purely from immutable parquet and must NOT flush a fresh hot snapshot
-	// (that is the writer's job, and the replica's data mount is read-only).
+	// serve purely from immutable parquet|duckdb segments and must NOT flush a
+	// fresh hot snapshot (that is the writer's job, and the replica's data mount
+	// is read-only).
 	RunJobs bool
 }
 
@@ -142,18 +142,19 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Timeout)
 		defer cancel()
 
-		// SQL reads serve purely from immutable parquet: the :memory: sandbox
-		// reads hot/current.parquet + tiers/*.parquet via read_parquet and never
-		// opens the tenant engine.duckdb. This lets a read-only replica
-		// (RUN_JOBS=false, with a read-only data mount owned by the writer) serve
-		// /sql without hitting `engine.duckdb: Read-only file system` or a DuckDB
-		// write-lock conflict with the writer that holds the same file.
+		// SQL reads serve from immutable hot/tier segments only: the :memory:
+		// sandbox opens hot/current.{parquet|duckdb} and tiers/*.{parquet|duckdb}
+		// (read_parquet or read-only ATTACH) and never opens the live tenant
+		// engine.duckdb. This lets a read-only replica (RUN_JOBS=false, with a
+		// read-only data mount owned by the writer) serve /sql without hitting
+		// `engine.duckdb: Read-only file system` or a DuckDB write-lock conflict
+		// with the writer that holds the same file.
 		//
 		// A store that runs jobs (the writer / all-in-one) first flushes live hot
-		// rows to hot/current.parquet so its own reads are fresh; a replica serves
-		// the writer-produced snapshot as-is (bounded by the snapshot interval). A
-		// tenant with no parquet at all still answers via an empty, correctly-typed
-		// `metrics` view (see sandboxMetricsUnionSQL), so freshly-provisioned /
+		// rows to the configured hot snapshot so its own reads are fresh; a
+		// replica serves the writer-produced snapshot as-is (bounded by the
+		// snapshot interval). A tenant with no segment files still answers via
+		// an empty, correctly-typed `metrics` view, so freshly-provisioned /
 		// hot-only-empty tenants return zero rows rather than a misleading 400.
 		if cfg.RunJobs {
 			//nolint:contextcheck // snapshot export uses engine-internal context; request ctx applies to sandbox query below.
@@ -254,7 +255,16 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 	if err != nil {
 		return nil, nil, err
 	}
-	viewSQL, err := sandboxMetricsUnionSQL(tenantRoot, hotOnly)
+	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if err := attachMetricsDuckDB(ctx, conn, sources); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	viewSQL, err := sandboxMetricsUnionSQLFromSources(sources)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -263,7 +273,16 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 		cleanup()
 		return nil, nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
 	}
-	logsSQL, err := sandboxLogsUnionSQL(tenantRoot)
+	logFiles, err := listLogSegmentFiles(tenantRoot)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if err := attachLogsDuckDB(ctx, conn, logFiles); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	logsSQL, err := buildLogsRelationSQLMixed(logFiles, logsCatalogOpts{})
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -396,9 +415,9 @@ func lockSandbox(ctx context.Context, conn *sql.Conn) error {
 }
 
 // emptyMetricsViewSQL is the body of the sandbox `metrics` view when a tenant
-// has no parquet sources. It yields zero rows with the same column names and
-// types as the read_parquet projection in sandboxMetricsUnionSQL, so queries
-// against an empty tenant behave like queries against an empty result set.
+// has no hot/tier segment sources. It yields zero rows with the metrics column
+// names and types, so queries against an empty tenant behave like queries
+// against an empty result set.
 const emptyMetricsViewSQL = `SELECT ` +
 	`CAST(NULL AS VARCHAR) AS "__name__", ` +
 	`CAST(NULL AS VARCHAR) AS labels, ` +
@@ -407,54 +426,16 @@ const emptyMetricsViewSQL = `SELECT ` +
 	`CAST(NULL AS TIMESTAMP) AS ts ` +
 	`WHERE 1=0`
 
-func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
-	absRoot, err := filepath.Abs(tenantRoot)
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
-		absRoot = resolved
-	}
-	absRoot = filepath.Clean(absRoot)
-
-	paths, err := collectSafeParquetPaths(absRoot, tenantRoot, hotOnly)
-	if err != nil {
-		return "", err
-	}
-	if len(paths) == 0 {
-		// No parquet sources yet (freshly-provisioned tenant, or a hot-only
-		// tenant with no rows). Serve a correctly-typed, empty `metrics`
-		// relation so valid read-only queries succeed with zero rows instead
-		// of failing with a misleading 400 "bad query". The column list and
-		// types must match the read_parquet projection below.
-		return emptyMetricsViewSQL, nil
-	}
-	var parts []string
-	for _, p := range paths {
-		parts = append(parts, fmt.Sprintf(
-			`SELECT "__name__", labels, value, timestamp_ms, ts FROM read_parquet('%s')`,
-			layout.ToSlash(p),
-		))
-	}
-	union := strings.Join(parts, " UNION ALL ")
-	sqlText := union
-	if !AssertNoUnionByName(sqlText) {
-		return "", fmt.Errorf("view SQL must not use union_by_name or filename")
-	}
-	return sqlText, nil
-}
-
 // emptyLogsViewSQL is the body of the sandbox `logs` view when a tenant has no
-// landed log parquet: zero rows with the guaranteed logs columns (message,
-// format) plus the summary columns (template, count), so a query against a
-// logs-empty tenant returns an empty result instead of failing with a
-// misleading 400.
+// landed log segments: zero rows with the guaranteed logs columns.
 const emptyLogsViewSQL = `SELECT ` +
 	`CAST(NULL AS VARCHAR) AS message, ` +
 	`CAST(NULL AS VARCHAR) AS format, ` +
 	`CAST(NULL AS VARCHAR) AS template, ` +
 	`CAST(NULL AS BIGINT) AS count ` +
 	`WHERE 1=0`
+
+const hotSnapshotRel = "hot/current.parquet"
 
 func validateReadOnlySQL(raw string) error {
 	s := stripSQLComments(strings.TrimSpace(raw))
