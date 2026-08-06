@@ -26,6 +26,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/duckdbfile"
 	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
@@ -136,7 +137,7 @@ func NewFactory() component.Factory[component.Output] { return factory{} }
 
 func (factory) Type() string { return Type }
 func (factory) DefaultConfig() component.Config {
-	return &Config{Method: defaultMethod, ContentType: defaultContentType}
+	return &Config{Method: defaultMethod}
 }
 
 func (factory) Create(cfg component.Config, _ component.Settings) (component.Output, error) {
@@ -154,7 +155,6 @@ func (factory) Create(cfg component.Config, _ component.Settings) (component.Out
 	return &Output{
 		cfg:            *c,
 		method:         orDefault(c.Method, defaultMethod),
-		contentType:    orDefault(c.ContentType, defaultContentType),
 		timeout:        timeout,
 		maxRetries:     uint64(retries),
 		initialBackoff: initial,
@@ -166,7 +166,6 @@ func (factory) Create(cfg component.Config, _ component.Settings) (component.Out
 type Output struct {
 	cfg            Config
 	method         string
-	contentType    string
 	timeout        time.Duration
 	maxRetries     uint64
 	initialBackoff time.Duration
@@ -228,6 +227,19 @@ func (o *Output) Consume(ctx context.Context, block data.EncodedBlock) error {
 	return nil
 }
 
+// contentTypeFor picks the request Content-Type: an explicit config value wins;
+// otherwise duckdb windows use application/vnd.duckdb and everything else uses
+// application/octet-stream.
+func (o *Output) contentTypeFor(block data.EncodedBlock) string {
+	if o.cfg.ContentType != "" {
+		return o.cfg.ContentType
+	}
+	if block.Format == "duckdb" {
+		return duckdbfile.ContentType
+	}
+	return defaultContentType
+}
+
 // attempt performs one POST. It returns a backoff.Permanent error for a
 // non-retryable status so the retry loop stops immediately.
 func (o *Output) attempt(ctx context.Context, block data.EncodedBlock) error {
@@ -235,7 +247,7 @@ func (o *Output) attempt(ctx context.Context, block data.EncodedBlock) error {
 	if err != nil {
 		return backoff.Permanent(fmt.Errorf("build request: %w", err))
 	}
-	req.Header.Set("Content-Type", o.contentType)
+	req.Header.Set("Content-Type", o.contentTypeFor(block))
 	for k, v := range o.cfg.Headers {
 		req.Header.Set(k, v)
 	}
