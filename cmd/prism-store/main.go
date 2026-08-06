@@ -608,6 +608,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		MergeSegmentFormat:   cfg.parsedMergeFormat(),
 		DuckDBStorageVersion: cfg.duckdbStorageVersion,
 	}, now)
+	eng.SetLogger(logger)
 	defer func() { _ = eng.Close() }()
 
 	runner := lifecycle.NewRunner(&lifecycle.Config{
@@ -623,6 +624,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		MemoryLimit:          cfg.duckdbMemoryLimit,
 		MergeSegmentFormat:   cfg.parsedMergeFormat(),
 		DuckDBStorageVersion: cfg.duckdbStorageVersion,
+		Logger:               logger,
 	}, eng, now)
 
 	if cfg.runJobs {

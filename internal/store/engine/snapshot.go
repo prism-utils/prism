@@ -29,6 +29,7 @@ func (e *Engine) ExportHotSnapshot(tenant string) error {
 }
 
 // ExportHotSnapshots writes hot/current.parquet for every tenant with data on disk.
+// Per-tenant failures are logged and skipped so one bad tenant cannot block others.
 func (e *Engine) ExportHotSnapshots() error {
 	tenants, err := listDataTenants(e.cfg.DataDir)
 	if err != nil {
@@ -36,7 +37,7 @@ func (e *Engine) ExportHotSnapshots() error {
 	}
 	for _, tenant := range tenants {
 		if err := e.exportHotSnapshot(tenant); err != nil {
-			return err
+			e.log.Error("hot snapshot tenant", "tenant", tenant, "err", err)
 		}
 	}
 	return nil

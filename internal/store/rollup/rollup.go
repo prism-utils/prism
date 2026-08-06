@@ -151,6 +151,8 @@ func (b *Builder) BuildFromMerge(sourcePaths []string, now time.Time) error {
 }
 
 // StatRollupMaxBucket returns the latest bucket timestamp in a rollup parquet file.
+// An empty file (MAX(bucket) NULL) returns a zero time with a nil error so callers
+// can treat the file as unusable without aborting retention.
 func StatRollupMaxBucket(path string) (time.Time, error) {
 	connector, err := duckdb.NewConnector("", nil)
 	if err != nil {
@@ -160,14 +162,17 @@ func StatRollupMaxBucket(path string) (time.Time, error) {
 	db := sql.OpenDB(connector)
 	defer func() { _ = db.Close() }()
 
-	var maxBucket time.Time
+	var maxBucket sql.NullTime
 	err = db.QueryRowContext(context.Background(), fmt.Sprintf(`
 		SELECT MAX(bucket) FROM read_parquet('%s')
 	`, layout.ToSlash(path))).Scan(&maxBucket)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return maxBucket.UTC(), nil
+	if !maxBucket.Valid {
+		return time.Time{}, nil
+	}
+	return maxBucket.Time.UTC(), nil
 }
 
 // AggregateRaw computes reference aggregates over raw rows for tests.

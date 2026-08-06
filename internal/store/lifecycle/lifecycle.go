@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,6 +29,8 @@ type Config struct {
 	MemoryLimit          string
 	MergeSegmentFormat   segformat.Format
 	DuckDBStorageVersion string
+	// Logger records per-tenant / per-file errors; nil uses slog.Default.
+	Logger *slog.Logger
 }
 
 // Runner executes flush, merge, and retention on a ticker schedule.
@@ -35,6 +38,7 @@ type Runner struct {
 	cfg   Config
 	eng   *engine.Engine
 	clock func() time.Time
+	log   *slog.Logger
 }
 
 // NewRunner builds a lifecycle runner.
@@ -49,7 +53,11 @@ func NewRunner(cfg *Config, eng *engine.Engine, now func() time.Time) *Runner {
 	if c.MaxTier <= 0 {
 		c.MaxTier = 8
 	}
-	return &Runner{cfg: c, eng: eng, clock: now}
+	log := c.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Runner{cfg: c, eng: eng, clock: now, log: log}
 }
 
 // TickHotSnapshot exports near-real-time hot parquet snapshots for Grafana.
@@ -63,6 +71,7 @@ func (r *Runner) TickFlush() error {
 }
 
 // TickMerge plans and executes one merge pass per tenant with tier segments.
+// Per-tenant failures are logged and skipped so one bad tenant cannot block others.
 func (r *Runner) TickMerge() error {
 	tenants, err := listTenants(r.cfg.DataDir)
 	if err != nil {
@@ -76,10 +85,10 @@ func (r *Runner) TickMerge() error {
 	})
 	for _, tenant := range tenants {
 		if err := r.mergeTenant(tenant, planner); err != nil {
-			return err
+			r.log.Error("merge tenant", "tenant", tenant, "err", err)
 		}
 		if err := r.mergeLogsTenant(tenant, planner); err != nil {
-			return err
+			r.log.Error("merge logs tenant", "tenant", tenant, "err", err)
 		}
 	}
 	return nil
@@ -189,6 +198,8 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 }
 
 // TickRetention deletes expired tier segments and rollup files.
+// Per-tenant and per-file failures are logged and skipped so one bad
+// tenant/file cannot block MAX_LOG_FILES or other tenants.
 func (r *Runner) TickRetention() error {
 	tenants, err := listTenants(r.cfg.DataDir)
 	if err != nil {
@@ -207,18 +218,17 @@ func (r *Runner) TickRetention() error {
 			Threads: r.cfg.Threads, MemoryLimit: r.cfg.MemoryLimit,
 		})
 		if err != nil {
-			return err
-		}
-		for _, del := range merge.Retention(segs, now, retCfg) {
-			if err := removePath(del.Segment.Path); err != nil {
-				return err
+			r.log.Error("retention scan tiers", "tenant", tenant, "err", err)
+		} else {
+			for _, del := range merge.Retention(segs, now, retCfg) {
+				if err := removePath(del.Segment.Path); err != nil {
+					r.log.Error("retention delete segment", "tenant", tenant, "path", del.Segment.Path, "err", err)
+				}
 			}
 		}
-		if err := r.deleteExpiredRollups(tenant, cutoff); err != nil {
-			return err
-		}
+		r.deleteExpiredRollups(tenant, cutoff)
 		if err := r.retainLogsTenant(tenant, now); err != nil {
-			return err
+			r.log.Error("retention logs", "tenant", tenant, "err", err)
 		}
 	}
 	return nil
@@ -266,7 +276,7 @@ func (r *Runner) retainLogsTenant(tenant string, now time.Time) error {
 	return nil
 }
 
-func (r *Runner) deleteExpiredRollups(tenant string, cutoff time.Time) error {
+func (r *Runner) deleteExpiredRollups(tenant string, cutoff time.Time) {
 	for _, step := range rollup.ParseSteps(r.cfg.RollupSteps) {
 		dir := layout.RollupDir(r.cfg.DataDir, tenant, step.Name)
 		entries, err := os.ReadDir(dir)
@@ -274,7 +284,8 @@ func (r *Runner) deleteExpiredRollups(tenant string, cutoff time.Time) error {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return err
+			r.log.Error("retention list rollups", "tenant", tenant, "path", dir, "err", err)
+			continue
 		}
 		for _, e := range entries {
 			if e.IsDir() || filepath.Ext(e.Name()) != ".parquet" || e.Name()[0] == '.' {
@@ -283,16 +294,20 @@ func (r *Runner) deleteExpiredRollups(tenant string, cutoff time.Time) error {
 			path := filepath.Join(dir, e.Name())
 			maxBucket, err := rollup.StatRollupMaxBucket(path)
 			if err != nil {
-				return err
+				r.log.Error("retention rollup stat", "tenant", tenant, "path", path, "err", err)
+				if remErr := removePath(path); remErr != nil {
+					r.log.Error("retention delete corrupt rollup", "tenant", tenant, "path", path, "err", remErr)
+				}
+				continue
 			}
-			if maxBucket.Before(cutoff) {
+			// Zero maxBucket means empty/unusable (NULL MAX); delete like expired.
+			if maxBucket.IsZero() || maxBucket.Before(cutoff) {
 				if err := removePath(path); err != nil {
-					return err
+					r.log.Error("retention delete rollup", "tenant", tenant, "path", path, "err", err)
 				}
 			}
 		}
 	}
-	return nil
 }
 
 func removePath(path string) error {

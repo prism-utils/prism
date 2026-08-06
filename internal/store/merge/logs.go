@@ -138,24 +138,38 @@ func (p *Planner) FindLogMerges(landing, tiers []Segment) []LogMergeAction {
 }
 
 func (p *Planner) findLogLandingMerge(landing []Segment) (LogMergeAction, bool) {
-	if len(landing) < p.cfg.SegmentsPerTier {
-		return LogMergeAction{}, false
-	}
-	sort.Slice(landing, func(i, j int) bool {
-		if landing[i].MinTs.Equal(landing[j].MinTs) {
-			return landing[i].Path < landing[j].Path
+	var live []Segment
+	for _, s := range landing {
+		if s.Bytes >= p.cfg.MaxSegmentBytes {
+			continue
 		}
-		return landing[i].MinTs.Before(landing[j].MinTs)
-	})
-	sources := landing[:p.cfg.SegmentsPerTier]
-	sum := int64(0)
-	for _, s := range sources {
-		sum += s.Bytes
+		live = append(live, s)
 	}
-	if sum > p.cfg.MaxSegmentBytes {
+	if len(live) < p.cfg.SegmentsPerTier {
 		return LogMergeAction{}, false
 	}
-	return LogMergeAction{Sources: sources, DestTier: 0}, true
+	sort.Slice(live, func(i, j int) bool {
+		if live[i].MinTs.Equal(live[j].MinTs) {
+			return live[i].Path < live[j].Path
+		}
+		return live[i].MinTs.Before(live[j].MinTs)
+	})
+	n := p.cfg.SegmentsPerTier
+	if n > len(live) {
+		n = len(live)
+	}
+	candidates := live[:n]
+	for n := len(candidates); n >= 1; n-- {
+		subset := candidates[:n]
+		sum := int64(0)
+		for _, s := range subset {
+			sum += s.Bytes
+		}
+		if sum <= p.cfg.MaxSegmentBytes {
+			return LogMergeAction{Sources: subset, DestTier: 0}, true
+		}
+	}
+	return LogMergeAction{}, false
 }
 
 // ExecuteLogMerge compacts sources into logs/<artifact>/tiers/L{DestTier}/ via union_by_name.

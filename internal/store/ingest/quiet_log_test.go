@@ -52,6 +52,9 @@ func TestHTTPIngestSuccessLogsAtDebug(t *testing.T) {
 	req2 := newIngestReq(t, ingestURL(srv2.URL, "", testTenant, "metrics-raw"), body2)
 	resp2 := doIngestReq(t, req2)
 	closeResp(t, resp2)
+	if resp2.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d", resp2.StatusCode)
+	}
 	out := debugBuf.String()
 	if !strings.Contains(out, "ingested") || !strings.Contains(strings.ToLower(out), "debug") {
 		t.Fatalf("success ingest should log at Debug; got %q", out)
