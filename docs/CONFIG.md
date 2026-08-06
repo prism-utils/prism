@@ -501,6 +501,26 @@ receiver ingests the columns directly with no row-by-row re-parse. No options.
 encoder: { type: arrow }
 ```
 
+### `duckdb`
+
+Arrow → checkpointed single-table `.duckdb` file (`EncodedBlock.Format =
+duckdb`). Requires a **CGO** build of `prism` (go-duckdb). The table name inside
+the file is `data`. `STORAGE_VERSION` defaults to `v1.0.0` (same pin as
+`DUCKDB_STORAGE_VERSION` on the store). Pair with `dir` (`.duckdb` extension),
+`http` (`Content-Type: application/vnd.duckdb` when unset), or `flight` (opaque
+DoPut with `format=duckdb` metadata).
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `storage_version` | string | `v1.0.0` | DuckDB `STORAGE_VERSION` pin for the sealed file. |
+
+```yaml
+encoder:
+  type: duckdb
+  options:
+    storage_version: v1.0.0
+```
+
 ### `json`
 
 Serializes the batch as a JSON array `[{col: val, …}, …]` (one object per row).
@@ -571,11 +591,11 @@ output: { type: stdout }
 ### `flight`
 
 Ships the window to an Apache Arrow **Flight** server via `DoPut` (client side).
-Pair it with the `arrow` encoder: the block's IPC records are reframed as
-`FlightData` so the payload lands directly in the receiver's columnar storage —
-the memory/CPU win Flight is designed for. Pipeline/branch/window provenance
-rides in the Flight descriptor so the receiver can name artifacts with the same
-time-range scheme as `dir`.
+Pair it with the `arrow` encoder (IPC reframed as `FlightData`) or the `duckdb`
+encoder (opaque `.duckdb` DoPut body with `format=duckdb` in app metadata /
+trailing path segment). Pipeline/branch/window provenance rides in the Flight
+descriptor so the receiver can name artifacts with the same time-range scheme
+as `dir`.
 
 | Option | Type | Required | Description |
 |---|---|---|---|
@@ -609,7 +629,7 @@ egress that reaches a Bearer-checking ingress (e.g. Traefik ForwardAuth). A
 | `method` | string | no | `POST` | `POST`, `PUT`, or `PATCH`. |
 | `headers` | map[string]string | no | — | Extra request headers (values may use `${ENV}`). |
 | `token` | string | no | — | Sent as `Authorization: Bearer <token>` (use `${ENV}`). |
-| `content_type` | string | no | `application/octet-stream` | Request `Content-Type`. |
+| `content_type` | string | no | (format-dependent) | Request `Content-Type`. Empty → `application/vnd.duckdb` for duckdb blocks, otherwise `application/octet-stream`. |
 | `tls` | object | no | — | Client TLS block (see [TLS block](#tls-block)). |
 | `max_retries` | int | no | `5` | Retries after the first attempt (`>= 0`). |
 | `timeout` | duration string | no | `30s` | Per-attempt timeout. |

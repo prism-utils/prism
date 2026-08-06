@@ -1,6 +1,6 @@
 # Spec: Agent `.duckdb` transfer + store ingest
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/agent-duckdb-transfer`
 - **Owner phase:** orchestrator → developer
@@ -91,14 +91,14 @@ agent→store `.duckdb` (+ mixed Parquet/DuckDB hot/merge) green.
 
 ## 5. Acceptance checklist
 
-- [ ] Agent `duckdb` encoder + dir/http/Flight emit when configured
-- [ ] Store HTTP + Flight ingest accept `.duckdb`; Parquet/Arrow paths unchanged
-- [ ] Incompatible storage version rejected clearly
-- [ ] OUTPUT_CONTRACT + CONFIG/STORE/TESTING docs updated
-- [ ] Docker/e2e agent→store duckdb (+ mixed format) green
-- [ ] Tests written first (`test:` commit precedes implementation)
-- [ ] `make lint test` green (+ full-tests / e2e as required)
-- [ ] Spec notes release is orchestrator-owned after merge (no tag in this PR)
+- [x] Agent `duckdb` encoder + dir/http/Flight emit when configured
+- [x] Store HTTP + Flight ingest accept `.duckdb`; Parquet/Arrow paths unchanged
+- [x] Incompatible storage version rejected clearly
+- [x] OUTPUT_CONTRACT + CONFIG/STORE/TESTING docs updated
+- [x] Docker/e2e agent→store duckdb (+ mixed format) green
+- [x] Tests written first (`test:` commit precedes implementation)
+- [x] `make lint test` green (+ full-tests / e2e as required)
+- [x] Spec notes release is orchestrator-owned after merge (no tag in this PR)
 
 ## 6. Mandatory review gates
 
@@ -110,4 +110,6 @@ agent→store `.duckdb` (+ mixed Parquet/DuckDB hot/merge) green.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Developer: implementation complete (`make lint test` green). E2e via
+`make agent-duckdb-e2e` (compose `deploy/docker-compose.agent-duckdb-e2e.yml`).
+Do **not** tag `v1.9.0` in this PR — orchestrator after merge.

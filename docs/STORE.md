@@ -232,25 +232,38 @@ volumeMounts:
 
 ## Ingest (`internal/store/ingest`)
 
-Write entry point for contract-v1 Parquet windows. Two transports share one
-validation chain and land via `engine.Ingest`.
+Write entry point for contract-v1 windows (Parquet or DuckDB). Two transports
+share one validation chain and land via `engine.Ingest` / `engine.IngestDuckDB`.
 
 ### HTTP
 
-`POST <ROUTE_PREFIX>/{tenant}/ingest/{artifact}` — raw Parquet body
-(`application/octet-stream`). Empty body → `204` no-op.
+`POST <ROUTE_PREFIX>/{tenant}/ingest/{artifact}` — raw window body.
+
+| Content-Type | Body |
+|---|---|
+| `application/vnd.duckdb` | Checkpointed `.duckdb` (table `data`) |
+| `application/octet-stream` or empty | Magic sniff: DuckDB (`DUCK` at offset 8) or Parquet (`PAR1`) |
+
+Empty body → `204` no-op. An unreadable / incompatible DuckDB storage version
+returns **`400`** with an actionable error (not `500`).
 
 **Logs artifacts** (`logs-raw`/`logs-template`/`logs-summary`, opt-in via
 `ALLOWED_ARTIFACTS`) skip the metrics hot catalog: each window is landed as an
-immutable file under `<tenant>/logs/<artifact>/` and read back through the
-`logs` relation on `/sql`. Metrics ingest is unchanged. Both HTTP and Flight
-ingest land logs the same way.
+immutable file under `<tenant>/logs/<artifact>/` (`.parquet` or `.duckdb` by
+magic) and read back through the `logs` relation on `/sql`. Metrics ingest
+inserts into `hot_current`. Both HTTP and Flight ingest land logs the same way.
+After land, `HOT_SEGMENT_FORMAT` / `MERGE_SEGMENT_FORMAT` still govern hot export
+and merge output.
 
 ### Arrow Flight
 
-When `FLIGHT_ADDR` is set, a Flight server accepts `DoPut` streams. Incoming
-Arrow IPC record batches are encoded to Parquet and ingested the same way as
-HTTP. The `FlightDescriptor` path is `[tenant, artifact, startUnixNano, endUnixNano]`.
+When `FLIGHT_ADDR` is set, a Flight server accepts `DoPut` streams.
+
+- **Arrow IPC** (default): record batches are encoded to Parquet and ingested
+  like HTTP Parquet. Descriptor path `[tenant, artifact, startUnixNano, endUnixNano]`.
+- **DuckDB**: when app metadata or a path segment carries `format=duckdb`, the
+  payload is treated as raw `.duckdb` file bytes and landed via
+  `IngestDuckDB` / log land (same as HTTP duckdb).
 
 Flight is **not** covered by JWT/RBAC. When RBAC is enabled (`AUTHZ_POLICY_FILE`
 set) and Flight is enabled, startup fails if `AUTH_MODE=none` — configure

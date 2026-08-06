@@ -19,10 +19,10 @@ The four artifact types a v2 consumer expects:
 
 | Artifact type   | Produced by (pipeline / branch)                | Payload |
 |-----------------|------------------------------------------------|---------|
-| `metrics-raw`   | metrics pipeline, `raw` branch                 | Parquet |
-| `logs-raw`      | logging pipeline, `raw` branch                 | Parquet |
-| `logs-template` | logging pipeline, `template` branch            | Parquet |
-| `logs-summary`  | logging pipeline, `summary` branch             | Parquet |
+| `metrics-raw`   | metrics pipeline, `raw` branch                 | Parquet or DuckDB |
+| `logs-raw`      | logging pipeline, `raw` branch                 | Parquet or DuckDB |
+| `logs-template` | logging pipeline, `template` branch            | Parquet or DuckDB |
+| `logs-summary`  | logging pipeline, `summary` branch             | Parquet or DuckDB |
 
 The **phase** is the pipeline's **branch name** (`raw` | `template` |
 `summary`). The artifact type is `<domain>-<phase>`; `<domain>` (`metrics` /
@@ -48,7 +48,7 @@ columnar `metrics-raw` directly; see DESIGN.md §7).
   alone, without opening Parquet footers.
 - `<seq>`: a monotonically increasing per-output counter that disambiguates
   windows sharing bounds.
-- `<ext>`: the encoder format (`parquet` for all four artifact types).
+- `<ext>`: the encoder format (`parquet` or `duckdb`).
 
 Absent window provenance, names fall back to the legacy `<nanos>-<seq>.<ext>`.
 
@@ -66,6 +66,24 @@ The `flight` output encodes provenance in the `FlightDescriptor` **PATH**:
 
 The `collect` receiver decodes this path and writes a file named per §2.1, so
 Flight-delivered and locally-written artifacts are named identically.
+
+When the payload is a sealed `.duckdb` file (not Arrow IPC), producers set
+**app metadata** (and may append a path segment) to `format=duckdb`. Receivers
+branch on that token and land raw bytes; the four provenance path elements
+above are unchanged.
+
+---
+
+## 2.3 HTTP Content-Type + DuckDB magic
+
+| Format | Content-Type | Magic |
+|---|---|---|
+| Parquet | `application/octet-stream` (common) or `application/vnd.apache.parquet` | `PAR1` at offset 0 |
+| DuckDB | `application/vnd.duckdb` (preferred); `application/octet-stream` / empty + magic sniff | `DUCK` at offset 8 |
+
+Agent-emitted DuckDB windows use a single table named `data` and pin
+`STORAGE_VERSION` to `v1.0.0` by default (must match the store's go-duckdb
+line / `DUCKDB_STORAGE_VERSION`).
 
 ---
 
@@ -213,9 +231,11 @@ To test whether needle `q` **might** occur in row-group `<N>`:
 - **v1** (2026-07): optional footer KV substring bloom block (`prism.bloom.v1.*`)
   for `parquet` encoders — additive; consumers that ignore unknown KV keys are
   unchanged.
-- **v1.1** (additive, store-side): prism-store may persist hot snapshots and
+- **v1.1** (additive): agent may emit `ext=duckdb` windows (encoder `duckdb`);
+  HTTP Content-Type `application/vnd.duckdb` (+ magic sniff); Flight opaque
+  duckdb when `format=duckdb`; store ingest accepts `.duckdb` alongside Parquet.
+  Store hot/merge knobs from the prior v1.1 store-side note are unchanged.
+  `STORAGE_VERSION` pin defaults to `v1.0.0`.
+- **v1.1** (additive, store-side, earlier): prism-store may persist hot snapshots and
   merge/cold segments as `.duckdb` when `HOT_SEGMENT_FORMAT` /
-  `MERGE_SEGMENT_FORMAT` are set (default remains `parquet`). Agent emit of
-  `ext=duckdb` is not part of this bump — agent windows stay Parquet until the
-  agent transfer spec lands. Store operators treat `ext` as `parquet` \|
-  `duckdb` for on-disk segments under `hot/` and `tiers/`.
+  `MERGE_SEGMENT_FORMAT` are set (default remains `parquet`).
