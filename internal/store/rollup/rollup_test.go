@@ -75,6 +75,19 @@ func closeF(a, b float64) bool {
 	return math.Abs(a-b) < 1e-9
 }
 
+func TestStatRollupMaxBucketEmptyReturnsZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.parquet")
+	testparquet.WriteEmptyRollup(t, path)
+
+	maxBucket, err := StatRollupMaxBucket(path)
+	if err != nil {
+		t.Fatalf("empty rollup must not Scan-error: %v", err)
+	}
+	if !maxBucket.IsZero() {
+		t.Fatalf("empty rollup max bucket = %v, want zero time", maxBucket)
+	}
+}
+
 func TestNewBuilder_appliesDuckDBCaps(t *testing.T) {
 	t.Parallel()
 	b, err := NewBuilder(t.TempDir(), "tenant", []Step{{Name: "1m", Interval: "1 minute"}}, BuilderConfig{

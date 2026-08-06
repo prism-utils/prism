@@ -63,6 +63,39 @@ func valuesClause(rows []Row) string {
 	return out
 }
 
+// WriteEmptyRollup writes a zero-row rollup-schema parquet. MAX(bucket) over
+// such a file is SQL NULL (unusable for age-based retention).
+func WriteEmptyRollup(t testing.TB, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatalf("connector: %v", err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	tmp := path + ".tmp"
+	//nolint:gosec // G201: test fixture SQL with controlled literals only.
+	q := fmt.Sprintf(`
+		COPY (
+			SELECT * FROM (
+				SELECT CAST(NULL AS TIMESTAMP) AS bucket, '' AS "__name__",
+				       0.0 AS avg, 0.0 AS min, 0.0 AS max, 0::BIGINT AS count, 0.0 AS sum
+				WHERE false
+			)
+		) TO '%s' (FORMAT parquet)
+	`, filepath.ToSlash(tmp))
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("copy empty rollup: %v", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+}
+
 // WriteRollupBucket writes a single-bucket rollup parquet for retention tests.
 func WriteRollupBucket(t testing.TB, path string, bucket time.Time, name string, value float64) {
 	t.Helper()
