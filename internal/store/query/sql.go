@@ -55,8 +55,9 @@ type SQLConfig struct {
 	HotOnly      bool
 	// RunJobs mirrors the process-wide RUN_JOBS flag. When false this store is a
 	// read-only replica (it owns no writes to the tenant data dir), so /sql must
-	// serve purely from immutable parquet and must NOT flush a fresh hot snapshot
-	// (that is the writer's job, and the replica's data mount is read-only).
+	// serve purely from immutable parquet|duckdb segments and must NOT flush a
+	// fresh hot snapshot (that is the writer's job, and the replica's data mount
+	// is read-only).
 	RunJobs bool
 }
 
