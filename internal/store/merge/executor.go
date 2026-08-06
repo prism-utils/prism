@@ -130,6 +130,16 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 }
 
 func (x *Executor) sourcesSelectSQL(sources []Segment, duckTable string) ([]string, func(), error) {
+	return x.sourcesSelectSQLWithTable(sources, func(string) string { return duckTable })
+}
+
+// sourcesSelectSQLLogs attaches duckdb log sources using LogsRelationForPath
+// so agent landing windows (table "data") and tier segments (table "logs") both merge.
+func (x *Executor) sourcesSelectSQLLogs(sources []Segment) ([]string, func(), error) {
+	return x.sourcesSelectSQLWithTable(sources, segformat.LogsRelationForPath)
+}
+
+func (x *Executor) sourcesSelectSQLWithTable(sources []Segment, duckTable func(path string) string) ([]string, func(), error) {
 	var aliases []string
 	cleanup := func() {
 		for _, a := range aliases {
@@ -147,7 +157,7 @@ func (x *Executor) sourcesSelectSQL(sources []Segment, duckTable string) ([]stri
 				return nil, func() {}, fmt.Errorf("merge: attach source %s: %w", s.Path, err)
 			}
 			aliases = append(aliases, alias)
-			parts[i] = fmt.Sprintf("SELECT * FROM %s.%s", alias, duckTable)
+			parts[i] = fmt.Sprintf("SELECT * FROM %s.%s", alias, duckTable(s.Path))
 		default:
 			parts[i] = fmt.Sprintf("SELECT * FROM read_parquet('%s')", layout.ToSlash(s.Path))
 		}

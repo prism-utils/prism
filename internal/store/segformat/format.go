@@ -3,7 +3,10 @@ package segformat
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
+
+	"github.com/elk-utilities/prism/internal/duckdbfile"
 )
 
 // Format is the on-disk encoding for hot snapshots and merge segments.
@@ -24,8 +27,24 @@ const DefaultStorageVersion = "v1.0.0"
 // hot/current.duckdb exports.
 const MetricsTable = "metrics"
 
-// LogsTable is the relation name inside logs-plane .duckdb tier segments.
+// LogsTable is the relation name inside logs-plane .duckdb tier segments
+// written by MERGE_SEGMENT_FORMAT=duckdb.
 const LogsTable = "logs"
+
+// AgentLogsTable is the relation name inside agent-emitted log windows
+// (encoder/duckdb → duckdbfile.Table).
+const AgentLogsTable = duckdbfile.Table
+
+// LogsRelationForPath returns the DuckDB relation name for a logs .duckdb file.
+// Agent landing windows use duckdbfile.Table ("data"); compacted tier segments
+// use LogsTable ("logs").
+func LogsRelationForPath(path string) string {
+	clean := filepath.ToSlash(path)
+	if strings.Contains(clean, "/tiers/") {
+		return LogsTable
+	}
+	return AgentLogsTable
+}
 
 // Parse validates a format env value (case-insensitive). Empty defaults to Parquet.
 func Parse(s string) (Format, error) {
