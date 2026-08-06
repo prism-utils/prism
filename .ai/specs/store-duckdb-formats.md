@@ -1,6 +1,6 @@
 # Spec: Store configurable hot + merge formats (Parquet | DuckDB)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-duckdb-formats`
 - **Owner phase:** orchestrator → developer
@@ -129,21 +129,21 @@ Parquet before upgrading DuckDB storage). Do **not** tag a release in this PR.
 
 ## 5. Acceptance checklist
 
-- [ ] `HOT_SEGMENT_FORMAT` / `MERGE_SEGMENT_FORMAT` env wired (default parquet);
+- [x] `HOT_SEGMENT_FORMAT` / `MERGE_SEGMENT_FORMAT` env wired (default parquet);
       invalid values rejected at startup
-- [ ] Hot snapshot writes `hot/current.duckdb` when configured; atomic,
+- [x] Hot snapshot writes `hot/current.duckdb` when configured; atomic,
       checkpointed, no required sibling `.wal` for open
-- [ ] Metrics flush/L0 and logs tier merge emit `.duckdb` when
+- [x] Metrics flush/L0 and logs tier merge emit `.duckdb` when
       `MERGE_SEGMENT_FORMAT=duckdb`, else `.parquet`
-- [ ] Query sandboxes (metrics + logs / Loki as applicable) open mixed trees;
+- [x] Query sandboxes (metrics + logs / Loki as applicable) open mixed trees;
       ATTACH for duckdb, `read_parquet` for parquet; tenant isolation unchanged
-- [ ] Docs: CONFIG.md + STORE.md format knobs; DuckDB upgrade → convert
+- [x] Docs: CONFIG.md + STORE.md format knobs; DuckDB upgrade → convert
       segments to Parquet procedure; OUTPUT_CONTRACT additive note for `ext`
-- [ ] Conversion/upgrade helper or documented admin path covered by a test
-- [ ] Docker matrix: four hot×merge combos; metrics + logs; queries pass
-- [ ] Tests written first (`test:` commit precedes implementation)
-- [ ] `make lint test` green; docker/e2e matrix target(s) green
-- [ ] No SemVer tag in this PR
+- [x] Conversion/upgrade helper or documented admin path covered by a test
+- [x] Docker matrix: four hot×merge combos; metrics + logs; queries pass
+- [x] Tests written first (`test:` commit precedes implementation)
+- [x] `make lint test` green; docker/e2e matrix target(s) green
+- [x] No SemVer tag in this PR
 
 ## 6. Mandatory review gates
 
