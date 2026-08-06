@@ -147,7 +147,7 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 	// hot_only can only tighten scope: a request may force the hot snapshot, but
 	// cannot widen a store that is already globally hot-only.
 	hotOnly := h.cfg.HotOnly || wantsHotOnly(r)
-	conn, cleanup, err := prepareSandboxConn(ctx, absRoot, hotOnly, sandboxLimits{
+	conn, cleanup, err := prepareMetricsSandboxConn(ctx, absRoot, hotOnly, sandboxLimits{
 		MemoryLimit: h.cfg.MemoryLimit,
 		Threads:     h.cfg.Threads,
 	})

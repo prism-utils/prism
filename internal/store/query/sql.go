@@ -250,6 +250,41 @@ func wantsArrowStream(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), arrowStreamMediaType)
 }
 
+// prepareMetricsSandboxConn opens a locked :memory: DuckDB with only the tenant
+// metrics view. PromQL must use this path: attaching the logs relation would
+// fail the whole query when a stale logs parquet path disappears mid-flight
+// (retention/compaction), and metrics never need those files.
+func prepareMetricsSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, limits sandboxLimits) (*sql.Conn, func(), error) {
+	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
+	if err != nil {
+		return nil, nil, err
+	}
+	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if err := attachMetricsDuckDB(ctx, conn, sources); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	viewSQL, err := sandboxMetricsUnionSQLFromSources(sources)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
+	}
+	if err := lockSandbox(ctx, conn); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return conn, cleanup, nil
+}
+
+// prepareSandboxConn opens the /sql sandbox: metrics + logs views.
 func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, limits sandboxLimits) (*sql.Conn, func(), error) {
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
@@ -278,6 +313,7 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
+	logFiles = filterExistingLogFiles(logFiles)
 	if err := attachLogsDuckDB(ctx, conn, logFiles); err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)

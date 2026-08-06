@@ -451,3 +451,83 @@ func absTenantRoot(t *testing.T, dataDir, tenant string) string {
 	}
 	return root
 }
+
+func TestSandboxLogsSkipsDeletedCachedParquet(t *testing.T) {
+	InvalidateLogsMetaCache("")
+	root := t.TempDir()
+	tenantRoot := filepath.Join(root, gateTenant)
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(dir, layout.SegmentName(time.Unix(1, 0)))
+	gone := filepath.Join(dir, layout.SegmentName(time.Unix(2, 0)))
+	testparquet.WriteLogsRawFile(t, keep, []testparquet.LogRow{{Message: "keep", Format: "none"}})
+	testparquet.WriteLogsRawFile(t, gone, []testparquet.LogRow{{Message: "gone", Format: "none"}})
+
+	if _, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{}); err != nil {
+		t.Fatal(err)
+	} else if len(files) != 2 {
+		t.Fatalf("primed open set = %d, want 2", len(files))
+	}
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	sqlText, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	if err != nil {
+		t.Fatalf("stale cache must not fail relation build: %v", err)
+	}
+	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(keep) {
+		t.Fatalf("open set after delete = %+v, want only %s", files, keep)
+	}
+	if strings.Contains(sqlText, filepath.Base(gone)) {
+		t.Fatalf("SQL still references deleted file: %s", truncate(sqlText, 240))
+	}
+}
+
+func TestPrepareMetricsSandboxIgnoresStaleLogCache(t *testing.T) {
+	InvalidateLogsMetaCache("")
+	root := t.TempDir()
+	tenant := gateTenant
+	tenantRoot := filepath.Join(root, tenant)
+	metricsPath := filepath.Join(tenantRoot, "tiers", "L0", "seg.parquet")
+	if err := os.MkdirAll(filepath.Dir(metricsPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	testparquet.WriteSegmentRows(t, metricsPath, []testparquet.SegRow{
+		{Name: "up", Labels: `job="api"`, Value: 1, Ts: time.Unix(1, 0).UTC()},
+	})
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(dir, layout.SegmentName(time.Unix(2, 0)))
+	testparquet.WriteLogsRawFile(t, gone, []testparquet.LogRow{{Message: "x", Format: "none"}})
+	if _, _, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	conn, cleanup, err := prepareMetricsSandboxConn(ctx, tenantRoot, false, sandboxLimits{})
+	if err != nil {
+		t.Fatalf("metrics-only sandbox: %v", err)
+	}
+	defer cleanup()
+	var n int
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM "+sandboxMetricsView).Scan(&n); err != nil {
+		t.Fatalf("metrics query: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("metrics rows = %d, want >= 1", n)
+	}
+
+	conn2, cleanup2, err := prepareSandboxConn(ctx, tenantRoot, false, sandboxLimits{})
+	if err != nil {
+		t.Fatalf("full sandbox with stale log path: %v", err)
+	}
+	cleanup2()
+	_ = conn2
+}
