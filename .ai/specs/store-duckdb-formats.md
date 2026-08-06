@@ -1,6 +1,6 @@
 # Spec: Store configurable hot + merge formats (Parquet | DuckDB)
 
-Status: ALL_OK
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/store-duckdb-formats`
 - **Owner phase:** orchestrator → developer
@@ -159,6 +159,6 @@ Parquet before upgrading DuckDB storage). Do **not** tag a release in this PR.
 
 ## 7. Reviewer notes
 
-- **ALL_OK** after independent Gate 3 re-verify on `a63174f` (`RunJobs` comment ↔ handler). Gates 1/4 still hold from `921cc4e`.
-- Prior: format-matrix e2e all four combos PASS; TDD (`eb99e2b` before feat); no SemVer tag in PR.
+- **IN_REVIEW** — CI `full` failed: `make e2e` inherited global `CGO_ENABLED=0` while `./test/e2e` imports go-duckdb via format-matrix (`undefined: bindings.Type`). Fix: `CGO_ENABLED=1` on `e2e` / `promql-e2e` / `loki-e2e` (same pattern as `format-matrix-e2e` / `make test`).
+- Prior ALL_OK after Gate 3 re-verify on `a63174f`; format-matrix e2e all four combos PASS; TDD (`eb99e2b` before feat); no SemVer tag in PR.
 - Optional follow-up (non-blocking): unit-test empty `DUCKDB_STORAGE_VERSION` rejection; matrix e2e only asserts `/sql` counts, not on-disk extensions.

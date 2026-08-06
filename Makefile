@@ -107,18 +107,18 @@ e2e: ## End-to-end pipeline tests (build tag: e2e)
 	@if [ -z "$$(find test/e2e -name '*.go' 2>/dev/null)" ]; then \
 		echo "e2e: no tests under test/e2e yet — skipping"; \
 	else \
-		go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) ./test/e2e/...; \
+		CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) ./test/e2e/...; \
 	fi
 
 .PHONY: promql-e2e
 promql-e2e: ## PromQL end-to-end: real node-exporter -> agent -> store -> PromQL (docker)
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make promql-e2e"; exit 1; }
-	go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestPromQLEndToEnd -timeout 20m -v ./test/e2e/...
+	CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestPromQLEndToEnd -timeout 20m -v ./test/e2e/...
 
 .PHONY: loki-e2e
 loki-e2e: ## Logs end-to-end: agent -> writer store -> read-only reader -> Loki API (docker)
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make loki-e2e"; exit 1; }
-	go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestLokiReaderEndToEnd -timeout 20m -v ./test/e2e/...
+	CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestLokiReaderEndToEnd -timeout 20m -v ./test/e2e/...
 
 .PHONY: format-matrix-e2e
 format-matrix-e2e: ## Hot×merge format matrix (parquet|duckdb) metrics+logs via /sql (docker)
