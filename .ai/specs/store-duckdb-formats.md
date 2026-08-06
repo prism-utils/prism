@@ -148,11 +148,18 @@ Parquet before upgrading DuckDB storage). Do **not** tag a release in this PR.
 ## 6. Mandatory review gates
 
 - [ ] **Gate 1 — Follows the guidelines**
-- [ ] **Gate 2 — Tests cover edge cases**
+  - CONTRIBUTING §3.8 / anti-patterns: new comments reference other symbols; DESIGN.md still claims SQL sandbox is “tenant parquet only” after ATTACH+duckdb behavior landed — update DESIGN.md and make comments atomic (or delete them).
+- [x] **Gate 2 — Tests cover edge cases**
 - [ ] **Gate 3 — Docs & comments match**
+  - Update `docs/DESIGN.md` § Arbitrary SQL sandbox (still “VIEW over tenant parquet only”); fix stale “hot/current.parquet” / “no parquet sources” wording in `query/sql.go` and `query/view.go` to match parquet|duckdb.
 - [ ] **Gate 4 — Comments are atomic**
+  - Rewrite/remove non-atomic comments: `segments.go` (`prepareSandboxConn` / “unit tests”), `logs_catalog.go` (`buildLogsRelationSQLMixed`); do not point at other funcs/packages from prose.
 - [ ] Full docs/REVIEW.md checklist passes
+  - Blocked by gates 1/3/4 (DESIGN.md drift + atomic-comment red flags). Lint/test/format-matrix-e2e and TDD history are green.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+- Independently ran `make lint test` (0 issues; all packages ok) and uncached `go test -count=1 -tags e2e,duckdb_arrow -run TestFormatMatrixHotMergeCombos` (all four hot×merge combos PASS, ~50s).
+- TDD history OK: `eb99e2b test(store):…` precedes `feat(store):` / `feat(store/query):` / docs.
+- Acceptance functional surface looks delivered (config, hot/merge duckdb emit, ATTACH mixed trees, convert CLI, CONFIG/STORE/OUTPUT_CONTRACT, matrix e2e).
+- Optional follow-up (non-blocking this round): unit-test empty `DUCKDB_STORAGE_VERSION` rejection; matrix e2e only asserts `/sql` counts, not on-disk `.duckdb`/`.parquet` extensions.

@@ -39,7 +39,7 @@ var (
 	errNonSelect        = errors.New("query: non-select sql")
 	errMultiStatement   = errors.New("query: multi-statement sql")
 	errSandboxExec      = errors.New("query: sandbox exec")
-	errNoParquetSources = errors.New("query: no parquet sources")
+	errNoParquetSources = errors.New("query: no segment sources")
 	errUnknownTenant    = errors.New("query: unknown tenant")
 )
 
@@ -141,18 +141,19 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Timeout)
 		defer cancel()
 
-		// SQL reads serve purely from immutable parquet: the :memory: sandbox
-		// reads hot/current.parquet + tiers/*.parquet via read_parquet and never
-		// opens the tenant engine.duckdb. This lets a read-only replica
-		// (RUN_JOBS=false, with a read-only data mount owned by the writer) serve
-		// /sql without hitting `engine.duckdb: Read-only file system` or a DuckDB
-		// write-lock conflict with the writer that holds the same file.
+		// SQL reads serve from immutable hot/tier segments only: the :memory:
+		// sandbox opens hot/current.{parquet|duckdb} and tiers/*.{parquet|duckdb}
+		// (read_parquet or read-only ATTACH) and never opens the live tenant
+		// engine.duckdb. This lets a read-only replica (RUN_JOBS=false, with a
+		// read-only data mount owned by the writer) serve /sql without hitting
+		// `engine.duckdb: Read-only file system` or a DuckDB write-lock conflict
+		// with the writer that holds the same file.
 		//
 		// A store that runs jobs (the writer / all-in-one) first flushes live hot
-		// rows to hot/current.parquet so its own reads are fresh; a replica serves
-		// the writer-produced snapshot as-is (bounded by the snapshot interval). A
-		// tenant with no parquet at all still answers via an empty, correctly-typed
-		// `metrics` view (see sandboxMetricsUnionSQL), so freshly-provisioned /
+		// rows to the configured hot snapshot so its own reads are fresh; a
+		// replica serves the writer-produced snapshot as-is (bounded by the
+		// snapshot interval). A tenant with no segment files still answers via
+		// an empty, correctly-typed `metrics` view, so freshly-provisioned /
 		// hot-only-empty tenants return zero rows rather than a misleading 400.
 		if cfg.RunJobs {
 			//nolint:contextcheck // snapshot export uses engine-internal context; request ctx applies to sandbox query below.
@@ -413,9 +414,9 @@ func lockSandbox(ctx context.Context, conn *sql.Conn) error {
 }
 
 // emptyMetricsViewSQL is the body of the sandbox `metrics` view when a tenant
-// has no parquet sources. It yields zero rows with the same column names and
-// types as the read_parquet projection in sandboxMetricsUnionSQL, so queries
-// against an empty tenant behave like queries against an empty result set.
+// has no hot/tier segment sources. It yields zero rows with the metrics column
+// names and types, so queries against an empty tenant behave like queries
+// against an empty result set.
 const emptyMetricsViewSQL = `SELECT ` +
 	`CAST(NULL AS VARCHAR) AS "__name__", ` +
 	`CAST(NULL AS VARCHAR) AS labels, ` +

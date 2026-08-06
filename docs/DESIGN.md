@@ -655,9 +655,10 @@ keeps `AUTH_MODE`. Policy is read-only (mounted file); no API mutates bindings.
 
 **Decision:** `POST /{ns}/sql` executes untrusted read-only SQL in a per-request
 in-memory DuckDB sandbox: export fresh hot snapshot, expose `metrics` as a lazy
-**VIEW** over tenant parquet only (`allowed_directories=[tenantRoot]` enforced
-on DuckDB ≥1.2), then apply DuckDB hardening
-(`enable_external_access=false`, extension knobs, `lock_configuration=true`).
+**VIEW** over tenant hot/tier segments — Parquet via `read_parquet`, `.duckdb`
+via read-only ATTACH (`allowed_directories=[tenantRoot]` enforced on DuckDB
+≥1.2) — then apply DuckDB hardening (`enable_external_access=false`, extension
+knobs, `lock_configuration=true`). Mixed trees during format flips are supported.
 RBAC action `query`; same admin plane and cluster routing as structured query.
 
 **References:** DuckDB Securing guide —

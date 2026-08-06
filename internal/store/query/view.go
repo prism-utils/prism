@@ -30,7 +30,7 @@ func ViewSQL(dataDir, tenant string) (string, error) {
 		return "", err
 	}
 	if len(sources) == 0 {
-		return "", fmt.Errorf("query: no parquet sources for tenant %q", tenant)
+		return "", fmt.Errorf("query: no segment sources for tenant %q", tenant)
 	}
 
 	var parts []string

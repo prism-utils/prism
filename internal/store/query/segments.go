@@ -113,14 +113,14 @@ func sandboxMetricsUnionSQLFromSources(sources []metricsSource) (string, error) 
 	return sqlText, nil
 }
 
-// sandboxMetricsUnionSQL keeps the historical signature used by unit tests.
+// sandboxMetricsUnionSQL builds a metrics UNION ALL from parquet sources under
+// tenantRoot (hot and optionally tiers). .duckdb paths are omitted because they
+// need ATTACH aliases before projection.
 func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
 	sources, err := collectMetricsSources(tenantRoot, hotOnly)
 	if err != nil {
 		return "", err
 	}
-	// Without ATTACH aliases, duckdb sources cannot be projected; skip them in
-	// this helper (SQL/PromQL sandboxes use prepareSandboxConn which attaches).
 	var parquetOnly []metricsSource
 	for _, s := range sources {
 		if segformat.IsParquet(s.Path) {

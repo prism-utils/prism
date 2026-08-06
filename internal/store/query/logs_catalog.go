@@ -360,8 +360,8 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 		}
 	}
 	if hasDuck {
-		// Callers that need duckdb must ATTACH then call buildLogsRelationSQLMixed.
-		// Parquet-only SQL would fail on .duckdb paths; return files with empty SQL.
+		// .duckdb paths cannot be opened via read_parquet; return the file list
+		// with empty SQL so ATTACH aliases can be assigned before a mixed union.
 		return "", files, nil
 	}
 	return buildLogsRelationSQL(files, opts), files, nil
