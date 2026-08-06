@@ -120,6 +120,11 @@ loki-e2e: ## Logs end-to-end: agent -> writer store -> read-only reader -> Loki 
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make loki-e2e"; exit 1; }
 	go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestLokiReaderEndToEnd -timeout 20m -v ./test/e2e/...
 
+.PHONY: format-matrix-e2e
+format-matrix-e2e: ## Hot×merge format matrix (parquet|duckdb) metrics+logs via /sql (docker)
+	@command -v docker >/dev/null 2>&1 || { echo "docker required for make format-matrix-e2e"; exit 1; }
+	CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestFormatMatrixHotMergeCombos -timeout 45m -v ./test/e2e/...
+
 .PHONY: full-tests
 full-tests: lint test integration e2e ## The phase-completion gate: everything
 	@echo "full-tests: OK"

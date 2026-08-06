@@ -213,3 +213,9 @@ To test whether needle `q` **might** occur in row-group `<N>`:
 - **v1** (2026-07): optional footer KV substring bloom block (`prism.bloom.v1.*`)
   for `parquet` encoders — additive; consumers that ignore unknown KV keys are
   unchanged.
+- **v1.1** (additive, store-side): prism-store may persist hot snapshots and
+  merge/cold segments as `.duckdb` when `HOT_SEGMENT_FORMAT` /
+  `MERGE_SEGMENT_FORMAT` are set (default remains `parquet`). Agent emit of
+  `ext=duckdb` is not part of this bump — agent windows stay Parquet until the
+  agent transfer spec lands. Store operators treat `ext` as `parquet` \|
+  `duckdb` for on-disk segments under `hot/` and `tiers/`.

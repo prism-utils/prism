@@ -23,7 +23,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 |---|---|
 | **Ingest** | HTTP `POST /{ns}/ingest/{artifact}` (Parquet windows) and optional Arrow Flight `DoPut` when `FLIGHT_ADDR` is set — shared validation chain, lands in `hot_current`. |
 | **Hot window** | Time-bounded ingest buffer (`HOT_WINDOW_*`); rolled to `hot_prev`, flushed to L0 on schedule (`FLUSH_TICK_SECONDS`) or opportunistically on ingest. |
-| **Hot snapshot** | Near-real-time export of `hot_current` to `hot/current.parquet` (`HOT_SNAPSHOT_SECONDS`). |
+| **Hot snapshot** | Near-real-time export of `hot_current` to `hot/current.parquet` or `hot/current.duckdb` (`HOT_SEGMENT_FORMAT`, default `parquet`; `HOT_SNAPSHOT_SECONDS`). |
 | **Tiered storage** | Immutable Parquet segments `L0`…`L{n}` (`MAX_TIER`); Lucene-style merge compaction when `SEGMENTS_PER_TIER` reached. |
 | **Merges** | Background tier merges (`MERGE_TICK_SECONDS`); honors `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT`. |
 | **Rollups** | Downsampled Parquet under `rollups/{step}/` after L1+ merges (`ROLLUP_STEPS`); same DuckDB caps as merges. |
@@ -343,7 +343,35 @@ Multiple ingests within one hot window accumulate in `hot_current` and produce a
 
 ### Hot snapshot
 
-`ExportHotSnapshots` atomically writes `<tenant>/hot/current.parquet` from `hot_current ORDER BY ts` (temp + rename). Reads see in-flight rows; a background ticker exports every `HOT_SNAPSHOT_SECONDS` (default 15s).
+`ExportHotSnapshots` atomically writes `<tenant>/hot/current.parquet` (default) or
+`<tenant>/hot/current.duckdb` when `HOT_SEGMENT_FORMAT=duckdb`, from
+`hot_current ORDER BY ts` (temp + rename / ATTACH+CHECKPOINT). DuckDB exports are
+self-contained (no required sibling `.wal`). The alternate hot filename is removed
+on successful export so a format flip does not double-count. Live tenant
+`engine.duckdb` is unchanged. Reads see in-flight rows; a background ticker
+exports every `HOT_SNAPSHOT_SECONDS` (default 15s).
+
+Metrics flush→L0 and metrics/logs tier merges emit `.parquet` or `.duckdb`
+according to `MERGE_SEGMENT_FORMAT` (default `parquet`). Query sandboxes ATTACH
+`.duckdb` segments read-only and keep `read_parquet` for Parquet; mixed trees
+during a config flip are unioned. Tenant isolation (`allowed_directories`,
+sandbox lock) is unchanged.
+
+#### DuckDB storage upgrade procedure
+
+Before upgrading the store’s bundled DuckDB major/storage version, convert every
+on-disk `.duckdb` hot/tier segment to Parquet so older storage files are not
+opened by a newer engine that cannot read them:
+
+1. Set `HOT_SEGMENT_FORMAT=parquet` and `MERGE_SEGMENT_FORMAT=parquet` (or stop
+   writers).
+2. Run `prism-store convert-duckdb-to-parquet --data-dir <DATA_DIR> [--tenant <ns>]`
+   (omit `--tenant` to convert all tenants).
+3. Upgrade the store image / go-duckdb pin.
+4. Optionally re-enable `duckdb` formats after the upgrade.
+
+The convert command rewrites each `.duckdb` to a sibling `.parquet` and removes
+the source (and any leftover `.wal`).
 
 ### Legacy `metrics-raw` import
 
