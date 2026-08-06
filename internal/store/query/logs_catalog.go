@@ -352,6 +352,7 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 		return "", nil, err
 	}
 	files = filterLogFiles(files, opts)
+	files = filterExistingLogFiles(files)
 	hasDuck := false
 	for _, f := range files {
 		if filepath.Ext(f.Path) == ".duckdb" {
@@ -365,4 +366,21 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 		return "", files, nil
 	}
 	return buildLogsRelationSQL(files, opts), files, nil
+}
+
+// filterExistingLogFiles drops paths that disappeared after the meta cache /
+// manifest snapshot (retention, compaction, or a lost rename). DuckDB's
+// read_parquet([…]) fails the whole relation if any listed file is missing.
+func filterExistingLogFiles(files []logFileMeta) []logFileMeta {
+	if len(files) == 0 {
+		return files
+	}
+	out := make([]logFileMeta, 0, len(files))
+	for _, f := range files {
+		if _, err := os.Stat(f.Path); err != nil { //nolint:gosec // G703: path already tenant-validated
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
