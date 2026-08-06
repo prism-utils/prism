@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/elk-utilities/prism/internal/store/layout"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
@@ -25,6 +27,14 @@ type LabelIndex struct {
 	Values     map[string][]string `json:"values"`
 }
 
+var labelIndexLocks sync.Map // tenant data-dir key -> *sync.Mutex
+
+func labelIndexMu(dataDir, tenant string) *sync.Mutex {
+	key := filepath.Join(dataDir, tenant, "logs")
+	v, _ := labelIndexLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 func labelIndexPath(dataDir, tenant string) string {
 	return filepath.Join(dataDir, tenant, "logs", labelIndexName)
 }
@@ -39,7 +49,8 @@ func IsIndexedLabel(name string) bool {
 	return false
 }
 
-// ReadLabelIndex loads the index; missing file yields empty index.
+// ReadLabelIndex loads the index; missing or corrupt file yields empty index.
+// Corrupt files are quarantined (renamed) so the next Ensure/Merge rebuilds.
 func ReadLabelIndex(dataDir, tenant string) (LabelIndex, error) {
 	path := labelIndexPath(dataDir, tenant)
 	b, err := os.ReadFile(path)
@@ -51,7 +62,9 @@ func ReadLabelIndex(dataDir, tenant string) (LabelIndex, error) {
 	}
 	var idx LabelIndex
 	if err := json.Unmarshal(b, &idx); err != nil {
-		return LabelIndex{}, fmt.Errorf("logmeta: parse label index: %w", err)
+		quarantineLabelIndex(path)
+		//nolint:nilerr // corrupt index is recovered by quarantine + empty rebuild
+		return LabelIndex{Values: map[string][]string{}}, nil
 	}
 	if idx.Values == nil {
 		idx.Values = map[string][]string{}
@@ -59,8 +72,20 @@ func ReadLabelIndex(dataDir, tenant string) (LabelIndex, error) {
 	return idx, nil
 }
 
+func quarantineLabelIndex(path string) {
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	_ = os.Rename(path, path+".corrupt-"+ts)
+}
+
 // WriteLabelIndex atomically persists the index.
 func WriteLabelIndex(dataDir, tenant string, idx LabelIndex) error {
+	mu := labelIndexMu(dataDir, tenant)
+	mu.Lock()
+	defer mu.Unlock()
+	return writeLabelIndexLocked(dataDir, tenant, idx)
+}
+
+func writeLabelIndexLocked(dataDir, tenant string, idx LabelIndex) error {
 	path := labelIndexPath(dataDir, tenant)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
@@ -73,15 +98,32 @@ func WriteLabelIndex(dataDir, tenant string, idx LabelIndex) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	// Unique tmp avoids concurrent Merge writers clobbering the same .tmp.
+	tmp, err := os.CreateTemp(filepath.Dir(path), labelIndexName+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // MergeLabelIndexFromParquet adds distinct indexed-column values from one file.
 func MergeLabelIndexFromParquet(dataDir, tenant, parquetPath string) error {
+	mu := labelIndexMu(dataDir, tenant)
+	mu.Lock()
+	defer mu.Unlock()
+
 	gen, err := Read(dataDir, tenant)
 	if err != nil {
 		return err
@@ -114,11 +156,15 @@ func MergeLabelIndexFromParquet(dataDir, tenant, parquetPath string) error {
 		idx.Values[label] = out
 	}
 	idx.Generation = gen
-	return WriteLabelIndex(dataDir, tenant, idx)
+	return writeLabelIndexLocked(dataDir, tenant, idx)
 }
 
 // EnsureLabelIndex rebuilds the index when the generation stamp is stale.
 func EnsureLabelIndex(dataDir, tenant string) (LabelIndex, error) {
+	mu := labelIndexMu(dataDir, tenant)
+	mu.Lock()
+	defer mu.Unlock()
+
 	gen, err := Read(dataDir, tenant)
 	if err != nil {
 		return LabelIndex{}, err
@@ -173,7 +219,7 @@ func EnsureLabelIndex(dataDir, tenant string) (LabelIndex, error) {
 			}
 		}
 	}
-	if err := WriteLabelIndex(dataDir, tenant, idx); err != nil {
+	if err := writeLabelIndexLocked(dataDir, tenant, idx); err != nil {
 		return LabelIndex{}, err
 	}
 	return idx, nil
