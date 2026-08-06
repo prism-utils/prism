@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/elk-utilities/prism/internal/store/segformat"
 )
 
 const logLandingTier = -1
@@ -58,10 +59,7 @@ func ScanLogLanding(dataDir, tenant, artifact string) ([]Segment, error) {
 	}
 	var out []Segment
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".parquet" {
-			continue
-		}
-		if e.Name()[0] == '.' {
+		if e.IsDir() || !isSegmentFile(e.Name()) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -86,10 +84,7 @@ func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) 
 	}
 	var out []Segment
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".parquet" {
-			continue
-		}
-		if e.Name()[0] == '.' {
+		if e.IsDir() || !isSegmentFile(e.Name()) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -172,25 +167,61 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		return Segment{}, err
 	}
-	final := filepath.Join(destDir, layout.SegmentName(now))
+	final := filepath.Join(destDir, layout.SegmentNameFormat(now, x.cfg.SegmentFormat.Ext()))
 	tmp := final + ".tmp"
 
-	quoted := make([]string, len(action.Sources))
-	for i, s := range action.Sources {
-		quoted[i] = "'" + strings.ReplaceAll(layout.ToSlash(s.Path), "'", "''") + "'"
-	}
-	// DuckDB read_parquet paths must be literal strings; server-owned paths only.
-	//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
-	copySQL := fmt.Sprintf(`
-		COPY (SELECT * FROM read_parquet([%s], union_by_name=true)) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
-	`, strings.Join(quoted, ", "), layout.ToSlash(tmp), x.cfg.RowGroupSize)
-	if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
-		_ = os.Remove(tmp)
-		return Segment{}, fmt.Errorf("log merge copy: %w", err)
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		_ = os.Remove(tmp)
+	fromParts, cleanup, err := x.sourcesSelectSQL(action.Sources, segformat.LogsTable)
+	if err != nil {
 		return Segment{}, err
+	}
+	defer cleanup()
+
+	// Prefer list read_parquet when every source is parquet (schema-flexible);
+	// otherwise UNION ALL BY NAME across mixed parquet/duckdb selects.
+	var selectSQL string
+	allParquet := true
+	for _, s := range action.Sources {
+		if segformat.IsDuckDB(s.Path) {
+			allParquet = false
+			break
+		}
+	}
+	if allParquet {
+		quoted := make([]string, len(action.Sources))
+		for i, s := range action.Sources {
+			quoted[i] = "'" + strings.ReplaceAll(layout.ToSlash(s.Path), "'", "''") + "'"
+		}
+		selectSQL = fmt.Sprintf(
+			"SELECT * FROM read_parquet([%s], union_by_name=true)",
+			strings.Join(quoted, ", "),
+		)
+	} else {
+		union := fromParts[0]
+		for _, p := range fromParts[1:] {
+			union += " UNION ALL BY NAME " + p
+		}
+		selectSQL = fmt.Sprintf("SELECT * FROM (%s)", union)
+	}
+
+	switch x.cfg.SegmentFormat {
+	case segformat.DuckDB:
+		if err := segformat.AtomicExportDuckDB(x.db, selectSQL, final, x.cfg.DuckDBStorageVersion, segformat.LogsTable); err != nil {
+			return Segment{}, fmt.Errorf("log merge duckdb export: %w", err)
+		}
+	default:
+		// DuckDB read_parquet paths must be literal strings; server-owned paths only.
+		//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
+		copySQL := fmt.Sprintf(`
+			COPY (%s) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
+		`, selectSQL, layout.ToSlash(tmp), x.cfg.RowGroupSize)
+		if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
+			_ = os.Remove(tmp)
+			return Segment{}, fmt.Errorf("log merge copy: %w", err)
+		}
+		if err := os.Rename(tmp, final); err != nil {
+			_ = os.Remove(tmp)
+			return Segment{}, err
+		}
 	}
 
 	info, err := os.Stat(final)

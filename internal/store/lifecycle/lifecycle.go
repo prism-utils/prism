@@ -10,21 +10,24 @@ import (
 	"github.com/elk-utilities/prism/internal/store/logmeta"
 	"github.com/elk-utilities/prism/internal/store/merge"
 	"github.com/elk-utilities/prism/internal/store/rollup"
+	"github.com/elk-utilities/prism/internal/store/segformat"
 	"github.com/elk-utilities/prism/internal/store/stats"
 )
 
 // Config drives background merge and retention passes.
 type Config struct {
-	DataDir         string
-	SegmentsPerTier int
-	MaxSegmentBytes int64
-	FloorBytes      int64
-	RetentionDays   int
-	MaxLogFiles     int // 0 = disabled
-	RollupSteps     string
-	MaxTier         int
-	Threads         int
-	MemoryLimit     string
+	DataDir              string
+	SegmentsPerTier      int
+	MaxSegmentBytes      int64
+	FloorBytes           int64
+	RetentionDays        int
+	MaxLogFiles          int // 0 = disabled
+	RollupSteps          string
+	MaxTier              int
+	Threads              int
+	MemoryLimit          string
+	MergeSegmentFormat   segformat.Format
+	DuckDBStorageVersion string
 }
 
 // Runner executes flush, merge, and retention on a ticker schedule.
@@ -94,10 +97,12 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 	}
 	action := actions[0]
 	x, err := merge.NewExecutor(merge.ExecutorConfig{
-		DataDir:     r.cfg.DataDir,
-		Tenant:      tenant,
-		Threads:     r.cfg.Threads,
-		MemoryLimit: r.cfg.MemoryLimit,
+		DataDir:              r.cfg.DataDir,
+		Tenant:               tenant,
+		Threads:              r.cfg.Threads,
+		MemoryLimit:          r.cfg.MemoryLimit,
+		SegmentFormat:        r.cfg.MergeSegmentFormat,
+		DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
 	})
 	if err != nil {
 		return err
@@ -151,10 +156,12 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 		action := actions[0]
 		action.Artifact = artifact
 		x, err := merge.NewExecutor(merge.ExecutorConfig{
-			DataDir:     r.cfg.DataDir,
-			Tenant:      tenant,
-			Threads:     r.cfg.Threads,
-			MemoryLimit: r.cfg.MemoryLimit,
+			DataDir:              r.cfg.DataDir,
+			Tenant:               tenant,
+			Threads:              r.cfg.Threads,
+			MemoryLimit:          r.cfg.MemoryLimit,
+			SegmentFormat:        r.cfg.MergeSegmentFormat,
+			DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
 		})
 		if err != nil {
 			return err

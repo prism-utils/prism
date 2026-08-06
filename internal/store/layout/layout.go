@@ -14,9 +14,19 @@ import (
 // segments time-ordered, and a random suffix stops two writes that land within
 // the same clock resolution from overwriting each other's output on rename.
 func SegmentName(now time.Time) string {
+	return SegmentNameFormat(now, "parquet")
+}
+
+// SegmentNameFormat builds a collision-free segment filename with the given
+// extension (e.g. "parquet" or "duckdb"), without a leading dot.
+func SegmentNameFormat(now time.Time, ext string) string {
+	if ext == "" {
+		ext = "parquet"
+	}
+	ext = strings.TrimPrefix(ext, ".")
 	var buf [4]byte
 	_, _ = rand.Read(buf[:])
-	return fmt.Sprintf("%d-%s.parquet", now.UnixNano(), hex.EncodeToString(buf[:]))
+	return fmt.Sprintf("%d-%s.%s", now.UnixNano(), hex.EncodeToString(buf[:]), ext)
 }
 
 // TierDir returns the on-disk directory for tier L{tier}.

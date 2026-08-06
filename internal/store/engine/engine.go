@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/elk-utilities/prism/internal/store/segformat"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
@@ -28,14 +29,17 @@ const (
 
 // Config holds per-tenant DuckDB engine settings.
 type Config struct {
-	DataDir             string
-	HotWindow           time.Duration
-	MaxOpenTenants      int
-	RowGroupSize        int
-	Threads             int
-	MemoryLimit         string
-	LogCoalesceMaxAge   time.Duration
-	LogCoalesceMaxBytes int64
+	DataDir              string
+	HotWindow            time.Duration
+	MaxOpenTenants       int
+	RowGroupSize         int
+	Threads              int
+	MemoryLimit          string
+	LogCoalesceMaxAge    time.Duration
+	LogCoalesceMaxBytes  int64
+	HotSegmentFormat     segformat.Format // parquet (default) or duckdb
+	MergeSegmentFormat   segformat.Format // parquet (default) or duckdb for L0 flush
+	DuckDBStorageVersion string           // STORAGE_VERSION for created .duckdb files
 }
 
 // Engine manages lazy-open DuckDB databases per tenant namespace.
@@ -61,6 +65,15 @@ func New(cfg Config, now func() time.Time) *Engine { //nolint:gocritic // Config
 	}
 	if cfg.RowGroupSize <= 0 {
 		cfg.RowGroupSize = 1_000_000
+	}
+	if cfg.HotSegmentFormat == "" {
+		cfg.HotSegmentFormat = segformat.Parquet
+	}
+	if cfg.MergeSegmentFormat == "" {
+		cfg.MergeSegmentFormat = segformat.Parquet
+	}
+	if cfg.DuckDBStorageVersion == "" {
+		cfg.DuckDBStorageVersion = segformat.DefaultStorageVersion
 	}
 	if now == nil {
 		now = time.Now
@@ -250,10 +263,21 @@ func (e *Engine) flushTenant(tenant string) error {
 	if err := os.MkdirAll(l0Dir, 0o750); err != nil {
 		return err
 	}
-	final := filepath.Join(l0Dir, segmentName(e.clock()))
 	selectSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY ts", hotPrevTable)
-	if err := atomicCopyTo(te.db, selectSQL, final, e.cfg.RowGroupSize); err != nil {
-		return fmt.Errorf("engine: copy L0: %w", err)
+	format := e.cfg.MergeSegmentFormat
+	if format == "" {
+		format = segformat.Parquet
+	}
+	final := filepath.Join(l0Dir, segmentNameFormat(e.clock(), format))
+	switch format {
+	case segformat.DuckDB:
+		if err := segformat.AtomicExportDuckDB(te.db, selectSQL, final, e.cfg.DuckDBStorageVersion, segformat.MetricsTable); err != nil {
+			return fmt.Errorf("engine: copy L0 duckdb: %w", err)
+		}
+	default:
+		if err := atomicCopyTo(te.db, selectSQL, final, e.cfg.RowGroupSize); err != nil {
+			return fmt.Errorf("engine: copy L0: %w", err)
+		}
 	}
 	if _, err := te.db.ExecContext(context.Background(), fmt.Sprintf("DROP TABLE %s", hotPrevTable)); err != nil {
 		return fmt.Errorf("engine: drop hot_prev: %w", err)
@@ -382,9 +406,13 @@ type tenantEntry struct {
 // segments by time, and a random suffix keeps two flushes that land within the
 // same clock resolution from overwriting each other's output on rename.
 func segmentName(now time.Time) string {
+	return segmentNameFormat(now, segformat.Parquet)
+}
+
+func segmentNameFormat(now time.Time, format segformat.Format) string {
 	var buf [4]byte
 	_, _ = rand.Read(buf[:])
-	return fmt.Sprintf("%d-%s.parquet", now.UnixNano(), hex.EncodeToString(buf[:]))
+	return fmt.Sprintf("%d-%s%s", now.UnixNano(), hex.EncodeToString(buf[:]), format.DotExt())
 }
 
 func openTenant(dataDir, tenant string, cfg Config) (*tenantEntry, error) { //nolint:gocritic // Config options bag.
@@ -578,9 +606,14 @@ func ListL0(dataDir, tenant string) ([]string, error) {
 	}
 	var paths []string
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".parquet" && !strings.HasPrefix(e.Name(), ".") {
-			paths = append(paths, filepath.Join(dir, e.Name()))
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
 		}
+		ext := filepath.Ext(e.Name())
+		if ext != ".parquet" && ext != ".duckdb" {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, e.Name()))
 	}
 	return paths, nil
 }
