@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	agentDuckComposeFile = "../../deploy/docker-compose.agent-duckdb-e2e.yml"
-	agentDuckStoreBase   = "http://127.0.0.1:19094"
-	agentDuckTenant      = "agentduck"
+	agentDuckComposeFile    = "../../deploy/docker-compose.agent-duckdb-e2e.yml"
+	agentDuckComposeProject = "agent-duckdb"
+	agentDuckStoreBase      = "http://127.0.0.1:19094"
+	agentDuckTenant         = "agentduck"
 )
 
 // TestAgentDuckDBTransferIngest proves agent→store .duckdb ingest and one mixed
@@ -35,7 +36,7 @@ func TestAgentDuckDBTransferIngest(t *testing.T) {
 func runAgentDuckDBScenario(t *testing.T, hot, merge string) {
 	t.Helper()
 	agentDuckComposeDown(t)
-	cmd := exec.Command("docker", "compose", "-f", agentDuckComposeFile, "up", "-d", "--build", "--wait")
+	cmd := exec.Command("docker", "compose", "-p", agentDuckComposeProject, "-f", agentDuckComposeFile, "up", "-d", "--build", "--wait")
 	cmd.Env = append(os.Environ(),
 		"HOT_SEGMENT_FORMAT="+hot,
 		"MERGE_SEGMENT_FORMAT="+merge,
@@ -66,13 +67,13 @@ func runAgentDuckDBScenario(t *testing.T, hot, merge string) {
 
 func agentDuckComposeDown(t *testing.T) {
 	t.Helper()
-	cmd := exec.Command("docker", "compose", "-f", agentDuckComposeFile, "down", "-v", "--remove-orphans")
+	cmd := exec.Command("docker", "compose", "-p", agentDuckComposeProject, "-f", agentDuckComposeFile, "down", "-v", "--remove-orphans")
 	_ = cmd.Run()
 }
 
 func agentDuckComposeLogs(t *testing.T) {
 	t.Helper()
-	cmd := exec.Command("docker", "compose", "-f", agentDuckComposeFile, "logs", "--no-color")
+	cmd := exec.Command("docker", "compose", "-p", agentDuckComposeProject, "-f", agentDuckComposeFile, "logs", "--no-color")
 	out, _ := cmd.CombinedOutput()
 	t.Logf("compose logs:\n%s", out)
 }
