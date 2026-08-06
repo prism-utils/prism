@@ -63,6 +63,7 @@ func ReadLabelIndex(dataDir, tenant string) (LabelIndex, error) {
 	var idx LabelIndex
 	if err := json.Unmarshal(b, &idx); err != nil {
 		quarantineLabelIndex(path)
+		//nolint:nilerr // corrupt index is recovered by quarantine + empty rebuild
 		return LabelIndex{Values: map[string][]string{}}, nil
 	}
 	if idx.Values == nil {
