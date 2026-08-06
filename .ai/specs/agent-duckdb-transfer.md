@@ -1,6 +1,6 @@
 # Spec: Agent `.duckdb` transfer + store ingest
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/agent-duckdb-transfer`
 - **Owner phase:** orchestrator → developer
@@ -102,18 +102,16 @@ agent→store `.duckdb` (+ mixed Parquet/DuckDB hot/merge) green.
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines** — HTTP ingest `ReadAll`s the whole window before classify; every ATTACH error becomes ErrIncompatibleDuckDBStorage
-- [ ] **Gate 2 — Tests cover edge cases** — `TestIngestDuckDB_IncompatibleStorageVersion` corrupts/truncates; no real STORAGE_VERSION mismatch fixture
-- [ ] **Gate 3 — Docs & comments match** — stale godocs: flight package (Arrow-only), LandLogWindow (parquet-only), http.ContentType default
-- [ ] **Gate 4 — Comments are atomic** — duckdbfile package doc / encoder StorageVersion comment name other packages/components
-- [ ] Full docs/REVIEW.md checklist passes — Gates 1–4 fail as above
+- [x] **Gate 1 — Follows the guidelines** — `classifyMetricsBody` peeks `MagicPeek` (not ReadAll); ATTACH maps to ErrIncompatibleDuckDBStorage only via `isDuckDBStorageVersionErr`
+- [x] **Gate 2 — Tests cover edge cases** — `withFutureStorageVersion` rewrites header version+checksum; corrupt truncate asserts non-incompatible
+- [x] **Gate 3 — Docs & comments match** — flight package, LandLogWindow, http.ContentType godocs updated for duckdb
+- [x] **Gate 4 — Comments are atomic** — duckdbfile package doc + encoder StorageVersion no longer name other packages
+- [x] Full docs/REVIEW.md checklist passes — Gates 1–4 hold after `75cfff7`
 
 ## 7. Reviewer notes
 
-**Verdict: CHANGES_REQUESTED** (Prism Reviewer)
+**Verdict: ALL_OK** (Prism Reviewer)
 
-**Verified OK:** `make lint test`; `make agent-duckdb-e2e` (after leftover cleanup); TDD order; no v1.9.0 tag.
+**Re-verified on `75cfff7`:** Gate 1 peek + narrow version-error mapping; Gate 2 future STORAGE_VERSION fixture (+ corrupt negative); Gate 3 flight/LandLogWindow/http.ContentType godocs; Gate 4 atomic duckdbfile/encoder comments.
 
-**Blocking:** Gate 1 peek/stream + narrow ATTACH error mapping; Gate 2 real STORAGE_VERSION mismatch test; Gate 3 stale flight/LandLogWindow/http.ContentType godocs; Gate 4 atomic comments.
-
-**Note:** `496d18c` e2e isolation fix is good and stays; it must not clear this verdict.
+**Verified OK:** `make lint test`; `make agent-duckdb-e2e` (leftovers cleaned; fresh `-count=1` run).
