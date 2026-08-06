@@ -7,13 +7,15 @@ import (
 	"strings"
 
 	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/elk-utilities/prism/internal/store/segformat"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
 
-const hotSnapshotRel = "hot/current.parquet"
-
 // ViewSQL emits CREATE OR REPLACE VIEW … AS a fixed-schema union of the tenant
-// hot snapshot and present tier parquet globs for Grafana DuckDB initSQL wiring.
+// hot snapshot and present tier segments for Grafana DuckDB initSQL wiring.
+// Parquet sources use read_parquet; .duckdb sources use ATTACH + table scan
+// (operators must ATTACH those paths before the view is usable, or prefer
+// converting segments to Parquet for Grafana datasources).
 func ViewSQL(dataDir, tenant string) (string, error) {
 	if !storetenant.TenantAllowed(tenant) {
 		return "", fmt.Errorf("query: invalid tenant %q", tenant)
@@ -23,32 +25,39 @@ func ViewSQL(dataDir, tenant string) (string, error) {
 		return "", fmt.Errorf("query: tenant root: %w", err)
 	}
 
+	sources, err := collectMetricsSources(tenantRoot, false)
+	if err != nil {
+		return "", err
+	}
+	if len(sources) == 0 {
+		return "", fmt.Errorf("query: no parquet sources for tenant %q", tenant)
+	}
+
 	var parts []string
-	snapshot := filepath.Join(tenantRoot, hotSnapshotRel)
-	if _, err := os.Stat(snapshot); err == nil {
+	var attach []string
+	for i, s := range sources {
+		if segformat.IsDuckDB(s.Path) {
+			alias := fmt.Sprintf("view_mseg_%d", i)
+			attach = append(attach, fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY);", layout.ToSlash(s.Path), alias))
+			parts = append(parts, fmt.Sprintf(
+				`SELECT "__name__", labels, value, timestamp_ms, ts FROM %s.%s`,
+				alias, segformat.MetricsTable,
+			))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf(
 			`SELECT "__name__", labels, value, timestamp_ms, ts FROM read_parquet('%s')`,
-			layout.ToSlash(snapshot),
+			layout.ToSlash(s.Path),
 		))
-	}
-
-	for tier := 0; tier < maxTier; tier++ {
-		glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
-		if matches, _ := filepath.Glob(glob); len(matches) > 0 {
-			parts = append(parts, fmt.Sprintf(
-				`SELECT "__name__", labels, value, timestamp_ms, ts FROM read_parquet('%s')`,
-				layout.ToSlash(glob),
-			))
-		}
-	}
-
-	if len(parts) == 0 {
-		return "", fmt.Errorf("query: no parquet sources for tenant %q", tenant)
 	}
 
 	union := strings.Join(parts, " UNION ALL ")
 	name := viewName(tenant)
-	sqlText := fmt.Sprintf("CREATE OR REPLACE VIEW %s AS %s", name, union)
+	sqlText := strings.Join(attach, "\n")
+	if sqlText != "" {
+		sqlText += "\n"
+	}
+	sqlText += fmt.Sprintf("CREATE OR REPLACE VIEW %s AS %s", name, union)
 	if !AssertNoUnionByName(sqlText) {
 		return "", fmt.Errorf("query: view SQL must not use union_by_name or filename")
 	}

@@ -284,7 +284,7 @@ func recordLokiSandbox(viewSQL string, openSet int, omitMsg bool) {
 // openLokiSandbox opens a locked-down :memory: DuckDB connection whose only
 // visible relation is the tenant's log windows, timestamped by landing time.
 func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimits, startNs, endNs int64, omitMessage bool, recentLookback time.Duration) (*sql.Conn, func(), error) {
-	viewSQL, files, err := sandboxLokiLogsSQL(tenantRoot, startNs, endNs, omitMessage, recentLookback)
+	_, files, err := sandboxLokiLogsSQL(tenantRoot, startNs, endNs, omitMessage, recentLookback)
 	if err != nil {
 		return nil, nil, wrapSandboxErr(err)
 	}
@@ -296,10 +296,22 @@ func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimit
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := attachLogsDuckDB(ctx, conn, files); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	opts := logsCatalogOpts{
+		StartNs: startNs, EndNs: endNs, WithIngestTS: true, OmitMessage: omitMessage,
+	}
+	viewSQL, err := buildLogsRelationSQLMixed(files, opts)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
 	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxLogsView+" AS "+viewSQL); err != nil {
 		if omitMessage {
-			// Summary-only tenants have no message column; EXCLUDE would fail.
-			viewSQL, files, err = sandboxLokiLogsSQL(tenantRoot, startNs, endNs, false, recentLookback)
+			opts.OmitMessage = false
+			viewSQL, err = buildLogsRelationSQLMixed(files, opts)
 			if err != nil {
 				cleanup()
 				return nil, nil, wrapSandboxErr(err)

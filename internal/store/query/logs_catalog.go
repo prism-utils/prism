@@ -13,14 +13,15 @@ import (
 	"github.com/elk-utilities/prism/internal/store/logmeta"
 )
 
-// logFileMeta is one landed or compacted log Parquet the planners may open.
+// logFileMeta is one landed or compacted log segment the planners may open.
 type logFileMeta struct {
-	Path     string
-	Artifact string
-	Bytes    int64
-	MinTsNs  int64
-	MaxTsNs  int64
-	Mtime    time.Time
+	Path      string
+	Artifact  string
+	Bytes     int64
+	MinTsNs   int64
+	MaxTsNs   int64
+	Mtime     time.Time
+	duckAlias string // set after sandbox ATTACH for .duckdb segments
 }
 
 // logsCatalogOpts controls how the shared logs relation is built.
@@ -216,12 +217,23 @@ func manifestToLogFiles(absTenantRoot, dataDir, tenant, artifact string, m logme
 }
 
 func listParquetInDir(absTenantRoot, dir, artifact string) ([]logFileMeta, error) {
-	matches, err := filepath.Glob(filepath.Join(dir, "*.parquet"))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var out []logFileMeta
-	for _, match := range matches {
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		ext := filepath.Ext(e.Name())
+		if ext != ".parquet" && ext != ".duckdb" {
+			continue
+		}
+		match := filepath.Join(dir, e.Name())
 		ok, err := safeTenantParquetFile(absTenantRoot, match)
 		if err != nil {
 			return nil, err
@@ -340,5 +352,17 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 		return "", nil, err
 	}
 	files = filterLogFiles(files, opts)
+	hasDuck := false
+	for _, f := range files {
+		if filepath.Ext(f.Path) == ".duckdb" {
+			hasDuck = true
+			break
+		}
+	}
+	if hasDuck {
+		// Callers that need duckdb must ATTACH then call buildLogsRelationSQLMixed.
+		// Parquet-only SQL would fail on .duckdb paths; return files with empty SQL.
+		return "", files, nil
+	}
 	return buildLogsRelationSQL(files, opts), files, nil
 }

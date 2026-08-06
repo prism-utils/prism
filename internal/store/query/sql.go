@@ -17,7 +17,6 @@ import (
 
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/layout"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
@@ -254,7 +253,16 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 	if err != nil {
 		return nil, nil, err
 	}
-	viewSQL, err := sandboxMetricsUnionSQL(tenantRoot, hotOnly)
+	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if err := attachMetricsDuckDB(ctx, conn, sources); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	viewSQL, err := sandboxMetricsUnionSQLFromSources(sources)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -263,7 +271,16 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 		cleanup()
 		return nil, nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
 	}
-	logsSQL, err := sandboxLogsUnionSQL(tenantRoot)
+	logFiles, err := listLogSegmentFiles(tenantRoot)
+	if err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if err := attachLogsDuckDB(ctx, conn, logFiles); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	logsSQL, err := buildLogsRelationSQLMixed(logFiles, logsCatalogOpts{})
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -407,54 +424,16 @@ const emptyMetricsViewSQL = `SELECT ` +
 	`CAST(NULL AS TIMESTAMP) AS ts ` +
 	`WHERE 1=0`
 
-func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
-	absRoot, err := filepath.Abs(tenantRoot)
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
-		absRoot = resolved
-	}
-	absRoot = filepath.Clean(absRoot)
-
-	paths, err := collectSafeParquetPaths(absRoot, tenantRoot, hotOnly)
-	if err != nil {
-		return "", err
-	}
-	if len(paths) == 0 {
-		// No parquet sources yet (freshly-provisioned tenant, or a hot-only
-		// tenant with no rows). Serve a correctly-typed, empty `metrics`
-		// relation so valid read-only queries succeed with zero rows instead
-		// of failing with a misleading 400 "bad query". The column list and
-		// types must match the read_parquet projection below.
-		return emptyMetricsViewSQL, nil
-	}
-	var parts []string
-	for _, p := range paths {
-		parts = append(parts, fmt.Sprintf(
-			`SELECT "__name__", labels, value, timestamp_ms, ts FROM read_parquet('%s')`,
-			layout.ToSlash(p),
-		))
-	}
-	union := strings.Join(parts, " UNION ALL ")
-	sqlText := union
-	if !AssertNoUnionByName(sqlText) {
-		return "", fmt.Errorf("view SQL must not use union_by_name or filename")
-	}
-	return sqlText, nil
-}
-
 // emptyLogsViewSQL is the body of the sandbox `logs` view when a tenant has no
-// landed log parquet: zero rows with the guaranteed logs columns (message,
-// format) plus the summary columns (template, count), so a query against a
-// logs-empty tenant returns an empty result instead of failing with a
-// misleading 400.
+// landed log segments: zero rows with the guaranteed logs columns.
 const emptyLogsViewSQL = `SELECT ` +
 	`CAST(NULL AS VARCHAR) AS message, ` +
 	`CAST(NULL AS VARCHAR) AS format, ` +
 	`CAST(NULL AS VARCHAR) AS template, ` +
 	`CAST(NULL AS BIGINT) AS count ` +
 	`WHERE 1=0`
+
+const hotSnapshotRel = "hot/current.parquet"
 
 func validateReadOnlySQL(raw string) error {
 	s := stripSQLComments(strings.TrimSpace(raw))

@@ -72,11 +72,41 @@ func (b *Builder) buildSQL(ctx context.Context, req *Request, db *sql.DB) (strin
 
 	if !b.HotOnly {
 		for tier := 0; tier < maxTier; tier++ {
-			glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
-			if matches, _ := filepath.Glob(glob); len(matches) > 0 {
+			dir := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier))
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return "", nil, err
+				}
+				continue
+			}
+			for _, e := range entries {
+				if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+					continue
+				}
+				ext := filepath.Ext(e.Name())
+				if ext != ".parquet" && ext != ".duckdb" {
+					continue
+				}
+				p := filepath.Join(dir, e.Name())
+				if ext == ".duckdb" {
+					if db == nil {
+						continue
+					}
+					alias := sanitizeAlias(fmt.Sprintf("qseg_%d_%s", tier, strings.TrimSuffix(e.Name(), ext)))
+					if _, err := db.ExecContext(ctx, fmt.Sprintf(
+						"ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(p), alias,
+					)); err != nil {
+						return "", nil, fmt.Errorf("query: attach %s: %w", p, err)
+					}
+					parts = append(parts, fmt.Sprintf(
+						"SELECT * FROM %s.metrics WHERE ts >= ? AND ts < ?", alias,
+					))
+					continue
+				}
 				parts = append(parts, fmt.Sprintf(
 					"SELECT * FROM read_parquet('%s') WHERE ts >= ? AND ts < ?",
-					layout.ToSlash(glob),
+					layout.ToSlash(p),
 				))
 			}
 		}
@@ -119,6 +149,20 @@ func hotTableExists(ctx context.Context, db *sql.DB, table string) bool {
 	//nolint:gosec // G201: table name is a package const, not user input.
 	_, err := db.ExecContext(ctx, fmt.Sprintf("SELECT 1 FROM %s LIMIT 0", table))
 	return err == nil
+}
+
+func sanitizeAlias(s string) string {
+	var b strings.Builder
+	b.WriteString("a_")
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // Execute runs the unified query against the tenant DuckDB and returns rows.
