@@ -97,7 +97,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		logger.Info("ingested", "ns", ns, "artifact", artifact, "rows", n)
+		logger.Debug("ingested", "ns", ns, "artifact", artifact, "rows", n)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
@@ -158,6 +158,6 @@ func landLogWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *eng
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	logger.Info("landed log window", "ns", ns, "artifact", artifact, "bytes", n)
+	logger.Debug("landed log window", "ns", ns, "artifact", artifact, "bytes", n)
 	w.WriteHeader(http.StatusNoContent)
 }

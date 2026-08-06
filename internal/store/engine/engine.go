@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -53,6 +54,7 @@ type Config struct {
 type Engine struct {
 	cfg   Config
 	clock func() time.Time
+	log   *slog.Logger
 
 	mu      sync.Mutex
 	lru     *tenantLRU
@@ -88,10 +90,20 @@ func New(cfg Config, now func() time.Time) *Engine { //nolint:gocritic // Config
 	return &Engine{
 		cfg:      cfg,
 		clock:    now,
+		log:      slog.Default(),
 		lru:      newTenantLRU(cfg.MaxOpenTenants),
 		flushAt:  make(map[string]time.Time),
 		coalesce: make(map[logCoalesceKey]*logCoalesceBuf),
 	}
+}
+
+// SetLogger installs the logger used for per-tenant flush/snapshot failures.
+// A nil logger resets to slog.Default.
+func (e *Engine) SetLogger(log *slog.Logger) {
+	if log == nil {
+		log = slog.Default()
+	}
+	e.log = log
 }
 
 // Ingest inserts a parquet window body into hot_current, stamping ts=now().
@@ -262,6 +274,7 @@ func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, 
 }
 
 // FlushDue rolls hot tables and writes L0 segments for tenants whose hot window elapsed.
+// Per-tenant failures are logged and skipped so one bad tenant cannot block others.
 func (e *Engine) FlushDue() error {
 	e.mu.Lock()
 	tenants := make([]string, 0, len(e.flushAt))
@@ -275,7 +288,7 @@ func (e *Engine) FlushDue() error {
 
 	for _, ns := range tenants {
 		if err := e.flushTenant(ns); err != nil {
-			return err
+			e.log.Error("flush tenant", "tenant", ns, "err", err)
 		}
 	}
 	return nil

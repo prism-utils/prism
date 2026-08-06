@@ -180,7 +180,7 @@ func (s *FlightServer) doPutDuckDB(stream flight.FlightService_DoPutServer, firs
 			return status.Errorf(codes.Internal, "ingest: land log: %v", err)
 		}
 		if n > 0 {
-			s.log.Info("flight landed log duckdb window", "ns", tenant, "artifact", artifact, "bytes", n)
+			s.log.Debug("flight landed log duckdb window", "ns", tenant, "artifact", artifact, "bytes", n)
 		}
 		return stream.Send(&flight.PutResult{})
 	}
@@ -192,7 +192,7 @@ func (s *FlightServer) doPutDuckDB(stream flight.FlightService_DoPutServer, firs
 		return status.Errorf(codes.Internal, "ingest: land duckdb: %v", err)
 	}
 	if n > 0 {
-		s.log.Info("flight ingested duckdb", "ns", tenant, "artifact", artifact, "rows", n)
+		s.log.Debug("flight ingested duckdb", "ns", tenant, "artifact", artifact, "rows", n)
 	}
 	return stream.Send(&flight.PutResult{})
 }
@@ -245,7 +245,7 @@ func (s *FlightServer) doPutArrow(stream flight.FlightService_DoPutServer, first
 			return status.Errorf(codes.Internal, "ingest: land log: %v", err)
 		}
 		if n > 0 {
-			s.log.Info("flight landed log window", "ns", tenant, "artifact", artifact, "bytes", n)
+			s.log.Debug("flight landed log window", "ns", tenant, "artifact", artifact, "bytes", n)
 		}
 		return stream.Send(&flight.PutResult{})
 	}
@@ -254,7 +254,7 @@ func (s *FlightServer) doPutArrow(stream flight.FlightService_DoPutServer, first
 		return status.Errorf(codes.Internal, "ingest: land: %v", err)
 	}
 	if n > 0 {
-		s.log.Info("flight ingested", "ns", tenant, "artifact", artifact, "rows", n)
+		s.log.Debug("flight ingested", "ns", tenant, "artifact", artifact, "rows", n)
 	}
 	return stream.Send(&flight.PutResult{})
 }

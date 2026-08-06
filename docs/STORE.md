@@ -245,7 +245,8 @@ share one validation chain and land via `engine.Ingest` / `engine.IngestDuckDB`.
 | `application/octet-stream` or empty | Magic sniff: DuckDB (`DUCK` at offset 8) or Parquet (`PAR1`) |
 
 Empty body → `204` no-op. An unreadable / incompatible DuckDB storage version
-returns **`400`** with an actionable error (not `500`).
+returns **`400`** with an actionable error (not `500`). Per-window success lines
+(HTTP and Flight) log at **Debug**; startup/shutdown/config stay at Info.
 
 **Logs artifacts** (`logs-raw`/`logs-template`/`logs-summary`, opt-in via
 `ALLOWED_ARTIFACTS`) skip the metrics hot catalog: each window is landed as an
@@ -409,7 +410,7 @@ Directories `0750`, files `0640`.
 
 ## Lifecycle (`internal/store/lifecycle`, `merge`, `rollup`, `stats`)
 
-Background work runs in one goroutine with four independent tickers started from `cmd/prism-store serve` and stopped on shutdown. Tick errors are logged (`slog`) and never fatal.
+Background work runs in one goroutine with four independent tickers started from `cmd/prism-store serve` and stopped on shutdown. Tick errors are logged (`slog`) and never fatal. Within each tick, **per-tenant** (and for rollups, **per-file**) failures are logged and skipped so one noisy tenant cannot starve flush, merge, retention, or hot snapshots for others; only catastrophic data-dir listing failures abort the tick.
 
 | Ticker | Default | Action |
 |---|---|---|
@@ -423,8 +424,8 @@ Background work runs in one goroutine with four independent tickers started from
 Lucene **TieredMergePolicy** analogue over immutable Parquet tiers. Merge DuckDB
 connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store config.
 
-- **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs.
-- **Trigger:** when a tier has ≥ `SEGMENTS_PER_TIER` (default 6) live segments, the planner groups by size level (floor-rounded log scale), picks the first time-adjacent contiguous run (gap ≤ one segment span), and shrinks the candidate set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`.
+- **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs (metrics tiers **and** logs landing / log tiers).
+- **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, the planner groups by size level (floor-rounded log scale) for metrics tiers, picks the first time-adjacent contiguous run (gap ≤ one segment span), and shrinks the candidate set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`. Logs landing uses the same seal exclusion and shrink-to-fit rule.
 - **One action per tick:** no cascade — at most one merge per tenant per merge tick, lowest tier first.
 - **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are deleted only after the output is atomically renamed.
 
@@ -441,7 +442,7 @@ rollups (avoids rework on volatile data). Rollup DuckDB workers apply the same
 
 ### Retention
 
-Tier segments with `MaxTs` **strictly before** `now − RETENTION_DAYS` are deleted (default 15 days kept, 16 days deleted at the boundary). Rollup files whose max `bucket` is before the same cutoff are removed on the retention tick.
+Tier segments with `MaxTs` **strictly before** `now − RETENTION_DAYS` are deleted (default 15 days kept, 16 days deleted at the boundary). The same `RETENTION_DAYS` window applies to metrics tiers, rollup files (by max `bucket`), and log window age. Rollup files that are empty or corrupt (`MAX(bucket)` NULL / unreadable) are deleted on the retention tick without aborting the pass. `MAX_LOG_FILES` (when set) caps log files per artifact across landing + tiers; enforcement continues even if a peer tenant's rollup step fails.
 
 ### Metering (`internal/store/stats`)
 
