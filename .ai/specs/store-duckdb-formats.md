@@ -1,6 +1,6 @@
 # Spec: Store configurable hot + merge formats (Parquet | DuckDB)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-duckdb-formats`
 - **Owner phase:** orchestrator → developer
@@ -148,17 +148,17 @@ Parquet before upgrading DuckDB storage). Do **not** tag a release in this PR.
 ## 6. Mandatory review gates
 
 - [x] **Gate 1 — Follows the guidelines**
-  - Re-verified after `921cc4e`: DESIGN.md § Arbitrary SQL sandbox matches ATTACH+duckdb; flagged non-atomic comments rewritten.
+  - Independent re-check: DESIGN.md § Arbitrary SQL sandbox documents Parquet `read_parquet` + `.duckdb` ATTACH; mixed trees; matches delivered sandbox behavior.
 - [x] **Gate 2 — Tests cover edge cases**
 - [x] **Gate 3 — Docs & comments match**
-  - `SQLConfig.RunJobs` field comment updated to immutable parquet|duckdb segments (matches handler block).
+  - Independent re-check of `a63174f`: `SQLConfig.RunJobs` field comment says immutable parquet|duckdb segments and matches the handler block (`hot/current.{parquet|duckdb}`, ATTACH).
 - [x] **Gate 4 — Comments are atomic**
-  - Re-verified: `sandboxMetricsUnionSQL` and `sandboxLogsRelationSQL` prose no longer name other funcs/packages.
+  - Independent re-check: `sandboxMetricsUnionSQL` / `sandboxLogsRelationSQL` / handler prose have no cross-symbol refs; `921cc4e` fixes still present.
 - [x] Full docs/REVIEW.md checklist passes
-  - Gate 3 closed (RunJobs comment). Lint/test green; format-matrix skipped (prose-only fix).
+  - `make lint test` green (0 issues; all packages ok). Prose-only fix; format-matrix not re-run.
 
 ## 7. Reviewer notes
 
-- Gate 3 fix: `SQLConfig.RunJobs` comment now says immutable parquet|duckdb segments (atomic; no cross-refs).
-- Prior round: Gates 1/4 fixed in `921cc4e`; format-matrix e2e all four combos PASS; TDD history OK.
+- **ALL_OK** after independent Gate 3 re-verify on `a63174f` (`RunJobs` comment ↔ handler). Gates 1/4 still hold from `921cc4e`.
+- Prior: format-matrix e2e all four combos PASS; TDD (`eb99e2b` before feat); no SemVer tag in PR.
 - Optional follow-up (non-blocking): unit-test empty `DUCKDB_STORAGE_VERSION` rejection; matrix e2e only asserts `/sql` counts, not on-disk extensions.
