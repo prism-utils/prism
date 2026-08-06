@@ -1,6 +1,6 @@
 # Spec: Store configurable hot + merge formats (Parquet | DuckDB)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/store-duckdb-formats`
 - **Owner phase:** orchestrator → developer
@@ -155,10 +155,9 @@ Parquet before upgrading DuckDB storage). Do **not** tag a release in this PR.
 - [x] **Gate 4 — Comments are atomic**
   - Independent re-check: `sandboxMetricsUnionSQL` / `sandboxLogsRelationSQL` / handler prose have no cross-symbol refs; `921cc4e` fixes still present.
 - [x] Full docs/REVIEW.md checklist passes
-  - `make lint test` green (0 issues; all packages ok). Prose-only fix; format-matrix not re-run.
+  - Re-verify on `cf2f6bf`: `make lint test` green (0 issues); Makefile CGO override only; gates 1–4 still hold.
 
 ## 7. Reviewer notes
 
-- **IN_REVIEW** — CI `full` failed: `make e2e` inherited global `CGO_ENABLED=0` while `./test/e2e` imports go-duckdb via format-matrix (`undefined: bindings.Type`). Fix: `CGO_ENABLED=1` on `e2e` / `promql-e2e` / `loki-e2e` (same pattern as `format-matrix-e2e` / `make test`).
-- Prior ALL_OK after Gate 3 re-verify on `a63174f`; format-matrix e2e all four combos PASS; TDD (`eb99e2b` before feat); no SemVer tag in PR.
+- **ALL_OK** on `cf2f6bf`: Makefile fix is correct and minimal — `CGO_ENABLED=1` on `e2e` / `promql-e2e` / `loki-e2e` only (matches `format-matrix-e2e` / `make test`). Reproduced: `CGO_ENABLED=0` → `undefined: bindings.Type`; `CGO_ENABLED=1` → e2e package compiles. `make lint test` green (0 issues). Gates 1–4 unchanged (no product/docs/comment drift). TDD (`eb99e2b` before feat); no SemVer tag.
 - Optional follow-up (non-blocking): unit-test empty `DUCKDB_STORAGE_VERSION` rejection; matrix e2e only asserts `/sql` counts, not on-disk extensions.
