@@ -125,6 +125,11 @@ format-matrix-e2e: ## Hot×merge format matrix (parquet|duckdb) metrics+logs via
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make format-matrix-e2e"; exit 1; }
 	CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestFormatMatrixHotMergeCombos -timeout 45m -v ./test/e2e/...
 
+.PHONY: agent-duckdb-e2e
+agent-duckdb-e2e: ## Agent duckdb encode → store ingest (+ mixed hot) via docker
+	@command -v docker >/dev/null 2>&1 || { echo "docker required for make agent-duckdb-e2e"; exit 1; }
+	CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestAgentDuckDBTransferIngest -timeout 45m -v ./test/e2e/...
+
 .PHONY: full-tests
 full-tests: lint test integration e2e ## The phase-completion gate: everything
 	@echo "full-tests: OK"

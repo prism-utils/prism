@@ -1,0 +1,21 @@
+# CGO agent image for duckdb encoder e2e (go-duckdb). Production `make build`
+# stays CGO-free; release/goreleaser may ship CGO for duckdb support.
+FROM golang:1.25-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+ARG VERSION=e2e
+ENV CGO_ENABLED=1
+RUN go build -trimpath \
+    -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${VERSION}" \
+    -o /out/prism ./cmd/prism
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/prism /usr/local/bin/prism
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/prism"]
+CMD ["run", "-config", "/etc/prism/prism.yaml"]

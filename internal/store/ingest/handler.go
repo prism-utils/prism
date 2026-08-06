@@ -1,11 +1,14 @@
 package ingest
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/elk-utilities/prism/internal/duckdbfile"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
@@ -47,7 +50,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		}
 
 		// Logs carry a variable per-format schema, so they are landed as
-		// immutable parquet files (queried later with union_by_name) instead of
+		// immutable files (queried later with union_by_name) instead of
 		// being inserted into the fixed metrics hot catalog.
 		if isLogArtifact(artifact) {
 			//nolint:contextcheck // engine.LandLogWindow manages its own DB context internally
@@ -56,9 +59,31 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		}
 
 		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
-		//nolint:contextcheck // engine.Ingest manages its own DB context internally
-		n, err := eng.Ingest(ns, body)
+		isDuckDB, stream, err := classifyMetricsBody(r.Header.Get("Content-Type"), body)
 		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			logger.Error("ingest read failed", "ns", ns, "artifact", artifact, "err", err)
+			http.Error(w, "ingest failed", http.StatusInternalServerError)
+			return
+		}
+
+		var n int64
+		if isDuckDB {
+			//nolint:contextcheck // engine owns DB context for ingest/flush
+			n, err = eng.IngestDuckDB(ns, stream)
+		} else {
+			//nolint:contextcheck // engine owns DB context for ingest/flush
+			n, err = eng.Ingest(ns, stream)
+		}
+		if err != nil {
+			if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
 				http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
@@ -83,12 +108,43 @@ func isLogArtifact(artifact string) bool {
 	return strings.HasPrefix(artifact, "logs-")
 }
 
+// classifyMetricsBody decides duckdb vs parquet from Content-Type, peeking only
+// MagicPeek bytes when CT is empty/octet-stream (magic sniff). The returned
+// reader replays any peeked prefix so the engine still sees the full body.
+func classifyMetricsBody(contentType string, body io.Reader) (isDuckDB bool, stream io.Reader, err error) {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	switch ct {
+	case duckdbfile.ContentType:
+		return true, body, nil
+	case "", "application/octet-stream":
+		peek := make([]byte, duckdbfile.MagicPeek)
+		n, readErr := io.ReadFull(body, peek)
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			peek = peek[:n]
+			readErr = nil
+		}
+		if readErr != nil {
+			return false, nil, readErr
+		}
+		return duckdbfile.HasMagic(peek), io.MultiReader(bytes.NewReader(peek), body), nil
+	default:
+		return false, body, nil
+	}
+}
+
 // landLogWindow persists a logs-* window as a file and writes the ingest
 // response (204 on success or empty no-op; 413 when the body is too large).
 func landLogWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *engine.Engine, logger *slog.Logger, ns, artifact string) {
 	body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
 	n, err := eng.LandLogWindow(ns, artifact, body)
 	if err != nil {
+		if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			http.Error(w, "window too large", http.StatusRequestEntityTooLarge)

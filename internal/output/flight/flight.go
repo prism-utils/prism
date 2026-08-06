@@ -1,9 +1,10 @@
 // Package flight implements an Output that ships a window to an Apache Arrow
-// Flight server via DoPut. The block carries an Arrow IPC stream (from the
-// `arrow` encoder); this output reframes those records as FlightData so the
-// receiver ingests the columns directly into columnar storage — no row-by-row
-// re-parse on the server. The producing pipeline/branch/window ride in the
-// FlightDescriptor path so the receiver can name artifacts consistently.
+// Flight server via DoPut. Arrow IPC blocks are reframed as FlightData so the
+// receiver ingests columns directly. DuckDB blocks (format=duckdb) are sent as
+// opaque file bytes on DoPut instead, with format=duckdb in descriptor app
+// metadata (and optionally a trailing path segment) so the receiver can branch.
+// The producing pipeline/branch/window ride in the FlightDescriptor path so the
+// receiver can name artifacts consistently.
 package flight
 
 import (
@@ -23,6 +24,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/duckdbfile"
 	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
@@ -120,11 +122,48 @@ func (o *Output) Shutdown(context.Context) error {
 	return nil
 }
 
-// Consume reads the block's IPC records and DoPuts them to the server.
+// Consume ships the block. Arrow IPC windows are reframed as Flight records;
+// duckdb windows are sent as opaque DoPut bodies with format=duckdb metadata.
 func (o *Output) Consume(ctx context.Context, block data.EncodedBlock) error {
 	if len(block.Bytes) == 0 {
 		return nil // empty window
 	}
+	if block.Format == "duckdb" {
+		return o.consumeDuckDB(ctx, block)
+	}
+	return o.consumeArrow(ctx, block)
+}
+
+func (o *Output) consumeDuckDB(ctx context.Context, block data.EncodedBlock) error {
+	stream, err := o.client.DoPut(ctx)
+	if err != nil {
+		return fmt.Errorf("output/flight: doput: %w", err)
+	}
+	desc := &flight.FlightDescriptor{
+		Type: flight.DescriptorPATH,
+		Path: descriptorPathDuckDB(block.Meta),
+	}
+	if err := stream.Send(&flight.FlightData{
+		FlightDescriptor: desc,
+		AppMetadata:      []byte(duckdbfile.FormatMeta),
+		DataBody:         block.Bytes,
+	}); err != nil {
+		return fmt.Errorf("output/flight: send duckdb: %w", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		return fmt.Errorf("output/flight: close send: %w", err)
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("output/flight: ack: %w", err)
+		}
+	}
+}
+
+func (o *Output) consumeArrow(ctx context.Context, block data.EncodedBlock) error {
 	rdr, err := ipc.NewReader(bytes.NewReader(block.Bytes))
 	if err != nil {
 		return fmt.Errorf("output/flight: ipc reader: %w", err)
@@ -193,4 +232,10 @@ func nano(t time.Time) string {
 		return "0"
 	}
 	return strconv.FormatInt(t.UnixNano(), 10)
+}
+
+// descriptorPathDuckDB appends format=duckdb so the receiver can branch without
+// parsing the payload as Arrow IPC.
+func descriptorPathDuckDB(m *data.BlockMeta) []string {
+	return append(descriptorPath(m), duckdbfile.FormatMeta)
 }

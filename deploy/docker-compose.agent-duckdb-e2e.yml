@@ -1,0 +1,46 @@
+# Agent→store .duckdb transfer e2e. Driven by `make agent-duckdb-e2e`.
+services:
+  prism-store:
+    build:
+      context: ..
+      dockerfile: Dockerfile.store.build
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9090"
+      DATA_DIR: "/data"
+      ALLOWED_ARTIFACTS: "metrics-raw"
+      AUTH_MODE: "none"
+      RUN_JOBS: "true"
+      SQL_API_ENABLED: "true"
+      PROMQL_API_ENABLED: "true"
+      HOT_SNAPSHOT_SECONDS: "2"
+      FLUSH_TICK_SECONDS: "2"
+      HOT_WINDOW_SECONDS: "30"
+      HOT_SEGMENT_FORMAT: "${HOT_SEGMENT_FORMAT:-parquet}"
+      MERGE_SEGMENT_FORMAT: "${MERGE_SEGMENT_FORMAT:-parquet}"
+      DUCKDB_STORAGE_VERSION: "${DUCKDB_STORAGE_VERSION:-v1.0.0}"
+    ports:
+      - "${STORE_HOST_PORT:-19094}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 40
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    command:
+      - "--web.listen-address=:9100"
+    expose:
+      - "9100"
+
+  prism-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile.agent.cgo
+    depends_on:
+      node-exporter:
+        condition: service_started
+      prism-store:
+        condition: service_healthy
+    volumes:
+      - ./agent-duckdb-e2e/prism-agent.yaml:/etc/prism/prism.yaml:ro
