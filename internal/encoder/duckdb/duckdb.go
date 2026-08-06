@@ -26,8 +26,8 @@ const Type = "duckdb"
 
 // Config configures the duckdb encoder.
 type Config struct {
-	// StorageVersion pins STORAGE_VERSION on created files. Empty uses the
-	// shared default matching the store's go-duckdb line.
+	// StorageVersion pins STORAGE_VERSION on created files. Empty defaults to
+	// v1.0.0.
 	StorageVersion string `json:"storage_version"`
 }
 

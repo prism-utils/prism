@@ -1,9 +1,10 @@
 // Package flight implements an Output that ships a window to an Apache Arrow
-// Flight server via DoPut. The block carries an Arrow IPC stream (from the
-// `arrow` encoder); this output reframes those records as FlightData so the
-// receiver ingests the columns directly into columnar storage — no row-by-row
-// re-parse on the server. The producing pipeline/branch/window ride in the
-// FlightDescriptor path so the receiver can name artifacts consistently.
+// Flight server via DoPut. Arrow IPC blocks are reframed as FlightData so the
+// receiver ingests columns directly. DuckDB blocks (format=duckdb) are sent as
+// opaque file bytes on DoPut instead, with format=duckdb in descriptor app
+// metadata (and optionally a trailing path segment) so the receiver can branch.
+// The producing pipeline/branch/window ride in the FlightDescriptor path so the
+// receiver can name artifacts consistently.
 package flight
 
 import (

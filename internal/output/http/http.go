@@ -64,7 +64,9 @@ type Config struct {
 	// current without restarting the process. Trailing whitespace is trimmed.
 	// Mutually exclusive with Token.
 	TokenFile string `json:"token_file"`
-	// ContentType sets the request Content-Type (default application/octet-stream).
+	// ContentType sets the request Content-Type. Empty selects a format-dependent
+	// default: application/vnd.duckdb for duckdb blocks, otherwise
+	// application/octet-stream.
 	ContentType string `json:"content_type"`
 	// TLS configures transport security for https endpoints.
 	TLS *tlsConfig `json:"tls,omitempty"`

@@ -24,8 +24,8 @@ import (
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
-// ErrIncompatibleDuckDBStorage is returned when an ingest .duckdb body cannot
-// be opened (typically a STORAGE_VERSION the bundled DuckDB does not support).
+// ErrIncompatibleDuckDBStorage is returned when an ingest .duckdb body reports
+// a STORAGE_VERSION the bundled DuckDB cannot read.
 var ErrIncompatibleDuckDBStorage = errors.New("incompatible duckdb storage version")
 
 const (
@@ -134,8 +134,9 @@ func (e *Engine) Ingest(tenant string, body io.Reader) (int64, error) {
 }
 
 // IngestDuckDB attaches a checkpointed .duckdb window and inserts its data
-// table into hot_current. STORAGE_VERSION mismatches return
-// ErrIncompatibleDuckDBStorage.
+// table into hot_current. Only STORAGE_VERSION mismatches return
+// ErrIncompatibleDuckDBStorage; corrupt or otherwise unreadable files are
+// ordinary errors.
 func (e *Engine) IngestDuckDB(tenant string, body io.Reader) (int64, error) {
 	tmp, n, err := writeTempFile(body, "*.duckdb")
 	if err != nil {
@@ -161,7 +162,10 @@ func (e *Engine) IngestDuckDB(tenant string, body io.Reader) (int64, error) {
 	te.mu.Lock()
 	defer te.mu.Unlock()
 	if _, err := te.db.ExecContext(ctx, attach); err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrIncompatibleDuckDBStorage, err)
+		if isDuckDBStorageVersionErr(err) {
+			return 0, fmt.Errorf("%w: %w", ErrIncompatibleDuckDBStorage, err)
+		}
+		return 0, fmt.Errorf("engine: duckdb attach: %w", err)
 	}
 	//nolint:gosec // G201: table names are package consts; attach alias is fixed.
 	q := fmt.Sprintf(`
@@ -172,9 +176,6 @@ func (e *Engine) IngestDuckDB(tenant string, body io.Reader) (int64, error) {
 	res, err := te.db.ExecContext(ctx, q, ts)
 	_, _ = te.db.ExecContext(ctx, "DETACH "+alias)
 	if err != nil {
-		if isDuckDBStorageErr(err) {
-			return 0, fmt.Errorf("%w: %w", ErrIncompatibleDuckDBStorage, err)
-		}
 		return 0, fmt.Errorf("engine: duckdb insert: %w", err)
 	}
 	affected, _ := res.RowsAffected()
@@ -182,15 +183,16 @@ func (e *Engine) IngestDuckDB(tenant string, body io.Reader) (int64, error) {
 	return affected, nil
 }
 
-func isDuckDBStorageErr(err error) bool {
+// isDuckDBStorageVersionErr reports DuckDB errors that mean the file's
+// STORAGE_VERSION is outside the range this binary can read.
+func isDuckDBStorageVersionErr(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "storage") ||
-		strings.Contains(msg, "version") ||
-		strings.Contains(msg, "incompatible") ||
-		strings.Contains(msg, "serialization")
+	return strings.Contains(msg, "version number") ||
+		(strings.Contains(msg, "storage") && strings.Contains(msg, "version")) ||
+		(strings.Contains(msg, "incompatible") && strings.Contains(msg, "storage"))
 }
 
 // logArtifactPattern guards the artifact segment used in a landing path so a
@@ -199,11 +201,13 @@ func isDuckDBStorageErr(err error) bool {
 // while rejecting path separators, dots, and other unsafe characters.
 var logArtifactPattern = regexp.MustCompile(`^logs-[a-z0-9-]+$`)
 
-// LandLogWindow persists a logs-* artifact window as an immutable parquet file
-// under <tenant>/logs/<artifact>/, bypassing the metrics hot catalog. Logs carry
-// a variable, per-format schema, so they are stored as files and read back with
-// union_by_name at query time rather than inserted into the fixed metrics hot
-// table. Empty bodies are a no-op. Returns bytes written (0 for empty).
+// LandLogWindow persists a logs-* artifact window as an immutable file under
+// <tenant>/logs/<artifact>/, bypassing the metrics hot catalog. The on-disk
+// extension follows the body: .duckdb when the DuckDB header magic is present,
+// otherwise .parquet. Logs carry a variable, per-format schema, so they are
+// stored as files and read back with union_by_name at query time rather than
+// inserted into the fixed metrics hot table. Empty bodies are a no-op. Returns
+// bytes written (0 for empty).
 func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, error) {
 	if !storetenant.TenantAllowed(tenant) {
 		return 0, fmt.Errorf("engine: invalid tenant %q", tenant)

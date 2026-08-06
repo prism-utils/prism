@@ -59,7 +59,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		}
 
 		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
-		payload, err := io.ReadAll(body)
+		isDuckDB, stream, err := classifyMetricsBody(r.Header.Get("Content-Type"), body)
 		if err != nil {
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
@@ -72,12 +72,12 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		}
 
 		var n int64
-		if duckdbfile.DetectHTTP(r.Header.Get("Content-Type"), payload) {
+		if isDuckDB {
 			//nolint:contextcheck // engine owns DB context for ingest/flush
-			n, err = eng.IngestDuckDB(ns, bytes.NewReader(payload))
+			n, err = eng.IngestDuckDB(ns, stream)
 		} else {
 			//nolint:contextcheck // engine owns DB context for ingest/flush
-			n, err = eng.Ingest(ns, bytes.NewReader(payload))
+			n, err = eng.Ingest(ns, stream)
 		}
 		if err != nil {
 			if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
@@ -106,6 +106,33 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 // takes the land-as-file path instead of the metrics hot-catalog insert.
 func isLogArtifact(artifact string) bool {
 	return strings.HasPrefix(artifact, "logs-")
+}
+
+// classifyMetricsBody decides duckdb vs parquet from Content-Type, peeking only
+// MagicPeek bytes when CT is empty/octet-stream (magic sniff). The returned
+// reader replays any peeked prefix so the engine still sees the full body.
+func classifyMetricsBody(contentType string, body io.Reader) (isDuckDB bool, stream io.Reader, err error) {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	switch ct {
+	case duckdbfile.ContentType:
+		return true, body, nil
+	case "", "application/octet-stream":
+		peek := make([]byte, duckdbfile.MagicPeek)
+		n, readErr := io.ReadFull(body, peek)
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			peek = peek[:n]
+			readErr = nil
+		}
+		if readErr != nil {
+			return false, nil, readErr
+		}
+		return duckdbfile.HasMagic(peek), io.MultiReader(bytes.NewReader(peek), body), nil
+	default:
+		return false, body, nil
+	}
 }
 
 // landLogWindow persists a logs-* window as a file and writes the ingest

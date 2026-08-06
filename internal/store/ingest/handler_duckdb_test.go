@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"io"
 	"log/slog"
 	"net/http"
@@ -58,6 +59,34 @@ func writeMetricsDuckDBWindow(t *testing.T, storageVersion string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// duckdbHeaderChecksum mirrors DuckDB's on-disk block checksum over an
+// 8-byte-aligned buffer.
+func duckdbHeaderChecksum(buf []byte) uint64 {
+	const mul = uint64(0xbf58476d1ce4e5b9)
+	result := uint64(5381)
+	for i := 0; i+8 <= len(buf); i += 8 {
+		v := binary.LittleEndian.Uint64(buf[i : i+8])
+		result ^= v * mul
+	}
+	return result
+}
+
+// withFutureStorageVersion rewrites the main-header version number to an
+// unsupported value and refreshes the header checksum so ATTACH fails with a
+// real STORAGE_VERSION mismatch (not corruption).
+func withFutureStorageVersion(t *testing.T, body []byte) []byte {
+	t.Helper()
+	const fileHeaderSize = 4096
+	if len(body) < fileHeaderSize {
+		t.Fatalf("fixture too small for header rewrite: %d", len(body))
+	}
+	out := append([]byte(nil), body...)
+	// Main header: [0:8]=checksum, [8:12]=DUCK, [12:20]=version number.
+	binary.LittleEndian.PutUint64(out[12:20], 99999)
+	binary.LittleEndian.PutUint64(out[0:8], duckdbHeaderChecksum(out[8:fileHeaderSize]))
+	return out
 }
 
 func TestIngestDuckDB_ContentType(t *testing.T) {
@@ -119,7 +148,29 @@ func TestIngestDuckDB_IncompatibleStorageVersion(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	// Truncate a valid duckdb past the magic so ATTACH fails with a clear 4xx.
+	body := withFutureStorageVersion(t, writeMetricsDuckDBWindow(t, ""))
+
+	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), bytes.NewReader(body))
+	req.Header.Set("Content-Type", duckdbfile.ContentType)
+	resp := doIngestReq(t, req)
+	defer closeResp(t, resp)
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 400 for STORAGE_VERSION mismatch, got %d body=%s", resp.StatusCode, b)
+	}
+	msg, _ := io.ReadAll(resp.Body)
+	lower := strings.ToLower(string(msg))
+	if !strings.Contains(lower, "incompatible") || !strings.Contains(lower, "duckdb") {
+		t.Fatalf("error body should name incompatible duckdb storage, got %q", msg)
+	}
+}
+
+func TestIngestDuckDB_CorruptBodyNotIncompatible(t *testing.T) {
+	h, _ := testHandler(t, testConfig("", ingest.AuthNone))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	// Truncation past the magic is corruption, not a STORAGE_VERSION mismatch.
 	body := writeMetricsDuckDBWindow(t, "")
 	if len(body) < 64 {
 		t.Fatalf("fixture too small: %d", len(body))
@@ -130,16 +181,13 @@ func TestIngestDuckDB_IncompatibleStorageVersion(t *testing.T) {
 	req.Header.Set("Content-Type", duckdbfile.ContentType)
 	resp := doIngestReq(t, req)
 	defer closeResp(t, resp)
-	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
+	if resp.StatusCode == http.StatusBadRequest {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("want 4xx for incompatible/corrupt duckdb, got %d body=%s", resp.StatusCode, b)
+		t.Fatalf("corrupt body must not map to incompatible-storage 400, body=%s", b)
 	}
-	msg, _ := io.ReadAll(resp.Body)
-	lower := strings.ToLower(string(msg))
-	if !strings.Contains(lower, "incompatible") &&
-		!strings.Contains(lower, "duckdb") &&
-		!strings.Contains(lower, "storage") {
-		t.Fatalf("error body should name the failure, got %q", msg)
+	if resp.StatusCode < 500 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 5xx for corrupt duckdb attach, got %d body=%s", resp.StatusCode, b)
 	}
 }
 

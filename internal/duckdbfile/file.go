@@ -1,6 +1,5 @@
-// Package duckdbfile names the on-the-wire DuckDB window format shared by the
-// agent encoder and store ingest (Content-Type, magic sniff, table name, and
-// storage-version pin).
+// Package duckdbfile defines the on-the-wire DuckDB window format:
+// Content-Type, header magic, single-table name, and STORAGE_VERSION pin.
 package duckdbfile
 
 import (
@@ -18,8 +17,8 @@ const (
 	// Table is the single relation name inside an agent-emitted window database.
 	Table = "data"
 
-	// DefaultStorageVersion pins newly created .duckdb windows to a
-	// compatibility line readable by the store's bundled go-duckdb.
+	// DefaultStorageVersion is the STORAGE_VERSION written into newly created
+	// .duckdb windows when callers do not override it.
 	DefaultStorageVersion = "v1.0.0"
 
 	// Magic is the DuckDB file header marker.
@@ -27,6 +26,9 @@ const (
 
 	// MagicOffset is where Magic begins in a DuckDB database file.
 	MagicOffset = 8
+
+	// MagicPeek is the number of leading bytes needed to evaluate HasMagic.
+	MagicPeek = MagicOffset + len(Magic)
 
 	// FormatMeta is the Flight app-metadata / path token that marks an opaque
 	// duckdb DoPut (as opposed to Arrow IPC).
