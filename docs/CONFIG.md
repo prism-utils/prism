@@ -791,12 +791,12 @@ see [`STORE.md`](STORE.md).
 | `LISTEN_ADDR` | string | `:8080` | Primary HTTP bind (`/healthz`, `/readyz`, ingest or combined mux). |
 | `LOKI_API_ENABLED` | bool | `true` | When `false`, the Loki logs read API (`/{ns}/loki/api/v1/*`) is not registered. Logs-only; reuses the `/sql` sandbox, RBAC `query`, the `/sql` in-flight queue, `SQL_API_MAX_ROWS` (entries per query), and `SQL_API_TIMEOUT_SECONDS`. |
 | `LOGS_RECENT_LOOKBACK_HOURS` | int (hours) | `0` (off) | When `> 0`, Loki label/browse requests with omitted `start` only open log files within now−lookback. Explicit `start`/`end` still reach cold history. |
-| `MAX_LOG_FILES` | int | `0` (off) | Per-artifact cap across landing + `logs/<artifact>/tiers/`. When exceeded, retention deletes oldest windows first. |
+| `MAX_LOG_FILES` | int | `0` (off) | Per-artifact cap across landing + `logs/<artifact>/tiers/`. When exceeded, retention deletes oldest windows first. Enforced on each retention tick even if another tenant's metrics/rollup step fails (fail-safe). |
 | `LOG_COALESCE_MAX_AGE_SECONDS` | int (seconds) | `0` (off) | When `> 0` (or bytes set), buffer same-artifact lands and seal one Parquet after this age. |
 | `LOG_COALESCE_MAX_BYTES` | int (bytes) | `0` (off) | Seal coalesced log buffer when pending bytes reach this size. |
 | `MAX_BODY_BYTES` | int64 (bytes) | `268435456` | Maximum HTTP ingest body size (256 MiB). |
 | `MAX_OPEN_TENANTS` | int | `32` | LRU cap on concurrently open per-tenant DuckDB engines (`engine.duckdb`). |
-| `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments are never merge inputs. |
+| `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments (`Bytes ≥` this) are never merge inputs for metrics tiers **or** logs landing/tiers. |
 | `MAX_TIER` | int | `8` | Highest tier directory scanned (`L0`…`L8`). |
 | `MERGE_TICK_SECONDS` | int (seconds) | `60` | Tier merge ticker interval. |
 | `MODE` | string | `standalone` | Deployment role: `standalone`, `client`, or `cluster`. |
@@ -810,13 +810,13 @@ see [`STORE.md`](STORE.md).
 | `PROMQL_MAX_SAMPLES` | int | `50000000` | Max samples a single PromQL query may load into memory (mirrors Prometheus `--query.max-samples`); exceeding returns `422`. |
 | `PROMQL_TIMEOUT_SECONDS` | int (seconds) | `30` | Per-query timeout for the PromQL API. |
 | `QUERY_HOT_ONLY` | bool | `false` | When `true`, structured query, `/sql`, and PromQL sandboxes union only hot data (no tier/rollup Parquet). |
-| `RETENTION_DAYS` | int | `15` | Delete tier segments and rollups strictly older than this window. |
+| `RETENTION_DAYS` | int | `15` | Delete metrics tier segments, rollups, and log windows strictly older than this window. Empty/corrupt rollups are deleted without aborting the tick; per-tenant errors are logged and skipped. |
 | `RETENTION_TICK_HOURS` | int (hours) | `1` | Retention ticker interval when `RETENTION_TICK_SECONDS` is unset. |
 | `RETENTION_TICK_SECONDS` | int (seconds) | _(unset)_ | Retention ticker in seconds; overrides hours when set to a positive integer. |
 | `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. |
 | `ROUTE_PREFIX` | string | _(empty)_ | Optional path prefix for ingest/query/SQL routes (e.g. `/prism-proxy`). |
 | `RUN_JOBS` | bool | `true` | When `false`, skip background maintenance (snapshot, flush, merge, rollups, retention). Ingest/query still run. |
-| `SEGMENTS_PER_TIER` | int | `6` | Minimum live segments at a tier before merge compaction runs (metrics tiers **and** per-artifact logs landing → `logs/<artifact>/tiers/L0`). |
+| `SEGMENTS_PER_TIER` | int | `6` | Minimum **unsealed** live segments at a tier (or logs landing) before merge compaction runs. Candidate sets shrink when summed bytes would exceed `MAX_SEGMENT_BYTES`. |
 | `SQL_API_ENABLED` | bool | `true` | When `false`, `POST /{ns}/sql` is not registered. |
 | `SQL_API_MAX_BODY_BYTES` | int64 (bytes) | `1048576` | Maximum POST `/sql` JSON body (1 MiB). |
 | `SQL_API_MAX_INFLIGHT` | int | `4` | Max concurrent `/sql` executions when `SQL_API_QUEUE_ENABLED=true`. |
