@@ -209,11 +209,12 @@ func buildLogsRelationSQLMixed(files []logFileMeta, opts logsCatalogOpts) (strin
 		if alias == "" {
 			return "", fmt.Errorf("query: duckdb log segment missing attach alias: %s", f.Path)
 		}
-		sel := fmt.Sprintf("SELECT * FROM %s.%s", alias, segformat.LogsTable)
+		rel := segformat.LogsRelationForPath(f.Path)
+		sel := fmt.Sprintf("SELECT * FROM %s.%s", alias, rel)
 		if opts.WithIngestTS {
 			sel = fmt.Sprintf(
 				`SELECT *, %d::BIGINT AS %s FROM %s.%s`,
-				f.MinTsNs, lokiTSColumn, alias, segformat.LogsTable,
+				f.MinTsNs, lokiTSColumn, alias, rel,
 			)
 		}
 		if opts.OmitMessage {

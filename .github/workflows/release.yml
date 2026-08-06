@@ -23,15 +23,24 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
+      - name: install cross compilers (agent + store CGO)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc g++
       - name: build agent binary for scanning
         run: |
           mkdir -p scanctx
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
             go build -trimpath \
               -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
               -o scanctx/prism ./cmd/prism
       - name: build agent image for scanning
         run: docker build -f Dockerfile.release -t prism:scan scanctx
+      - name: agent image runtime smoke (glibc/base skew gate)
+        # Agent is CGO (duckdb encoder); same glibc floor as prism-store.
+        run: |
+          set -e
+          docker run --rm --entrypoint /usr/local/bin/prism prism:scan version
       - name: trivy agent image scan (gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:

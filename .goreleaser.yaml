@@ -1,7 +1,7 @@
 # GoReleaser config for prism. Runs only on a `v*` git tag (see
 # .github/workflows/release.yml) — never on merge-to-main. It produces signed
-# static binaries + checksums + SBOMs and signed multi-arch GHCR images for
-# both prism (agent) and prism-store.
+# CGO binaries (agent + store; duckdb) + checksums + SBOMs and signed multi-arch
+# GHCR images for prism (agent), prism-store, and prism-alert.
 #
 # Local dry run:  make snapshot   (builds everything, pushes nothing)
 # Validate:       make release-check
@@ -14,11 +14,13 @@ before:
     - go mod tidy
 
 builds:
+  # Agent is CGO so the real duckdb encoder can seal .duckdb windows for logs
+  # + metrics transfer (stub encoder remains for CGO_ENABLED=0 local builds).
   - id: prism
     main: ./cmd/prism
     binary: prism
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos:
       - linux
     goarch:
@@ -28,6 +30,17 @@ builds:
       - -trimpath
     ldflags:
       - -s -w -X github.com/elk-utilities/prism/internal/version.Version={{ .Version }}
+    overrides:
+      - goos: linux
+        goarch: amd64
+        env:
+          - CC=x86_64-linux-gnu-gcc
+          - CXX=x86_64-linux-gnu-g++
+      - goos: linux
+        goarch: arm64
+        env:
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
 
   - id: prism-store
     main: ./cmd/prism-store

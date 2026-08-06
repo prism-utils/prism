@@ -184,7 +184,7 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 	final := filepath.Join(destDir, layout.SegmentNameFormat(now, x.cfg.SegmentFormat.Ext()))
 	tmp := final + ".tmp"
 
-	fromParts, cleanup, err := x.sourcesSelectSQL(action.Sources, segformat.LogsTable)
+	fromParts, cleanup, err := x.sourcesSelectSQLLogs(action.Sources)
 	if err != nil {
 		return Segment{}, err
 	}

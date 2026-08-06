@@ -596,17 +596,17 @@ carry forward under the new binary and image name
   the frozen output contract; the agent remains the producer.
 - **CGO / DuckDB.** The store links DuckDB via
   `github.com/marcboeker/go-duckdb/v2` (CGO; bundled DuckDB ≥1.2). Its container image uses
-  `debian:bookworm-slim` plus `libstdc++6`, running as uid/gid **472**. The
-  default agent release stays pure-static `CGO_ENABLED=0` with a stub `duckdb`
-  encoder; a CGO build (`Dockerfile.agent.cgo` / e2e) enables the real encoder
-  that seals checkpointed `.duckdb` windows. The agent still must not import
-  `internal/store`.
+  `debian:trixie-slim` plus `libstdc++6`, running as uid/gid **472**. The
+  agent release is also CGO so the real `duckdb` encoder can seal checkpointed
+  `.duckdb` windows for logs/metrics transfer (`Dockerfile.release` /
+  `Dockerfile.agent.cgo`); a `CGO_ENABLED=0` local build still compiles with the
+  stub encoder. The agent still must not import `internal/store`.
 - **Build invariant.** Build and static-analysis each binary by explicit path
   (`./cmd/prism`, `./cmd/prism-store`). Never run `CGO_ENABLED=0 go build ./...`
   or `go vet ./...` under a blanket `CGO_ENABLED=0` export when the store
   packages are present — that would mis-compile or skip CGO surfaces. CI unit
-  tests run with `CGO_ENABLED=1` (`make test`). Agent release builds keep
-  `CGO_ENABLED=0` scoped to `./cmd/prism` only (duckdb encoder stubbed).
+  tests run with `CGO_ENABLED=1` (`make test`). Agent release builds use
+  `CGO_ENABLED=1` for `./cmd/prism` (real duckdb encoder).
 
 ### Consequences
 
