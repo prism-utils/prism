@@ -11,60 +11,118 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
 
 const (
 	agentDuckComposeFile = "../../deploy/docker-compose.agent-duckdb-e2e.yml"
-	agentDuckStorePort   = "19094"
-	agentDuckStoreBase   = "http://127.0.0.1:" + agentDuckStorePort
 	agentDuckTenant      = "agentduck"
+	agentDuckBasePort    = 19094
 )
+
+// agentDuckRunID isolates compose projects from concurrent e2e processes.
+var agentDuckRunID = fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
+
+// agentDuckSerial serializes scenarios within one process.
+var agentDuckSerial sync.Mutex
 
 // TestAgentDuckDBTransferIngest proves agent→store .duckdb ingest and one mixed
 // hot/merge combo with a duckdb agent payload.
 func TestAgentDuckDBTransferIngest(t *testing.T) {
 	requireDocker(t)
+	agentDuckWithLock(t)
 
-	// Serial scenarios share host port 19094; tear down any leftover stacks from
-	// interrupted runs before the first subtest binds the port.
 	agentDuckCleanupLeftovers(t)
 
 	t.Run("hot=parquet_merge=parquet", func(t *testing.T) {
-		runAgentDuckDBScenario(t, "parquet", "parquet")
+		runAgentDuckDBScenario(t, "parquet", "parquet", 0)
 	})
 	t.Run("hot=duckdb_merge=parquet", func(t *testing.T) {
-		runAgentDuckDBScenario(t, "duckdb", "parquet")
+		runAgentDuckDBScenario(t, "duckdb", "parquet", 1)
 	})
 }
 
 func agentDuckProject(hot, merge string) string {
-	return fmt.Sprintf("agentduck-h-%s-m-%s", hot, merge)
+	return fmt.Sprintf("ad%s-h-%s-m-%s", agentDuckRunID, hot, merge)
+}
+
+// agentDuckWithLock holds an exclusive flock for the whole test so concurrent
+// make agent-duckdb-e2e processes cannot collide on containers/ports.
+func agentDuckWithLock(t *testing.T) {
+	t.Helper()
+	agentDuckSerial.Lock()
+	t.Cleanup(agentDuckSerial.Unlock)
+
+	lockPath := filepath.Join(os.TempDir(), "prism-agent-duckdb-e2e.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open e2e lock: %v", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		t.Fatalf("flock e2e lock: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	})
 }
 
 func agentDuckCleanupLeftovers(t *testing.T) {
 	t.Helper()
 	for _, p := range []string{
-		"agent-duckdb", // legacy fixed project name
-		agentDuckProject("parquet", "parquet"),
-		agentDuckProject("duckdb", "parquet"),
+		"agent-duckdb",
+		"agent-duckdb-e2e",
+		"deploy",
 	} {
 		agentDuckComposeDown(t, p)
 	}
-	agentDuckWaitPortFree(t)
+	out, _ := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}").Output()
+	for _, name := range strings.Split(string(out), "\n") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(name, "agent-duckdb"),
+			strings.HasPrefix(name, "agentduck-"),
+			strings.HasPrefix(name, "ad") && strings.Contains(name, "-h-") && strings.Contains(name, "-m-"),
+			name == "deploy-prism-store-1",
+			name == "deploy-prism-agent-1",
+			name == "deploy-node-exporter-1":
+			_ = exec.Command("docker", "rm", "-f", name).Run()
+		}
+	}
+	nets, _ := exec.Command("docker", "network", "ls", "--format", "{{.Name}}").Output()
+	for _, name := range strings.Split(string(nets), "\n") {
+		name = strings.TrimSpace(name)
+		if strings.HasPrefix(name, "agent-duckdb") || strings.HasPrefix(name, "agentduck-") ||
+			(strings.HasPrefix(name, "ad") && strings.Contains(name, "-h-")) ||
+			name == "deploy_default" {
+			_ = exec.Command("docker", "network", "rm", name).Run()
+		}
+	}
+	for _, port := range []int{agentDuckBasePort, agentDuckBasePort + 1} {
+		agentDuckWaitPortFree(t, port)
+	}
 }
 
-func runAgentDuckDBScenario(t *testing.T, hot, merge string) {
+func runAgentDuckDBScenario(t *testing.T, hot, merge string, portOffset int) {
 	t.Helper()
 	project := agentDuckProject(hot, merge)
+	hostPort := agentDuckBasePort + portOffset
+	storeBase := fmt.Sprintf("http://127.0.0.1:%d", hostPort)
 
-	// Tear down this project (and wait for the shared host port) before up, and
-	// again before the next sibling subtest — do not rely solely on t.Cleanup
-	// ordering relative to compose's async port release.
 	teardown := func() {
 		agentDuckComposeDown(t, project)
-		agentDuckWaitPortFree(t)
+		agentDuckForceRemoveProject(t, project)
+		agentDuckWaitPortFree(t, hostPort)
 	}
 	teardown()
 	t.Cleanup(teardown)
@@ -73,6 +131,7 @@ func runAgentDuckDBScenario(t *testing.T, hot, merge string) {
 	cmd.Env = append(os.Environ(),
 		"HOT_SEGMENT_FORMAT="+hot,
 		"MERGE_SEGMENT_FORMAT="+merge,
+		"STORE_HOST_PORT="+strconv.Itoa(hostPort),
 	)
 	cmd.Stdout = testWriter{t}
 	cmd.Stderr = testWriter{t}
@@ -85,7 +144,7 @@ func runAgentDuckDBScenario(t *testing.T, hot, merge string) {
 	deadline := time.Now().Add(3 * time.Minute)
 	var metricsOK bool
 	for time.Now().Before(deadline) {
-		if n := agentDuckSQLCount(t, "SELECT COUNT(*) FROM metrics"); n > 0 {
+		if n := agentDuckSQLCount(t, storeBase, "SELECT COUNT(*) FROM metrics"); n > 0 {
 			metricsOK = true
 			break
 		}
@@ -96,7 +155,7 @@ func runAgentDuckDBScenario(t *testing.T, hot, merge string) {
 		t.Fatal("metrics never appeared after agent duckdb ship")
 	}
 
-	// Release port/containers before the next scenario starts (Cleanup also runs).
+	// Release before the next sibling subtest starts (Cleanup also runs).
 	teardown()
 }
 
@@ -106,6 +165,14 @@ func agentDuckComposeDown(t *testing.T, project string) {
 	_ = cmd.Run()
 }
 
+func agentDuckForceRemoveProject(t *testing.T, project string) {
+	t.Helper()
+	for _, svc := range []string{"prism-store", "prism-agent", "node-exporter"} {
+		_ = exec.Command("docker", "rm", "-f", project+"-"+svc+"-1").Run()
+	}
+	_ = exec.Command("docker", "network", "rm", project+"_default").Run()
+}
+
 func agentDuckComposeLogs(t *testing.T, project string) {
 	t.Helper()
 	cmd := exec.Command("docker", "compose", "-p", project, "-f", agentDuckComposeFile, "logs", "--no-color")
@@ -113,11 +180,9 @@ func agentDuckComposeLogs(t *testing.T, project string) {
 	t.Logf("compose logs (%s):\n%s", project, out)
 }
 
-// agentDuckWaitPortFree blocks until nothing is listening on the shared store
-// publish port, so the next compose up does not race docker's port release.
-func agentDuckWaitPortFree(t *testing.T) {
+func agentDuckWaitPortFree(t *testing.T, port int) {
 	t.Helper()
-	addr := "127.0.0.1:" + agentDuckStorePort
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		ln, err := net.Listen("tcp", addr)
@@ -127,14 +192,14 @@ func agentDuckWaitPortFree(t *testing.T) {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("host port %s still allocated after compose down", agentDuckStorePort)
+	t.Fatalf("host port %d still allocated after compose down", port)
 }
 
-func agentDuckSQLCount(t *testing.T, sqlText string) int {
+func agentDuckSQLCount(t *testing.T, storeBase, sqlText string) int {
 	t.Helper()
 	payload, _ := json.Marshal(map[string]string{"sql": sqlText})
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
-		agentDuckStoreBase+"/"+agentDuckTenant+"/sql", bytes.NewReader(payload))
+		storeBase+"/"+agentDuckTenant+"/sql", bytes.NewReader(payload))
 	if err != nil {
 		return 0
 	}

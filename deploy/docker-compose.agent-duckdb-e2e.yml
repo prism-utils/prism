@@ -19,7 +19,7 @@ services:
       MERGE_SEGMENT_FORMAT: "${MERGE_SEGMENT_FORMAT:-parquet}"
       DUCKDB_STORAGE_VERSION: "${DUCKDB_STORAGE_VERSION:-v1.0.0}"
     ports:
-      - "19094:9090"
+      - "${STORE_HOST_PORT:-19094}:9090"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
       interval: 2s
