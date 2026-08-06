@@ -1,6 +1,6 @@
 # Spec: Retention fail-safe + quiet ingest logs (#95)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `fix/retention-failsafe`
 - **Owner phase:** orchestrator
@@ -103,12 +103,15 @@ cannot feedback-loop.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+- TDD history confirmed: `43e66cb test(store):…` → `28e57f4 fix(store):…` → `eb80018 docs(store):…`.
+- Re-ran `make lint test` and `make full-tests` (I/O + wiring): both green.
+- Acceptance verified against code: NULL rollup → zero/`delete`; per-tenant continue on retention/merge/flush/snapshot; sealed+shrink log landing merge; ingest success Debug (HTTP+Flight); docs knobs/fail-safe.
+- No unchecked items.
