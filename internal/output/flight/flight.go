@@ -121,11 +121,48 @@ func (o *Output) Shutdown(context.Context) error {
 	return nil
 }
 
-// Consume reads the block's IPC records and DoPuts them to the server.
+// Consume ships the block. Arrow IPC windows are reframed as Flight records;
+// duckdb windows are sent as opaque DoPut bodies with format=duckdb metadata.
 func (o *Output) Consume(ctx context.Context, block data.EncodedBlock) error {
 	if len(block.Bytes) == 0 {
 		return nil // empty window
 	}
+	if block.Format == "duckdb" {
+		return o.consumeDuckDB(ctx, block)
+	}
+	return o.consumeArrow(ctx, block)
+}
+
+func (o *Output) consumeDuckDB(ctx context.Context, block data.EncodedBlock) error {
+	stream, err := o.client.DoPut(ctx)
+	if err != nil {
+		return fmt.Errorf("output/flight: doput: %w", err)
+	}
+	desc := &flight.FlightDescriptor{
+		Type: flight.DescriptorPATH,
+		Path: descriptorPathDuckDB(block.Meta),
+	}
+	if err := stream.Send(&flight.FlightData{
+		FlightDescriptor: desc,
+		AppMetadata:      []byte(duckdbfile.FormatMeta),
+		DataBody:         block.Bytes,
+	}); err != nil {
+		return fmt.Errorf("output/flight: send duckdb: %w", err)
+	}
+	if err := stream.CloseSend(); err != nil {
+		return fmt.Errorf("output/flight: close send: %w", err)
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("output/flight: ack: %w", err)
+		}
+	}
+}
+
+func (o *Output) consumeArrow(ctx context.Context, block data.EncodedBlock) error {
 	rdr, err := ipc.NewReader(bytes.NewReader(block.Bytes))
 	if err != nil {
 		return fmt.Errorf("output/flight: ipc reader: %w", err)
