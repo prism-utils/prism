@@ -9,6 +9,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/component"
 	encoderarrow "github.com/elk-utilities/prism/internal/encoder/arrow"
+	encoderduckdb "github.com/elk-utilities/prism/internal/encoder/duckdb"
 	encoderjson "github.com/elk-utilities/prism/internal/encoder/json"
 	encoderparquet "github.com/elk-utilities/prism/internal/encoder/parquet"
 	encoderraw "github.com/elk-utilities/prism/internal/encoder/raw"
@@ -51,6 +52,7 @@ func Default() (*component.Registry, error) {
 		reg.RegisterEncoder(encoderjson.NewFactory()),
 		reg.RegisterEncoder(encoderparquet.NewFactory()),
 		reg.RegisterEncoder(encoderarrow.NewFactory()),
+		reg.RegisterEncoder(encoderduckdb.NewFactory()),
 		reg.RegisterOutput(stdout.NewFactory()),
 		reg.RegisterOutput(outputfile.NewFactory()),
 		reg.RegisterOutput(outputdir.NewFactory()),

@@ -23,6 +23,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/component"
 	"github.com/elk-utilities/prism/internal/data"
+	"github.com/elk-utilities/prism/internal/duckdbfile"
 	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
@@ -193,4 +194,10 @@ func nano(t time.Time) string {
 		return "0"
 	}
 	return strconv.FormatInt(t.UnixNano(), 10)
+}
+
+// descriptorPathDuckDB appends format=duckdb so the receiver can branch without
+// parsing the payload as Arrow IPC.
+func descriptorPathDuckDB(m *data.BlockMeta) []string {
+	return append(descriptorPath(m), duckdbfile.FormatMeta)
 }

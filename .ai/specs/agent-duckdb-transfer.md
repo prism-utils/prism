@@ -1,13 +1,13 @@
 # Spec: Agent `.duckdb` transfer + store ingest
 
-Status: DRAFT
+Status: READY
 
 - **Slug / branch:** `feat/agent-duckdb-transfer`
-- **Owner phase:** orchestrator (blocked)
+- **Owner phase:** orchestrator → developer
 - **PLAN phase(s):** Agent outputs + store ingest
-- **Pair:** Spec 2 of 2. **Blocked on** `feat/store-duckdb-formats` merged to
-  `main`. After this merges: orchestrator cuts **`v1.9.0`**, waits for release
-  CI (goreleaser → GHCR `prism` + `prism-store` images), verifies tags/images.
+- **Pair:** Spec 2 of 2 (Spec 1 `store-duckdb-formats` merged as #92). After this
+  merges to `main`, **orchestrator** cuts **`v1.9.0`** and verifies GHCR
+  `prism` + `prism-store` images (developer does not tag).
 
 ## 1. Task
 
@@ -15,72 +15,90 @@ Let the agent **encode and ship windows as native `.duckdb` files** (dir, HTTP,
 and Flight) — write → checkpoint/close → transfer raw bytes — and make
 **prism-store ingest** accept `.duckdb` bodies for the same artifacts. After
 land, the store’s configured `HOT_SEGMENT_FORMAT` / `MERGE_SEGMENT_FORMAT`
-(from Spec 1) still govern hot export and merge output. Prove Docker scenarios
-with agent→store `.duckdb` paths and mixed Parquet/DuckDB configs; then
-**publish `v1.9.0`**.
+(from Spec 1) still govern hot export and merge output. Prove Docker/e2e
+agent→store `.duckdb` (+ mixed Parquet/DuckDB hot/merge) green.
 
 ## 2. Scope
 
 - **In scope:**
-  - Agent: `duckdb` encoder (or format option on existing parquet encoder path)
-    producing a single-table (or contract-shaped) checkpointed `.duckdb` window;
-    `dir` names `… .duckdb`; `http` Content-Type for duckdb; Flight payload as
-    duckdb bytes with same descriptor provenance as Parquet.
-  - Store ingest: detect/accept `.duckdb` (content-type and/or magic); validate
-    tenant/artifact; land into the engine/hot path; convert to configured hot
-    format at hot/cache phase when needed.
-  - OUTPUT_CONTRACT: `ext` may be `parquet` | `duckdb`; schemas unchanged;
-    contract minor bump; version sensitivity + STORAGE_VERSION documented.
-  - Pin producer STORAGE_VERSION to store-compatible version; reject
-    incompatible files with a clear error.
-  - Docker/e2e: agent ships duckdb → store ingest → query; also parquet agent →
-    duckdb hot (conversion); matrix with Spec 1 merge formats as applicable.
-  - After merge to `main`: tag `v1.9.0`, confirm GHCR images published.
+  - Agent `duckdb` encoder: RecordBatch → single-table checkpointed `.duckdb`
+    bytes (`EncodedBlock.Format = "duckdb"`); pin `STORAGE_VERSION` to store’s
+    go-duckdb-compatible version (same default as Spec 1 / `DUCKDB_STORAGE_VERSION`).
+  - `dir` output: filename `… .duckdb` when block format is duckdb.
+  - `http` output: Content-Type **`application/vnd.duckdb`** when shipping duckdb
+    (configurable override still allowed).
+  - `flight` output: when block format is `duckdb`, DoPut sends **raw duckdb
+    file bytes** (not Arrow IPC); descriptor path remains
+    `[pipeline, branch, start, end]` and **app metadata / trailing path segment
+    carries `format=duckdb`** so the receiver can branch. Existing Arrow IPC
+    Flight path unchanged for `arrow` encoder.
+  - Store HTTP ingest: accept duckdb via Content-Type `application/vnd.duckdb`
+    **or** `application/octet-stream` / empty CT when body magic matches DuckDB
+    (`DUCK` at header magic offset). Parquet (`PAR1` / existing path) unchanged.
+  - Store Flight ingest: if descriptor marks `format=duckdb`, land raw bytes;
+    else keep Arrow→Parquet (current) behavior.
+  - Land → engine/hot path; hot/merge conversion still follows Spec 1 knobs.
+  - Reject incompatible storage version with a clear 4xx/error.
+  - OUTPUT_CONTRACT v1.1: `ext` may be `parquet` | `duckdb`; document CT + magic
+    + Flight framing + version pin.
+  - Docker/e2e: agent→store duckdb ingest→query; at least one mixed hot/merge
+    combo with duckdb agent payload.
+  - Docs: CONFIG (encoder), STORE ingest, OUTPUT_CONTRACT, TESTING.
 
 - **Out of scope:**
-  - Re-implementing hot/merge format knobs (Spec 1).
-  - Homelab-apps chart bump (separate ops task after image exists).
-  - Metric LogQL / unrelated store features.
+  - Changing Spec 1 hot/merge knobs.
+  - Homelab-apps chart bump.
+  - Developer cutting the SemVer tag (orchestrator after merge).
 
-## 3. Open questions — resolved (Phase 0 with store pair)
+## 3. Open questions — resolved
 
 - [x] Q: Which outputs? — A: **dir + http + Flight**.
-- [x] Q: Store ingest? — A: **Accept `.duckdb`**; primary goal is agent→store
-      raw duckdb bytes.
-- [x] Q: Contract? — A: Additive `ext=duckdb`; OK.
-- [x] Q: Release? — A: **`v1.9.0`** after this PR on `main` (both specs done).
-
-- [ ] Q: Exact HTTP Content-Type string and Flight data encoding framing —
-      A: PENDING — resolve at Spec 2 READY time with Decision Protocol (must
-      match detectability in ingest without breaking Parquet clients).
+- [x] Q: Store ingest? — A: **Accept `.duckdb`**.
+- [x] Q: Contract? — A: Additive `ext=duckdb`.
+- [x] Q: Release? — A: **`v1.9.0`** by orchestrator after this PR merges.
+- [x] Q: HTTP Content-Type + Flight framing? — A: CT
+      **`application/vnd.duckdb`**; ingest also sniffs DuckDB magic when CT is
+      octet-stream/empty. Flight: raw duckdb bytes when `format=duckdb` in
+      descriptor metadata; Arrow IPC path unchanged otherwise.
 
 ## 4. Decision log
 
-- **Ship checkpointed `.duckdb` bytes (no re-encode on consumer ingest path
-  beyond configured hot conversion):**
-  - ref: https://duckdb.org/docs/current/internals/storage — native DB file is
-    the unit of transfer when versions align.
-  - perf: zero Parquet encode on agent when duckdb selected; store may still
-    convert at hot if `HOT_SEGMENT_FORMAT` differs.
-  - product: matches “ship the database” for low-CPU edge → store.
-
-- **Producer/consumer STORAGE_VERSION must match store’s go-duckdb line:**
+- **Ship checkpointed `.duckdb` bytes:**
   - ref: https://duckdb.org/docs/current/internals/storage
-  - perf: avoids runtime export/import fallback on every window.
-  - product: fail fast with actionable error beats silent corruption.
+  - perf: no Parquet encode on agent when duckdb selected.
+  - product: “ship the database” for edge→store.
 
-_(Additional decisions for Content-Type / Flight framing logged when Spec 2
-moves to READY.)_
+- **Pin STORAGE_VERSION to store go-duckdb line:**
+  - ref: https://duckdb.org/docs/current/internals/storage
+  - perf: fail fast vs per-window export/import.
+  - product: clear incompatibility errors.
+
+- **Content-Type `application/vnd.duckdb` + magic sniff fallback:**
+  - ref: DuckDB header magic `DUCK` —
+    https://duckdb.org/docs/current/internals/storage ; no IANA-registered
+    duckdb MIME — vendors use explicit vnd types or octet-stream.
+  - perf: one header/magic check; no full parse to classify.
+  - product: explicit CT for agents; octet-stream + magic keeps curl/tools
+    working without breaking Parquet (`PAR1`) clients.
+
+- **Flight: opaque duckdb DoPut when format=duckdb; Arrow path otherwise:**
+  - ref: existing prism Flight = Arrow IPC for columnar ingest
+    (`internal/output/flight`); DuckDB file is not Arrow IPC.
+  - perf: avoids Arrow→Parquet→DuckDB round-trip when agent already sealed
+    duckdb.
+  - product: one Flight server, two payload modes selected by descriptor
+    metadata — Parquet/Arrow clients unchanged.
 
 ## 5. Acceptance checklist
 
-- [ ] Agent emits `.duckdb` via dir, http, and Flight when configured
-- [ ] Store ingest accepts `.duckdb` windows; Parquet ingest unchanged
+- [ ] Agent `duckdb` encoder + dir/http/Flight emit when configured
+- [ ] Store HTTP + Flight ingest accept `.duckdb`; Parquet/Arrow paths unchanged
 - [ ] Incompatible storage version rejected clearly
-- [ ] OUTPUT_CONTRACT + CONFIG/STORE docs updated
+- [ ] OUTPUT_CONTRACT + CONFIG/STORE/TESTING docs updated
 - [ ] Docker/e2e agent→store duckdb (+ mixed format) green
-- [ ] Tests written first; `make lint test` (+ full/e2e as required) green
-- [ ] After merge: `v1.9.0` tagged; GHCR `prism` + `prism-store` images published
+- [ ] Tests written first (`test:` commit precedes implementation)
+- [ ] `make lint test` green (+ full-tests / e2e as required)
+- [ ] Spec notes release is orchestrator-owned after merge (no tag in this PR)
 
 ## 6. Mandatory review gates
 
@@ -93,8 +111,3 @@ moves to READY.)_
 ## 7. Reviewer notes
 
 _(empty until first review)_
-
-## Blocker
-
-Do **not** set `Status: READY` or open `feat/agent-duckdb-transfer` until
-`store-duckdb-formats` is squash-merged to `main`.
