@@ -110,6 +110,4 @@ agent→store `.duckdb` (+ mixed Parquet/DuckDB hot/merge) green.
 
 ## 7. Reviewer notes
 
-Developer: implementation complete (`make lint test` green). E2e via
-`make agent-duckdb-e2e` (compose `deploy/docker-compose.agent-duckdb-e2e.yml`).
-Do **not** tag `v1.9.0` in this PR — orchestrator after merge.
+_(empty until first review)_
