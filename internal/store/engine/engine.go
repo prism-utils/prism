@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,10 +17,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/elk-utilities/prism/internal/duckdbfile"
+	"github.com/elk-utilities/prism/internal/store/layout"
 	"github.com/elk-utilities/prism/internal/store/segformat"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
+
+// ErrIncompatibleDuckDBStorage is returned when an ingest .duckdb body cannot
+// be opened (typically a STORAGE_VERSION the bundled DuckDB does not support).
+var ErrIncompatibleDuckDBStorage = errors.New("incompatible duckdb storage version")
 
 const (
 	hotCurrentTable = "hot_current"
@@ -90,7 +97,7 @@ func New(cfg Config, now func() time.Time) *Engine { //nolint:gocritic // Config
 // Ingest inserts a parquet window body into hot_current, stamping ts=now().
 // Empty bodies are a no-op. Returns rows inserted (0 for empty).
 func (e *Engine) Ingest(tenant string, body io.Reader) (int64, error) {
-	tmp, n, err := writeTempParquet(body)
+	tmp, n, err := writeTempFile(body, "*.parquet")
 	if err != nil {
 		return 0, err
 	}
@@ -124,6 +131,66 @@ func (e *Engine) Ingest(tenant string, body io.Reader) (int64, error) {
 	affected, _ := res.RowsAffected()
 	e.scheduleFlush(tenant)
 	return affected, nil
+}
+
+// IngestDuckDB attaches a checkpointed .duckdb window and inserts its data
+// table into hot_current. STORAGE_VERSION mismatches return
+// ErrIncompatibleDuckDBStorage.
+func (e *Engine) IngestDuckDB(tenant string, body io.Reader) (int64, error) {
+	tmp, n, err := writeTempFile(body, "*.duckdb")
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	defer func() { _ = os.Remove(tmp); _ = os.Remove(tmp + ".wal") }()
+
+	if err := e.maybeFlushDue(tenant); err != nil {
+		return 0, err
+	}
+
+	te, err := e.open(tenant)
+	if err != nil {
+		return 0, err
+	}
+	ts := e.clock().UTC()
+	alias := "incoming"
+	ctx := context.Background()
+	attach := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(tmp), alias)
+	te.mu.Lock()
+	defer te.mu.Unlock()
+	if _, err := te.db.ExecContext(ctx, attach); err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrIncompatibleDuckDBStorage, err)
+	}
+	//nolint:gosec // G201: table names are package consts; attach alias is fixed.
+	q := fmt.Sprintf(`
+		INSERT INTO %s
+		SELECT "__name__", labels, value, timestamp_ms, CAST(? AS TIMESTAMP) AS ts
+		FROM %s.%s
+	`, hotCurrentTable, alias, duckdbfile.Table)
+	res, err := te.db.ExecContext(ctx, q, ts)
+	_, _ = te.db.ExecContext(ctx, "DETACH "+alias)
+	if err != nil {
+		if isDuckDBStorageErr(err) {
+			return 0, fmt.Errorf("%w: %w", ErrIncompatibleDuckDBStorage, err)
+		}
+		return 0, fmt.Errorf("engine: duckdb insert: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	e.scheduleFlush(tenant)
+	return affected, nil
+}
+
+func isDuckDBStorageErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "storage") ||
+		strings.Contains(msg, "version") ||
+		strings.Contains(msg, "incompatible") ||
+		strings.Contains(msg, "serialization")
 }
 
 // logArtifactPattern guards the artifact segment used in a landing path so a
@@ -175,8 +242,12 @@ func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, 
 	if e.coalesceEnabled() {
 		return e.landLogCoalesced(tenant, artifact, bodyBytes)
 	}
-	final := filepath.Join(dir, segmentName(e.clock()))
-	//nolint:gosec // G703: dir is tenant/logs/<validated-artifact>; name is segmentName
+	format := segformat.Parquet
+	if duckdbfile.HasMagic(bodyBytes) {
+		format = segformat.DuckDB
+	}
+	final := filepath.Join(dir, segmentNameFormat(e.clock(), format))
+	//nolint:gosec // G703: dir is tenant/logs/<validated-artifact>; name is segmentNameFormat
 	if err := os.WriteFile(final, bodyBytes, 0o600); err != nil {
 		return 0, fmt.Errorf("engine: land log window: %w", err)
 	}
@@ -476,8 +547,8 @@ func tierDir(dataDir, tenant string, tier int) string {
 	return filepath.Join(dataDir, tenant, "tiers", fmt.Sprintf("L%d", tier))
 }
 
-func writeTempParquet(body io.Reader) (path string, n int64, err error) {
-	f, err := os.CreateTemp("", "prism-window-*.parquet")
+func writeTempFile(body io.Reader, pattern string) (path string, n int64, err error) {
+	f, err := os.CreateTemp("", "prism-window-"+pattern)
 	if err != nil {
 		return "", 0, err
 	}

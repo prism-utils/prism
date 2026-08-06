@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 
@@ -23,11 +24,12 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/elk-utilities/prism/internal/duckdbfile"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	"github.com/elk-utilities/prism/internal/tlsconf"
 )
 
-// FlightServer receives DoPut streams and lands Parquet windows via the engine.
+// FlightServer receives DoPut streams and lands Parquet or DuckDB windows via the engine.
 type FlightServer struct {
 	flight.BaseFlightServer
 	cfg  Config
@@ -112,9 +114,91 @@ func flightBearerInterceptor(token string) grpc.StreamServerInterceptor {
 	}
 }
 
-// DoPut reads an Arrow IPC stream, encodes Parquet, and lands via the engine.
+// DoPut lands either opaque duckdb bytes (format=duckdb) or Arrow IPC→Parquet.
 func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
-	rdr, err := flight.NewRecordReader(stream, ipc.WithAllocator(s.mem))
+	first, err := stream.Recv()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return stream.Send(&flight.PutResult{})
+		}
+		return status.Errorf(codes.InvalidArgument, "ingest: recv: %v", err)
+	}
+	var path []string
+	var appMeta []byte
+	if first.FlightDescriptor != nil {
+		path = first.FlightDescriptor.Path
+		appMeta = first.AppMetadata
+	}
+	if duckdbfile.FormatFromFlightMeta(appMeta, path) {
+		return s.doPutDuckDB(stream, first)
+	}
+	return s.doPutArrow(stream, first)
+}
+
+func (s *FlightServer) doPutDuckDB(stream flight.FlightService_DoPutServer, first *flight.FlightData) error {
+	tenant, artifact := pathTenantArtifact(first.FlightDescriptor)
+	authOK, authTenant := s.authenticateFlight(stream.Context())
+	if !authOK {
+		return status.Error(codes.Unauthenticated, "ingest: unauthorized")
+	}
+	if authTenant != "" && authTenant != tenant {
+		return status.Error(codes.PermissionDenied, "ingest: forbidden")
+	}
+	if !ValidateTenant(tenant) {
+		return status.Error(codes.NotFound, "ingest: unknown tenant")
+	}
+	if !ValidateArtifact(artifact, s.cfg.AllowedArtifacts) {
+		return status.Error(codes.NotFound, "ingest: unknown artifact type")
+	}
+
+	var buf bytes.Buffer
+	if len(first.DataBody) > 0 {
+		_, _ = buf.Write(first.DataBody)
+	}
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return status.Errorf(codes.Internal, "ingest: read duckdb: %v", err)
+		}
+		if len(msg.DataBody) > 0 {
+			_, _ = buf.Write(msg.DataBody)
+		}
+	}
+	if buf.Len() == 0 {
+		return stream.Send(&flight.PutResult{})
+	}
+	body := buf.Bytes()
+	if isLogArtifact(artifact) {
+		n, err := s.eng.LandLogWindow(tenant, artifact, bytes.NewReader(body))
+		if err != nil {
+			if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
+				return status.Errorf(codes.InvalidArgument, "ingest: %v", err)
+			}
+			return status.Errorf(codes.Internal, "ingest: land log: %v", err)
+		}
+		if n > 0 {
+			s.log.Info("flight landed log duckdb window", "ns", tenant, "artifact", artifact, "bytes", n)
+		}
+		return stream.Send(&flight.PutResult{})
+	}
+	n, err := s.eng.IngestDuckDB(tenant, bytes.NewReader(body))
+	if err != nil {
+		if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
+			return status.Errorf(codes.InvalidArgument, "ingest: %v", err)
+		}
+		return status.Errorf(codes.Internal, "ingest: land duckdb: %v", err)
+	}
+	if n > 0 {
+		s.log.Info("flight ingested duckdb", "ns", tenant, "artifact", artifact, "rows", n)
+	}
+	return stream.Send(&flight.PutResult{})
+}
+
+func (s *FlightServer) doPutArrow(stream flight.FlightService_DoPutServer, first *flight.FlightData) error {
+	rdr, err := flight.NewRecordReader(&prependStream{FlightService_DoPutServer: stream, first: first}, ipc.WithAllocator(s.mem))
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "ingest: reader: %v", err)
 	}
@@ -155,8 +239,6 @@ func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
 	if err != nil {
 		return status.Errorf(codes.Internal, "ingest: parquet: %v", err)
 	}
-	// Logs carry a variable per-format schema, so they are landed as files (the
-	// same path HTTP ingest uses) rather than inserted into the metrics catalog.
 	if isLogArtifact(artifact) {
 		n, err := s.eng.LandLogWindow(tenant, artifact, bytes.NewReader(parquetBytes))
 		if err != nil {
@@ -175,6 +257,26 @@ func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
 		s.log.Info("flight ingested", "ns", tenant, "artifact", artifact, "rows", n)
 	}
 	return stream.Send(&flight.PutResult{})
+}
+
+// prependStream re-plays the already-received first FlightData before the rest
+// of the DoPut stream so Arrow RecordReader sees a complete IPC sequence.
+type prependStream struct {
+	flight.FlightService_DoPutServer
+	first *flight.FlightData
+	done  bool
+}
+
+func (p *prependStream) Recv() (*flight.FlightData, error) {
+	if !p.done {
+		p.done = true
+		if p.first != nil {
+			msg := p.first
+			p.first = nil
+			return msg, nil
+		}
+	}
+	return p.FlightService_DoPutServer.Recv()
 }
 
 func pathTenantArtifact(d *flight.FlightDescriptor) (tenant, artifact string) {

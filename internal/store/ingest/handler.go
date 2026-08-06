@@ -1,11 +1,14 @@
 package ingest
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/elk-utilities/prism/internal/duckdbfile"
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
@@ -47,7 +50,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		}
 
 		// Logs carry a variable per-format schema, so they are landed as
-		// immutable parquet files (queried later with union_by_name) instead of
+		// immutable files (queried later with union_by_name) instead of
 		// being inserted into the fixed metrics hot catalog.
 		if isLogArtifact(artifact) {
 			//nolint:contextcheck // engine.LandLogWindow manages its own DB context internally
@@ -56,9 +59,31 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		}
 
 		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
-		//nolint:contextcheck // engine.Ingest manages its own DB context internally
-		n, err := eng.Ingest(ns, body)
+		payload, err := io.ReadAll(body)
 		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			logger.Error("ingest read failed", "ns", ns, "artifact", artifact, "err", err)
+			http.Error(w, "ingest failed", http.StatusInternalServerError)
+			return
+		}
+
+		var n int64
+		if duckdbfile.DetectHTTP(r.Header.Get("Content-Type"), payload) {
+			//nolint:contextcheck // engine owns DB context for ingest/flush
+			n, err = eng.IngestDuckDB(ns, bytes.NewReader(payload))
+		} else {
+			//nolint:contextcheck // engine owns DB context for ingest/flush
+			n, err = eng.Ingest(ns, bytes.NewReader(payload))
+		}
+		if err != nil {
+			if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
 				http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
@@ -89,6 +114,10 @@ func landLogWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *eng
 	body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
 	n, err := eng.LandLogWindow(ns, artifact, body)
 	if err != nil {
+		if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			http.Error(w, "window too large", http.StatusRequestEntityTooLarge)

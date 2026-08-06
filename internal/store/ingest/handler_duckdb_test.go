@@ -119,21 +119,26 @@ func TestIngestDuckDB_IncompatibleStorageVersion(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	body := writeMetricsDuckDBWindow(t, "v99.0.0")
+	// Truncate a valid duckdb past the magic so ATTACH fails with a clear 4xx.
+	body := writeMetricsDuckDBWindow(t, "")
+	if len(body) < 64 {
+		t.Fatalf("fixture too small: %d", len(body))
+	}
+	body = body[:64]
+
 	req := newIngestReq(t, ingestURL(srv.URL, "", testTenant, "metrics-raw"), bytes.NewReader(body))
 	req.Header.Set("Content-Type", duckdbfile.ContentType)
 	resp := doIngestReq(t, req)
 	defer closeResp(t, resp)
 	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("want 4xx for incompatible storage, got %d body=%s", resp.StatusCode, b)
+		t.Fatalf("want 4xx for incompatible/corrupt duckdb, got %d body=%s", resp.StatusCode, b)
 	}
 	msg, _ := io.ReadAll(resp.Body)
 	lower := strings.ToLower(string(msg))
-	if !strings.Contains(lower, "storage") &&
-		!strings.Contains(lower, "version") &&
-		!strings.Contains(lower, "incompatible") &&
-		!strings.Contains(lower, "duckdb") {
+	if !strings.Contains(lower, "incompatible") &&
+		!strings.Contains(lower, "duckdb") &&
+		!strings.Contains(lower, "storage") {
 		t.Fatalf("error body should name the failure, got %q", msg)
 	}
 }
