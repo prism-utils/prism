@@ -68,6 +68,18 @@ func ReadManifest(dataDir, tenant, artifact string) (Manifest, error) {
 	return m, nil
 }
 
+// isSegmentName reports whether a filename is a log segment the query planners
+// can open. Tiers hold MERGE_SEGMENT_FORMAT output, so both extensions belong in
+// the catalog: omitting duckdb segments hides every refreshed row.
+func isSegmentName(name string) bool {
+	switch filepath.Ext(name) {
+	case ".parquet", ".duckdb":
+		return true
+	default:
+		return false
+	}
+}
+
 // RebuildManifest scans landing + tiers for one artifact and returns a manifest
 // tagged with version.
 func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest, error) {
@@ -82,7 +94,7 @@ func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest
 			return err
 		}
 		for _, e := range entries {
-			if e.IsDir() || filepath.Ext(e.Name()) != ".parquet" || e.Name()[0] == '.' {
+			if e.IsDir() || !isSegmentName(e.Name()) || e.Name()[0] == '.' {
 				continue
 			}
 			abs := filepath.Join(root, e.Name())

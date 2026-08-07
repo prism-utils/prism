@@ -194,6 +194,11 @@ func EnsureLabelIndex(dataDir, tenant string) (LabelIndex, error) {
 		}
 		artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
 		for _, f := range m.Files {
+			// Indexing reads parquet schemas; duckdb segments are catalogued for
+			// the query planners but carry no index contribution.
+			if filepath.Ext(f.Path) != ".parquet" {
+				continue
+			}
 			abs := filepath.Join(artifactRoot, filepath.FromSlash(f.Path))
 			deltas, err := distinctIndexedValues(abs)
 			if err != nil {
