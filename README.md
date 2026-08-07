@@ -37,9 +37,10 @@ mode, including the cluster coordinator (edge) and clients (defense-in-depth). S
 
 **Arbitrary SQL API.** `POST {ROUTE_PREFIX}/{ns}/sql` runs read-only SQL over a
 tenant's `metrics` relation inside a per-request, tenant-scoped DuckDB sandbox
-(no cross-tenant or host-filesystem access), subject to the same RBAC. Optional
-**in-flight queue** (`SQL_API_QUEUE_ENABLED`, default off) bounds concurrent `/sql`
-with `429` backpressure — see [`docs/MEMORY.md`](docs/MEMORY.md). See
+(no cross-tenant or host-filesystem access), subject to the same RBAC. An
+**in-flight queue** (`SQL_API_QUEUE_ENABLED`, default on) bounds concurrent reads
+with a bounded wait then `429` backpressure, and `GET /admin/queue` reports its
+live state — see [`docs/MEMORY.md`](docs/MEMORY.md). See
 [`docs/STORE.md`](docs/STORE.md#arbitrary-sql-api).
 
 ## What it does

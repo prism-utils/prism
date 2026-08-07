@@ -32,7 +32,8 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **Arbitrary SQL** | `POST /{ns}/sql` — read-only SQL in a per-request sandbox; JSON (default) or Arrow IPC stream on the **same route** via `Accept`. |
 | **PromQL API** | `GET`/`POST /{ns}/api/v1/{query,query_range,series,labels,label/<name>/values}` — Prometheus-compatible read API over the tenant metrics view (`PROMQL_API_ENABLED`, default on). Metrics-only. |
 | **Loki logs API** | `GET`/`POST /{ns}/loki/api/v1/{query_range,labels,label/<name>/values}` — Loki-compatible read API over the tenant `logs` relation, LogQL subset (`LOKI_API_ENABLED`, default on). Logs-only. |
-| **SQL queue** | Optional in-flight limiter (`SQL_API_QUEUE_ENABLED`, default off) with `429` + `Retry-After` backpressure on data nodes. |
+| **Read queue** | In-flight limiter on heavy reads (`SQL_API_QUEUE_ENABLED`, **default on**) with `429` + `Retry-After` backpressure on data nodes. |
+| **Queue snapshot** | `GET /admin/queue` — live caps, in-flight, waiting, and shed total for operators. |
 | **RBAC** | Optional JWT/OIDC + deny-by-default YAML policy (`AUTHZ_POLICY_FILE`); fixed roles `reader` / `writer` / `admin`. |
 | **Cluster modes** | `MODE=standalone` (all-in-one), `client` (owned tenants + local engine), `cluster` (stateless coordinator proxy). |
 | **Metering / stats** | `GET /stats?ns=` — frozen billing JSON + on-disk bytes and compaction CPU seconds. |
@@ -70,9 +71,9 @@ When **`AUTHZ_POLICY_FILE`** is set, RBAC is enforced on HTTP data and admin
 routes in **all** modes (standalone, client, cluster coordinator, and client
 leaves). See [RBAC](#rbac) below.
 
-**Future / out of scope:** routing ingest, admin, `/stats`, or `/ensure`
-through the coordinator; scatter-gather across clients; dynamic service
-discovery; per-client mTLS; health-aware routing and failover.
+**Future / out of scope:** routing ingest, admin, `/stats`, `/ensure`, or
+`/admin/queue` through the coordinator; scatter-gather across clients; dynamic
+service discovery; per-client mTLS; health-aware routing and failover.
 
 ---
 
@@ -169,6 +170,13 @@ client guard. This blocks tenant enumeration (OWASP BOLA).
 - `GET /stats?ns=X` — requires `stats` action on `X`; else `404` or `403` as above.
 - `GET /stats` (no `ns`) — aggregates only tenants the principal may `stats` on;
   `*`-admin sees all; principals with no `stats` scope → `403`.
+
+### `/admin/queue` scoping
+
+`GET /admin/queue` reuses the `stats` action but reports **process-wide** limiter
+state, not per-tenant data: any principal with a `stats` binding sees the node's
+caps, occupancy, and shed total. It exposes no tenant names, query text, or row
+counts. Grant it with the same care as any node-level operational metric.
 
 ### Arrow Flight (fail-fast)
 
@@ -666,12 +674,12 @@ OWASP API1 BOLA.
 | `SQL_API_ENABLED` | `true` | Register route when `true` |
 | `DUCKDB_MEMORY_LIMIT` | _(empty)_ | Sandbox (and engine) memory cap when set |
 | `DUCKDB_THREADS` | _(empty)_ | Sandbox (and engine) thread cap when `> 0` |
-| `SQL_API_QUEUE_ENABLED` | `false` | Enable in-flight limiter (data nodes only) |
-| `SQL_API_MAX_INFLIGHT` | `4` | Max concurrent `/sql` when queue on |
-| `SQL_API_MAX_QUEUE` | `64` | Max waiters when queue on |
-| `SQL_API_QUEUE_TIMEOUT_MS` | `5000` | Max wait for slot; then `429` |
+| `SQL_API_QUEUE_ENABLED` | `true` | In-flight limiter (data nodes only); `false` restores unbounded reads |
+| `SQL_API_MAX_INFLIGHT` | `2` | Max concurrent heavy reads when queue on |
+| `SQL_API_MAX_QUEUE` | `128` | Max waiters when queue on |
+| `SQL_API_QUEUE_TIMEOUT_MS` | `120000` | Max wait for slot; then `429` |
 
-#### In-flight queue (optional)
+#### In-flight queue (default on)
 
 When `SQL_API_QUEUE_ENABLED=true` on a **data node** (standalone or client —
 **not** the cluster coordinator), middleware order is:
@@ -685,10 +693,17 @@ waiters. When the wait queue is full, wait times out, or the client cancels →
 **`429 Too Many Requests`**, body `too many concurrent queries`, header
 **`Retry-After: 1`**.
 
-Default **off** — zero behavior change from prior releases. One shared limiter
-serves public and admin HTTP planes on the same process.
+Default **on** since v1.9.6 (previously off): a fresh or misconfigured deploy is
+protected without operator env. One shared limiter serves public and admin HTTP
+planes on the same process, and `/sql`, PromQL, and Loki reads all pass through
+it, so the caps bound total heavy-read concurrency, not per-API concurrency.
 
-Sizing: see [`MEMORY.md`](MEMORY.md) (`MAX_INFLIGHT × DUCKDB_THREADS ≈ cores`).
+The live state of that limiter is served on the admin plane at
+[`GET /admin/queue`](#get-adminqueue--live-read-queue-snapshot).
+
+Sizing: see [`MEMORY.md`](MEMORY.md) — the binding constraint is
+`MAX_INFLIGHT × DUCKDB_MEMORY_LIMIT` fitting under the pod memory limit, then
+`MAX_INFLIGHT × DUCKDB_THREADS ≈ cores`.
 
 ### Auth
 
@@ -756,7 +771,7 @@ errors are `{"status":"error","errorType":"…","error":"…"}`.
   distinct `(name, labels)` pairs, so they stay bounded by series cardinality.
 - **Bounds:** `PROMQL_MAX_SAMPLES` (default 50,000,000, mirrors Prometheus
   `--query.max-samples`) caps samples per query; `QUERY_HOT_ONLY` restricts to the
-  hot snapshot; the optional `/sql` in-flight queue also gates PromQL. Rollup
+  hot snapshot; the shared read queue (on by default) also gates PromQL. Rollup
   projections are intentionally excluded (they drop labels).
 
 ### Auth, cluster, gating
@@ -865,8 +880,8 @@ filters, and formatters. A clear rejection beats a half-answered query.
 
 ### Auth, cluster, gating
 
-RBAC action **`query`** (same as structured query / `/sql`), and the optional
-`/sql` in-flight queue gates these reads too. Cluster coordinators forward every
+RBAC action **`query`** (same as structured query / `/sql`), and the shared read
+queue (on by default) gates these reads too. Cluster coordinators forward every
 `/{ns}/loki/api/v1/*` pattern to the owning client (authorize-before-proxy;
 client re-enforces via the owned-tenant guard). Registered when
 `LOKI_API_ENABLED=true` (default); the API is logs-only, so metrics-only
@@ -950,6 +965,44 @@ legacy `metrics-raw/`). `compactionCpuSeconds` from `.metering.json`.
 |---|---|
 | non-empty unknown `ns` | `404` |
 | success | `200 application/json` |
+
+### `GET /admin/queue` — live read-queue snapshot
+
+Reports the read limiter's caps and current occupancy so an operator (or the
+homelab `/admin` UI) can see whether reads are queueing or being shed before
+reaching for logs. Same plane and same auth as `/stats`: `ADMIN_TOKEN` bearer
+when RBAC is off, RBAC action `stats` when `AUTHZ_POLICY_FILE` is set. Not a
+frozen contract — unlike `/stats`, this shape may grow.
+
+```json
+{
+  "enabled": true,
+  "maxInFlight": 2,
+  "maxQueue": 128,
+  "timeoutMs": 120000,
+  "inFlight": 1,
+  "waiting": 7,
+  "rejectedTotal": 42
+}
+```
+
+`enabled`, `maxInFlight`, `maxQueue`, and `timeoutMs` echo the configured caps.
+`inFlight` (occupied slots) and `waiting` (queued requests) are instantaneous
+gauges read with atomic loads; `rejectedTotal` is cumulative since process start
+and counts **every** `429` — full queue, expired wait, and client cancellation
+alike. There is no scrape registry: reading this route allocates one small JSON
+response and touches no query path.
+
+A **cluster coordinator** (`MODE=cluster`) runs no limiter of its own — it
+proxies reads to data nodes — so it does **not** register this route and answers
+`404`. That is deliberate: zeros from a coordinator would read as "no queries
+queued" while the data nodes behind it are saturated. Poll each data node
+(standalone or `MODE=client`) instead.
+
+| Condition | Status |
+|---|---|
+| data node, queue on or off | `200 application/json` |
+| cluster coordinator | `404` |
 
 ---
 

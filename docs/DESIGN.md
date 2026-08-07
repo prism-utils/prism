@@ -808,3 +808,29 @@ against the **real** `promql` engine over an in-memory `storage.Queryable`
 covering a firing→resolved transition end to end. Packaged as a signed
 multi-arch image (`ghcr.io/elk-utilities/prism-alert`) and the project-agnostic
 `deploy/charts/prism-alert` Helm chart.
+
+### Read queue on by default + live snapshot route (2026-08)
+
+**Decision:** the read limiter now defaults **on** (`SQL_API_QUEUE_ENABLED=true`)
+with `MaxInFlight=2`, `MaxQueue=128`, and a `120 s` wait, and the limiter's live
+state is served on the admin plane as `GET /admin/queue` (caps, in-flight,
+waiting, cumulative shed total) behind the same auth as `/stats`. Sizing follows
+**per-sandbox memory**, not CPU: each sandbox honors `DUCKDB_MEMORY_LIMIT`
+independently, so a shared writer OOM-kills long before it saturates cores
+(`inflight=16` was OOMKilled at 6Gi; `inflight=10` does not fit 10Gi at a
+`6500MB` cap). Depth plus a long wait, not concurrency, absorbs 100+ panel
+dashboard fan-out. The snapshot is a plain JSON route rather than a Prometheus
+exporter: atomic reads, no scrape registry or cardinality, and the same admin
+plane a UI already calls for `/stats`.
+
+**References:** Loki `querier.max-concurrent` (CPU-sized default of 4) —
+https://github.com/grafana/loki/blob/main/pkg/querier/querier.go ; running /
+waiting / limit / rejected as the minimal load-shedder surface —
+https://pkg.go.dev/github.com/pior/loadshedder .
+
+**Consequences:** a fresh or misconfigured deploy is memory-safe without
+operator env; explicit env still wins, and `SQL_API_QUEUE_ENABLED=false` restores
+unbounded reads. The frozen `/stats` billing JSON is untouched. A `MODE=cluster`
+coordinator holds no limiter, so it does not register the route (`404`) rather
+than publish zeros an operator would misread. See [`MEMORY.md`](MEMORY.md),
+[`STORE.md`](STORE.md), and [`MIGRATION.md`](MIGRATION.md).

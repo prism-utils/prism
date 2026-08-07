@@ -766,7 +766,7 @@ see [`STORE.md`](STORE.md).
 
 | Env | Type | Default | Meaning |
 |---|---|---|---|
-| `ADMIN_LISTEN_ADDR` | string | _(empty — off)_ | When set, binds `/admin/*`, `/stats`, and query/SQL on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
+| `ADMIN_LISTEN_ADDR` | string | _(empty — off)_ | When set, binds `/admin/*` (including `/admin/queue`), `/stats`, and query/SQL on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
 | `ADMIN_TOKEN` | string | _(empty — off)_ | Static bearer for admin-plane routes when RBAC is off. Constant-time compare. Superseded when `AUTHZ_POLICY_FILE` is set. |
 | `ALLOWED_ARTIFACTS` | string (comma-separated) | `metrics-raw` | Artifact types accepted on ingest routes. Logs (`logs-raw`/`logs-template`/`logs-summary`) are landed as files and queried via the `logs` relation; add them here to enable (e.g. `metrics-raw,logs-summary`). |
 | `AUTH_MODE` | string | `none` | Ingest/Flight auth when RBAC is off: `none`, `bearer`, `mtls`, `trusted-header`. HTTP ingest ignores this when RBAC is on (JWT). Flight always uses `AUTH_MODE`. |
@@ -819,11 +819,11 @@ see [`STORE.md`](STORE.md).
 | `SEGMENTS_PER_TIER` | int | `6` | Minimum **unsealed** live segments at a tier (or logs landing) before merge compaction **starts** (trigger only). Once triggered, the planner packs toward `MAX_SEGMENT_BYTES` (up to a derived max-merge-at-once ≈ max/floor), shrinking the candidate set when the sum would exceed the seal budget. |
 | `SQL_API_ENABLED` | bool | `true` | When `false`, `POST /{ns}/sql` is not registered. |
 | `SQL_API_MAX_BODY_BYTES` | int64 (bytes) | `1048576` | Maximum POST `/sql` JSON body (1 MiB). |
-| `SQL_API_MAX_INFLIGHT` | int | `4` | Max concurrent `/sql` executions when `SQL_API_QUEUE_ENABLED=true`. |
-| `SQL_API_MAX_QUEUE` | int | `64` | Max `/sql` requests allowed to wait for a slot when queue enabled. |
+| `SQL_API_MAX_INFLIGHT` | int | `2` | Max concurrent heavy read executions (`/sql`, PromQL, Loki) when `SQL_API_QUEUE_ENABLED=true`. Peak read memory is this × `DUCKDB_MEMORY_LIMIT`, so raise it only with pod memory to match — `10` or `16` OOM-kills a shared writer at a `6500MB` DuckDB cap. |
+| `SQL_API_MAX_QUEUE` | int | `128` | Max heavy read requests allowed to wait for a slot when queue enabled. Deep enough for a 100+ panel Grafana dashboard refresh. |
 | `SQL_API_MAX_ROWS` | int | `100000` | Maximum rows per SQL response (`truncated` when exceeded). |
-| `SQL_API_QUEUE_ENABLED` | bool | `false` | Enable in-flight limiter on `/sql` (data nodes only; off = prior unbounded behavior). |
-| `SQL_API_QUEUE_TIMEOUT_MS` | int (milliseconds) | `5000` | Max wait for an `/sql` slot before `429`. |
+| `SQL_API_QUEUE_ENABLED` | bool | `true` | In-flight limiter on heavy reads (data nodes only). Set `false` for the prior unbounded behavior. |
+| `SQL_API_QUEUE_TIMEOUT_MS` | int (milliseconds) | `120000` | Max wait for a read slot before `429`. Long on purpose: a queued dashboard panel is better than a shed one. |
 | `SQL_API_TIMEOUT_SECONDS` | int (seconds) | `30` | Per-query timeout for `POST /{ns}/sql`. |
 
 **Arrow transport (build-from-source):** release CI and `make docker-store` build
@@ -854,6 +854,7 @@ See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, adm
 | `POST` | `<ROUTE_PREFIX>/{tenant}/ingest/{artifact}` | `204 No Content` | see validation chain below |
 | `POST` | `/admin/tenants/{tenant}/ensure` | `204 No Content` | admin plane; see [`STORE.md`](STORE.md) |
 | `GET` | `/stats?ns=` | `200 application/json` | admin plane; billing contract in [`STORE.md`](STORE.md) |
+| `GET` | `/admin/queue` | `200 application/json` | admin plane; live read-queue snapshot, see [`STORE.md`](STORE.md) |
 
 When `ROUTE_PREFIX` is empty the ingest path is `/{tenant}/ingest/{artifact}`.
 
