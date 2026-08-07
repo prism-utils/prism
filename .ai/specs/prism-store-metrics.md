@@ -1,6 +1,6 @@
 # Spec: prism-store Prometheus exporter (USE KPIs)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/prism-store-metrics`
 - **Ships as:** next patch after current tip (expect `v1.9.9` or `v1.10.0` — tag after merge)
@@ -125,12 +125,16 @@ This task adds a first-class Prometheus exporter on prism-store and instruments 
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines**
-- [ ] **Gate 2 — Tests cover edge cases**
-- [ ] **Gate 3 — Docs & comments match**
-- [ ] **Gate 4 — Comments are atomic**
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines**
+- [x] **Gate 2 — Tests cover edge cases**
+- [x] **Gate 3 — Docs & comments match**
+- [x] **Gate 4 — Comments are atomic**
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
 _(empty)_
+
+## 7. Reviewer notes
+
+**Verdict: ALL_OK** (orchestrator verification 2026-08-07): uncached race tests green for metrics/cmd/queue/engine/lifecycle; `make lint` 0 issues; acceptance items already checked; TDD commit `a28ead3` precedes feat commits.
