@@ -23,6 +23,7 @@ import (
 	"github.com/elk-utilities/prism/internal/store/segformat"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrIncompatibleDuckDBStorage is returned when an ingest .duckdb body reports
@@ -62,6 +63,10 @@ type Engine struct {
 
 	coalesceMu sync.Mutex
 	coalesce   map[logCoalesceKey]*logCoalesceBuf
+
+	// exportGroup collapses overlapping hot snapshot exports for one tenant into
+	// a single run, keyed by tenant name.
+	exportGroup singleflight.Group
 }
 
 // New builds an Engine. now defaults to time.Now when nil.
