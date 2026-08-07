@@ -15,11 +15,12 @@ type PlannerConfig struct {
 }
 
 // DefaultPlannerConfig returns production defaults with a 1 MiB floor for tests
-// when FloorBytes is unset by callers that pass zero.
+// when FloorBytes is unset by callers that pass zero. MaxMergeAtOnce 0 means
+// NewPlanner derives how many floor-sized pieces fit under MaxSegmentBytes.
 func DefaultPlannerConfig() PlannerConfig {
 	return PlannerConfig{
 		SegmentsPerTier: 6,
-		MaxMergeAtOnce:  6,
+		MaxMergeAtOnce:  0,
 		MaxSegmentBytes: 2 << 30,
 		FloorBytes:      1 << 20,
 	}
@@ -35,16 +36,32 @@ func NewPlanner(cfg PlannerConfig) *Planner {
 	if cfg.SegmentsPerTier <= 0 {
 		cfg.SegmentsPerTier = 6
 	}
-	if cfg.MaxMergeAtOnce <= 0 {
-		cfg.MaxMergeAtOnce = cfg.SegmentsPerTier
-	}
 	if cfg.MaxSegmentBytes <= 0 {
 		cfg.MaxSegmentBytes = 2 << 30
 	}
 	if cfg.FloorBytes <= 0 {
 		cfg.FloorBytes = 1 << 20
 	}
+	if cfg.MaxMergeAtOnce <= 0 {
+		cfg.MaxMergeAtOnce = derivedMaxMergeAtOnce(cfg.MaxSegmentBytes, cfg.FloorBytes, cfg.SegmentsPerTier)
+	}
 	return &Planner{cfg: cfg}
+}
+
+// derivedMaxMergeAtOnce is how many floor-sized segments fit under the seal
+// budget, never below SegmentsPerTier (the merge trigger).
+func derivedMaxMergeAtOnce(maxBytes, floorBytes int64, segmentsPerTier int) int {
+	if floorBytes <= 0 {
+		floorBytes = 1 << 20
+	}
+	n := int(maxBytes / floorBytes)
+	if n < segmentsPerTier {
+		n = segmentsPerTier
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
 }
 
 // FindMerges returns at most one merge action per source tier (no cascade).

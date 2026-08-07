@@ -425,7 +425,8 @@ Lucene **TieredMergePolicy** analogue over immutable Parquet tiers. Merge DuckDB
 connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store config.
 
 - **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs (metrics tiers **and** logs landing / log tiers).
-- **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, the planner groups by size level (floor-rounded log scale) for metrics tiers, picks the first time-adjacent contiguous run (gap ≤ one segment span), and shrinks the candidate set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`. Logs landing uses the same seal exclusion and shrink-to-fit rule.
+- **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, compaction may start. `SEGMENTS_PER_TIER` is the trigger only — not the pack size.
+- **Pack:** once triggered, the planner packs as many time-ordered unsealed candidates as fit under `MAX_SEGMENT_BYTES` (capped by a derived `MaxMergeAtOnce` ≈ `MAX_SEGMENT_BYTES / floor`, never below `SEGMENTS_PER_TIER`), then shrinks the set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`. Metrics tiers group by size level (floor-rounded log scale) and require a time-adjacent contiguous run (gap ≤ one segment span). Logs landing uses the same seal exclusion and fill-toward-max / shrink-to-fit rule without size-level grouping.
 - **One action per tick:** no cascade — at most one merge per tenant per merge tick, lowest tier first.
 - **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are deleted only after the output is atomically renamed.
 

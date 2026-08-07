@@ -1,6 +1,6 @@
 # Spec: Logs merge packs toward MAX_SEGMENT_BYTES
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `fix/logs-merge-pack-max`
@@ -95,19 +95,21 @@ All resolved by the user before this loop (Phase 0).
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] Logs landing: ≥ `SEGMENTS_PER_TIER` tiny unsealed files → one action whose
+Concrete, verifiable deliverables for this task. Add as many as needed.
+
+- [x] Logs landing: ≥ `SEGMENTS_PER_TIER` tiny unsealed files → one action whose
       sources sum as close as possible to (≤) `MAX_SEGMENT_BYTES`, and source
       count may exceed `SEGMENTS_PER_TIER` when `MaxMergeAtOnce` allows
-- [ ] Logs landing: sealed (`Bytes ≥ MAX`) never selected; all-sealed → no action
-- [ ] Logs landing: candidate set shrinks when sum would exceed max
-- [ ] Trigger unchanged: fewer than `SEGMENTS_PER_TIER` unsealed → no action
-- [ ] Metrics / log-tier planning uses derived (or high) `MaxMergeAtOnce` so the
+- [x] Logs landing: sealed (`Bytes ≥ MAX`) never selected; all-sealed → no action
+- [x] Logs landing: candidate set shrinks when sum would exceed max
+- [x] Trigger unchanged: fewer than `SEGMENTS_PER_TIER` unsealed → no action
+- [x] Metrics / log-tier planning uses derived (or high) `MaxMergeAtOnce` so the
       same fill-toward-max applies when the old N=6 cap would block it
-- [ ] `TickMerge` no longer forces `MaxMergeAtOnce = SegmentsPerTier`
-- [ ] `docs/CONFIG.md` + `docs/STORE.md` state: trigger = `SEGMENTS_PER_TIER`;
+- [x] `TickMerge` no longer forces `MaxMergeAtOnce = SegmentsPerTier`
+- [x] `docs/CONFIG.md` + `docs/STORE.md` state: trigger = `SEGMENTS_PER_TIER`;
       pack fills toward `MAX_SEGMENT_BYTES` under `MaxMergeAtOnce`
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 

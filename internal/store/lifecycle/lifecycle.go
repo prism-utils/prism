@@ -79,7 +79,9 @@ func (r *Runner) TickMerge() error {
 	}
 	planner := merge.NewPlanner(merge.PlannerConfig{
 		SegmentsPerTier: r.cfg.SegmentsPerTier,
-		MaxMergeAtOnce:  r.cfg.SegmentsPerTier,
+		// MaxMergeAtOnce 0 → derive from MaxSegmentBytes/FloorBytes so tiny
+		// unsealed segments pack toward the seal budget in one action.
+		MaxMergeAtOnce:  0,
 		MaxSegmentBytes: r.cfg.MaxSegmentBytes,
 		FloorBytes:      r.cfg.FloorBytes,
 	})
