@@ -146,17 +146,22 @@ func listLogSegmentFiles(tenantRoot string) ([]logFileMeta, error) {
 	return globalLogsMetaCache.getOrScan(absRoot)
 }
 
-func attachLogsDuckDB(ctx context.Context, conn *sql.Conn, files []logFileMeta) error {
+func attachLogsDuckDB(ctx context.Context, conn *sql.Conn, files []logFileMeta) ([]logFileMeta, error) {
+	kept := make([]logFileMeta, 0, len(files))
 	for i, f := range files {
 		if !segformat.IsDuckDB(f.Path) {
+			kept = append(kept, f)
 			continue
 		}
 		alias := fmt.Sprintf("lseg_%d", i)
 		q := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(f.Path), alias)
 		if _, err := conn.ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("attach logs %s: %w", f.Path, err)
+			// Skip (and drop) unreadable landings so a single corrupt .duckdb
+			// cannot 500 Grafana's Loki plugin for the whole tenant window.
+			_ = os.Remove(f.Path)
+			continue
 		}
-		files[i].duckAlias = alias
+		f.duckAlias = alias
 		rel := segformat.LogsRelationForPath(f.Path)
 		//nolint:gosec // G201: alias/rel are server-assigned; path already tenant-validated.
 		desc := fmt.Sprintf(
@@ -165,11 +170,14 @@ func attachLogsDuckDB(ctx context.Context, conn *sql.Conn, files []logFileMeta) 
 		)
 		var has bool
 		if err := conn.QueryRowContext(ctx, desc).Scan(&has); err != nil {
-			return fmt.Errorf("describe logs %s: %w", f.Path, err)
+			_ = os.Remove(f.Path)
+			_, _ = conn.ExecContext(ctx, "DETACH "+alias)
+			continue
 		}
-		files[i].HasIngestTS = has
+		f.HasIngestTS = has
+		kept = append(kept, f)
 	}
-	return nil
+	return kept, nil
 }
 
 func buildLogsRelationSQLMixed(files []logFileMeta, opts logsCatalogOpts) (string, error) {

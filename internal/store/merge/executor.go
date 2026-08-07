@@ -143,7 +143,7 @@ func (x *Executor) sourcesSelectSQLLogs(sources []Segment) ([]string, func(), er
 			_, _ = x.db.ExecContext(context.Background(), "DETACH "+a)
 		}
 	}
-	parts := make([]string, len(sources))
+	parts := make([]string, 0, len(sources))
 	for i, s := range sources {
 		ingestNs := s.MinTs.UTC().UnixNano()
 		var fromSQL string
@@ -152,8 +152,10 @@ func (x *Executor) sourcesSelectSQLLogs(sources []Segment) ([]string, func(), er
 			alias := fmt.Sprintf("msrc_%d", i)
 			q := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(s.Path), alias)
 			if _, err := x.db.ExecContext(context.Background(), q); err != nil {
-				cleanup()
-				return nil, func() {}, fmt.Errorf("merge: attach source %s: %w", s.Path, err)
+				// Drop unreadable landings so one corrupt file cannot wedge the
+				// merge loop and flood Grafana's Loki UNION past expression depth.
+				_ = os.Remove(s.Path)
+				continue
 			}
 			aliases = append(aliases, alias)
 			fromSQL = fmt.Sprintf("SELECT * FROM %s.%s", alias, segformat.LogsRelationForPath(s.Path))
@@ -165,7 +167,11 @@ func (x *Executor) sourcesSelectSQLLogs(sources []Segment) ([]string, func(), er
 			cleanup()
 			return nil, func() {}, fmt.Errorf("merge: describe source %s: %w", s.Path, err)
 		}
-		parts[i] = projectLogIngestTSSQL(fromSQL, ingestNs, hasTS)
+		parts = append(parts, projectLogIngestTSSQL(fromSQL, ingestNs, hasTS))
+	}
+	if len(parts) == 0 {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("merge: no readable log sources after skipping corrupt duckdb landings")
 	}
 	return parts, cleanup, nil
 }

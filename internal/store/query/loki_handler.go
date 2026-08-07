@@ -296,7 +296,8 @@ func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimit
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := attachLogsDuckDB(ctx, conn, files); err != nil {
+	files, err = attachLogsDuckDB(ctx, conn, files)
+	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
