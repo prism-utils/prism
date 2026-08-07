@@ -55,12 +55,12 @@ func TestLogsRetentionEnforcesFileCapAndMaxAge(t *testing.T) {
 		t.Fatalf("TickRetention: %v", err)
 	}
 
-	logCount, err := countLogParquet(dataDir, tenant, artifact)
+	landingCount, err := countDirParquet(landing)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if logCount > maxFiles {
-		t.Fatalf("log file count = %d, want <= %d", logCount, maxFiles)
+	if landingCount > maxFiles {
+		t.Fatalf("landing file count = %d, want <= %d", landingCount, maxFiles)
 	}
 
 	cutoff := now.Add(-15 * 24 * time.Hour)
@@ -79,22 +79,67 @@ func TestLogsRetentionEnforcesFileCapAndMaxAge(t *testing.T) {
 	}
 }
 
-func countLogParquet(dataDir, tenant, artifact string) (int, error) {
-	n := 0
+// TestLogsFileCapPreservesColdTiers ensures MAX_LOG_FILES does not erase sealed
+// L0 history when the hot landing zone is flooded (the Grafana ~30m window bug).
+func TestLogsFileCapPreservesColdTiers(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := logsRetentionTenant
+	artifact := "logs-raw"
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
 	landing := layout.LogsLandingDir(dataDir, tenant, artifact)
-	c, err := countDirParquet(landing)
+	if err := os.MkdirAll(landing, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	l0 := layout.LogsTierDir(dataDir, tenant, artifact, 0)
+	if err := os.MkdirAll(l0, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	const maxFiles = 3
+	// Flood landing with brand-new windows.
+	for i := 0; i < maxFiles+10; i++ {
+		at := now.Add(-time.Duration(i) * time.Minute)
+		testparquet.WriteLogsRawFile(t, filepath.Join(landing, layout.SegmentName(at)), []testparquet.LogRow{
+			{Message: "hot", Format: "none"},
+		})
+	}
+	// Older sealed cold segments (within RETENTION_DAYS).
+	coldKeep := make([]string, 0, 4)
+	for i := 0; i < 4; i++ {
+		at := now.Add(-time.Duration(2+i) * 24 * time.Hour)
+		path := filepath.Join(l0, layout.SegmentName(at))
+		testparquet.WriteLogsRawFile(t, path, []testparquet.LogRow{
+			{Message: "cold", Format: "none"},
+		})
+		coldKeep = append(coldKeep, path)
+	}
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+	runner := NewRunner(&Config{
+		DataDir:       dataDir,
+		RetentionDays: 7,
+		MaxLogFiles:   maxFiles,
+		MaxTier:       8,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickRetention(); err != nil {
+		t.Fatalf("TickRetention: %v", err)
+	}
+
+	landingCount, err := countDirParquet(landing)
 	if err != nil {
-		return 0, err
+		t.Fatal(err)
 	}
-	n += c
-	for tier := 0; tier <= 8; tier++ {
-		c, err := countDirParquet(layout.LogsTierDir(dataDir, tenant, artifact, tier))
-		if err != nil {
-			return 0, err
+	if landingCount > maxFiles {
+		t.Fatalf("landing capped: got %d want <= %d", landingCount, maxFiles)
+	}
+	for _, path := range coldKeep {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("cold tier must survive landing file cap: %s: %v", path, err)
 		}
-		n += c
 	}
-	return n, nil
 }
 
 func countDirParquet(dir string) (int, error) {
