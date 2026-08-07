@@ -1,6 +1,6 @@
 # Spec: SQL queue on by default + live queue snapshot for operators
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/sql-queue-default-on`
 - **Ships as:** next patch after `v1.9.5` (expected `v1.9.6`) once merged + tagged.
@@ -58,24 +58,27 @@ Homelab `/admin` UI + image bump live in the sibling `feat/prism-queue-admin` wo
 ## 5. Acceptance checklist  (developer checks these off)
 
 ### Defaults
-- [ ] `SQL_API_QUEUE_ENABLED` default **`true`**
-- [ ] `SQL_API_MAX_INFLIGHT` default **`2`**
-- [ ] `SQL_API_MAX_QUEUE` default **`128`**
-- [ ] `SQL_API_QUEUE_TIMEOUT_MS` default **`120000`**
-- [ ] Config unit tests updated for new defaults; env override still works
-- [ ] Helm chart `values.yaml` + golden regenerated to match
+- [x] `SQL_API_QUEUE_ENABLED` default **`true`**
+- [x] `SQL_API_MAX_INFLIGHT` default **`2`**
+- [x] `SQL_API_MAX_QUEUE` default **`128`**
+- [x] `SQL_API_QUEUE_TIMEOUT_MS` default **`120000`**
+- [x] Config unit tests updated for new defaults; env override still works
+- [x] Helm chart `values.yaml` + golden regenerated to match
 
 ### Snapshot instrumentation
-- [ ] `Limiter` tracks `rejectedTotal` (atomic) on every 429 path
-- [ ] `Limiter.Snapshot()` returns `{Enabled, MaxInFlight, MaxQueue, TimeoutMs, InFlight, Waiting, RejectedTotal}` (InFlight = `len(sem)` / occupied slots)
-- [ ] `GET /admin/queue` registered on admin/combined mux only; protected like `/stats` (ADMIN_TOKEN / RBAC admin action)
-- [ ] Coordinator (`MODE=cluster`) does **not** host the limiter snapshot of a data node (no false zeros on the proxy) — either omit the route on coordinator or return `enabled:false` with zeros; document the choice
-- [ ] Unit tests: snapshot reflects in-flight + waiters under load; rejected increments on 429; route auth walls
+- [x] `Limiter` tracks `rejectedTotal` (atomic) on every 429 path
+- [x] `Limiter.Snapshot()` returns `{Enabled, MaxInFlight, MaxQueue, TimeoutMs, InFlight, Waiting, RejectedTotal}` (InFlight = `len(sem)` / occupied slots)
+- [x] `GET /admin/queue` registered on admin/combined mux only; protected like `/stats` (ADMIN_TOKEN / RBAC admin action)
+- [x] Coordinator (`MODE=cluster`) does **not** host the limiter snapshot of a data node (no false zeros on the proxy) — either omit the route on coordinator or return `enabled:false` with zeros; document the choice
+  - Chose **omit**: the coordinator mux registers no admin routes, so `GET /admin/queue` is `404` there; documented in `STORE.md` (`/admin/queue` section + cluster out-of-scope list), `MIGRATION.md`, and `DESIGN.md`, and pinned by `TestRouterOmitsQueueSnapshotRoute`.
+- [x] Unit tests: snapshot reflects in-flight + waiters under load; rejected increments on 429; route auth walls
 
 ### Docs
-- [ ] `docs/CONFIG.md`, `docs/STORE.md`, `docs/MEMORY.md`, `docs/MIGRATION.md` updated (default-on + new route + sizing note that 10/16 OOMs shared writers)
-- [ ] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if wiring touched)
+- [x] `docs/CONFIG.md`, `docs/STORE.md`, `docs/MEMORY.md`, `docs/MIGRATION.md` updated (default-on + new route + sizing note that 10/16 OOMs shared writers)
+  - Also `README.md` (said "default off") and a `DESIGN.md` decision entry, which the flip would otherwise contradict.
+- [x] Tests written first (`test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if wiring touched)
+  - `make lint` 0 issues; `make test` all packages ok (race, `-tags duckdb_arrow`); `make full-tests` → `full-tests: OK` (integration + e2e via docker); `deploy/charts/prism-store/scripts/check-golden.sh` → golden manifest OK.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
