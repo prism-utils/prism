@@ -69,21 +69,21 @@ import (
 )
 
 const (
-	defaultListenAddr         = ":8080"
-	defaultDataDir            = "/data"
-	defaultMaxBodyBytes       = 268435456
-	defaultArtifacts          = "metrics-raw"
-	defaultAuthMode           = "none"
-	defaultHotWindowMinutes   = 10
-	defaultSegmentsPerTier    = 6
-	defaultMaxSegmentBytes    = 2147483648
-	defaultRetentionDays      = 15
-	defaultRollupSteps        = "1m,5m,1h"
-	defaultMaxTier            = 8
-	defaultHotSnapshotSec     = 15
-	defaultFlushTickSec       = 30
-	defaultMergeTickSec       = 60
-	defaultRetentionTickHour  = 1
+	defaultListenAddr        = ":8080"
+	defaultDataDir           = "/data"
+	defaultMaxBodyBytes      = 268435456
+	defaultArtifacts         = "metrics-raw"
+	defaultAuthMode          = "none"
+	defaultHotWindowMinutes  = 10
+	defaultSegmentsPerTier   = 6
+	defaultMaxSegmentBytes   = 2147483648
+	defaultRetentionDays     = 15
+	defaultRollupSteps       = "1m,5m,1h"
+	defaultMaxTier           = 8
+	defaultHotSnapshotSec    = 15
+	defaultFlushTickSec      = 30
+	defaultMergeTickSec      = 60
+	defaultRetentionTickHour = 1
 	// Each /sql sandbox honors DUCKDB_MEMORY_LIMIT independently, so peak read
 	// memory is MaxInFlight × that limit: shared writers OOM at higher
 	// concurrency, and a deep queue with a long wait absorbs dashboard fan-out
