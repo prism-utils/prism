@@ -23,8 +23,39 @@ type Limiter struct {
 	MaxQueue    int
 	Wait        time.Duration
 
-	sem     chan struct{}
-	waiters atomic.Int64
+	sem           chan struct{}
+	waiters       atomic.Int64
+	rejectedTotal atomic.Int64
+}
+
+// Snapshot is a point-in-time view of limiter caps and occupancy for operators.
+// Counters are cumulative since process start; gauges are instantaneous and may
+// already be stale by the time a caller reads them.
+type Snapshot struct {
+	Enabled       bool  `json:"enabled"`
+	MaxInFlight   int   `json:"maxInFlight"`
+	MaxQueue      int   `json:"maxQueue"`
+	TimeoutMs     int64 `json:"timeoutMs"`
+	InFlight      int   `json:"inFlight"`
+	Waiting       int64 `json:"waiting"`
+	RejectedTotal int64 `json:"rejectedTotal"`
+}
+
+// Snapshot reads the limiter state with atomic loads only; a nil limiter reports
+// a disabled queue so callers without one need no special case.
+func (l *Limiter) Snapshot() Snapshot {
+	if l == nil {
+		return Snapshot{}
+	}
+	return Snapshot{
+		Enabled:       l.Enabled,
+		MaxInFlight:   l.MaxInFlight,
+		MaxQueue:      l.MaxQueue,
+		TimeoutMs:     l.Wait.Milliseconds(),
+		InFlight:      len(l.sem),
+		Waiting:       l.waiters.Load(),
+		RejectedTotal: l.rejectedTotal.Load(),
+	}
 }
 
 // NewLimiter builds a limiter with a buffered-channel semaphore sized to MaxInFlight.
@@ -57,7 +88,7 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 		}
 
 		if !l.enterWaitQueue() {
-			rejectTooMany(w)
+			l.rejectTooMany(w)
 			return
 		}
 		// Guarantee the waiter count is decremented exactly once even if a later
@@ -75,7 +106,7 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		case <-timer.C:
 			releaseWaiter()
-			rejectTooMany(w)
+			l.rejectTooMany(w)
 		case <-r.Context().Done():
 			releaseWaiter()
 			if !timer.Stop() {
@@ -84,7 +115,7 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 				default:
 				}
 			}
-			rejectTooMany(w)
+			l.rejectTooMany(w)
 		}
 	})
 }
@@ -118,7 +149,10 @@ func releaseOnce(l *Limiter) func() {
 	}
 }
 
-func rejectTooMany(w http.ResponseWriter) {
+// rejectTooMany sheds one request and counts it, so every shed path — full wait
+// queue, expired wait, cancelled client — is visible in a single total.
+func (l *Limiter) rejectTooMany(w http.ResponseWriter) {
+	l.rejectedTotal.Add(1)
 	w.Header().Set("Retry-After", "1")
 	http.Error(w, tooManyBody, http.StatusTooManyRequests)
 }
