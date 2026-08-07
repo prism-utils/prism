@@ -427,7 +427,8 @@ connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store conf
 - **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs (metrics tiers **and** logs landing / log tiers).
 - **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, compaction may start. `SEGMENTS_PER_TIER` is the trigger only — not the pack size.
 - **Pack:** once triggered, the planner packs as many time-ordered unsealed candidates as fit under `MAX_SEGMENT_BYTES` (capped by a derived `MaxMergeAtOnce` ≈ `MAX_SEGMENT_BYTES / floor`, never below `SEGMENTS_PER_TIER`), then shrinks the set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`. Metrics tiers group by size level (floor-rounded log scale) and require a time-adjacent contiguous run (gap ≤ one segment span). Logs landing uses the same seal exclusion and fill-toward-max / shrink-to-fit rule without size-level grouping.
-- **One action per tick:** no cascade — at most one merge per tenant per merge tick, lowest tier first.
+- **One action per tick (metrics):** no cascade — at most one merge per tenant per merge tick, lowest tier first.
+- **Logs:** one tick may run landing→L0 and one cold-tier pack (time-ordered fill toward `MAX_SEGMENT_BYTES`, no Lucene adjacency — L0 files from merge ticks are often minutes apart).
 - **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are deleted only after the output is atomically renamed.
 
 Path helpers live in `internal/store/layout` (`TierDir`, `RollupDir`, `ToSlash`).

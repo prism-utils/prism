@@ -110,14 +110,33 @@ func ScanLogTiers(dataDir, tenant, artifact string, maxTier int) ([]Segment, err
 	return all, nil
 }
 
-// FindLogMerges returns at most one merge action: landing→L0 first, else lowest tier.
+// FindLogMerges plans log compaction. When both landing and a cold tier are
+// eligible, both actions are returned so one tick can drain landing and pack
+// L0 toward MaxSegmentBytes (landing must not starve tier catch-up).
 func (p *Planner) FindLogMerges(landing, tiers []Segment) []LogMergeAction {
+	var out []LogMergeAction
 	if action, ok := p.findLogLandingMerge(landing); ok {
-		return []LogMergeAction{action}
+		out = append(out, action)
 	}
-	if len(tiers) == 0 {
-		return nil
+	if action, ok := p.findLogTierPack(tiers); ok {
+		out = append(out, action)
 	}
+	return out
+}
+
+func (p *Planner) findLogLandingMerge(landing []Segment) (LogMergeAction, bool) {
+	sources, ok := p.packUnsealedLogs(landing)
+	if !ok {
+		return LogMergeAction{}, false
+	}
+	return LogMergeAction{Sources: sources, DestTier: 0}, true
+}
+
+// findLogTierPack packs the lowest tier with enough unsealed segments toward
+// MaxSegmentBytes. Unlike metrics findMergeForTier, it does not require
+// Lucene time-adjacency — log L0 files from merge ticks are often minutes
+// apart (point windows), so adjacency would never form a pack.
+func (p *Planner) findLogTierPack(tiers []Segment) (LogMergeAction, bool) {
 	byTier := map[int][]Segment{}
 	for _, s := range tiers {
 		if s.Bytes >= p.cfg.MaxSegmentBytes {
@@ -125,28 +144,29 @@ func (p *Planner) FindLogMerges(landing, tiers []Segment) []LogMergeAction {
 		}
 		byTier[s.Tier] = append(byTier[s.Tier], s)
 	}
-	tierIDs := sortedKeys(byTier)
-	for _, tier := range tierIDs {
-		if action, ok := p.findMergeForTier(byTier[tier], tier); ok {
-			return []LogMergeAction{{
-				Sources:  action.Sources,
-				DestTier: action.DestTier,
-			}}
+	for _, tier := range sortedKeys(byTier) {
+		sources, ok := p.packUnsealedLogs(byTier[tier])
+		if !ok {
+			continue
 		}
+		return LogMergeAction{Sources: sources, DestTier: tier + 1}, true
 	}
-	return nil
+	return LogMergeAction{}, false
 }
 
-func (p *Planner) findLogLandingMerge(landing []Segment) (LogMergeAction, bool) {
+// packUnsealedLogs returns a time-ordered subset of unsealed segments that
+// fills toward MaxSegmentBytes (capped by MaxMergeAtOnce), once the
+// SegmentsPerTier trigger is met.
+func (p *Planner) packUnsealedLogs(segs []Segment) ([]Segment, bool) {
 	var live []Segment
-	for _, s := range landing {
+	for _, s := range segs {
 		if s.Bytes >= p.cfg.MaxSegmentBytes {
 			continue
 		}
 		live = append(live, s)
 	}
 	if len(live) < p.cfg.SegmentsPerTier {
-		return LogMergeAction{}, false
+		return nil, false
 	}
 	sort.Slice(live, func(i, j int) bool {
 		if live[i].MinTs.Equal(live[j].MinTs) {
@@ -154,8 +174,6 @@ func (p *Planner) findLogLandingMerge(landing []Segment) (LogMergeAction, bool) 
 		}
 		return live[i].MinTs.Before(live[j].MinTs)
 	})
-	// Pack toward MaxSegmentBytes: take up to MaxMergeAtOnce time-ordered
-	// unsealed segments, then shrink so the sum fits the seal budget.
 	n := p.cfg.MaxMergeAtOnce
 	if n > len(live) {
 		n = len(live)
@@ -168,10 +186,10 @@ func (p *Planner) findLogLandingMerge(landing []Segment) (LogMergeAction, bool) 
 			sum += s.Bytes
 		}
 		if sum <= p.cfg.MaxSegmentBytes {
-			return LogMergeAction{Sources: subset, DestTier: 0}, true
+			return subset, true
 		}
 	}
-	return LogMergeAction{}, false
+	return nil, false
 }
 
 // ExecuteLogMerge compacts sources into logs/<artifact>/tiers/L{DestTier}/ via union_by_name.
