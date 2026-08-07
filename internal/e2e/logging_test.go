@@ -18,6 +18,7 @@ import (
 	"github.com/elk-utilities/prism/internal/config"
 	"github.com/elk-utilities/prism/internal/obs"
 	"github.com/elk-utilities/prism/internal/pipeline"
+	"github.com/stretchr/testify/require"
 )
 
 const loggingConfig = `
@@ -59,13 +60,10 @@ pipelines:
 func TestE2E_LoggingThreePhaseParquet(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "app.log")
-	lines := []string{
-		`user 1 logged in from 10.0.0.1`,
-		`user 2 logged in from 10.0.0.2`,
-		`user 3 request failed code 500`,
-	}
-	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		t.Fatalf("write log: %v", err)
+	// Create the file before Start; ModeTail seeks to EOF so pre-existing
+	// content is not re-shipped (append below after the pipeline is running).
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatalf("create log: %v", err)
 	}
 
 	out := filepath.Join(dir, "out")
@@ -93,7 +91,24 @@ func TestE2E_LoggingThreePhaseParquet(t *testing.T) {
 	rawDir := filepath.Join(out, "logs", "raw")
 	tmplDir := filepath.Join(out, "logs", "template")
 	sumDir := filepath.Join(out, "logs", "summary")
-	waitForFiles(t, rawDir, ".parquet")
+	lines := []string{
+		`user 1 logged in from 10.0.0.1`,
+		`user 2 logged in from 10.0.0.2`,
+		`user 3 request failed code 500`,
+	}
+	payload := strings.Join(lines, "\n") + "\n"
+	// ModeTail seeks to EOF on open. Republish via truncate until a raw window
+	// appears so a late-open tailer still sees the fixture (ReOpen on shrink).
+	require.Eventually(t, func() bool {
+		if entries, err := os.ReadDir(rawDir); err == nil && hasExt(entries, ".parquet") {
+			return true
+		}
+		if err := os.WriteFile(logPath, []byte(payload), 0o600); err != nil {
+			return false
+		}
+		return false
+	}, 5*time.Second, 250*time.Millisecond)
+
 	waitForFiles(t, tmplDir, ".parquet")
 	waitForFiles(t, sumDir, ".parquet")
 

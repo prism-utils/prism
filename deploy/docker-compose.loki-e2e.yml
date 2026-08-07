@@ -1,6 +1,6 @@
-# Full-stack logs end-to-end on the reader/writer topology: the prism agent tails
-# a log fixture and ships logs windows to the writer store, and a second store
-# instance serves the same files as a read-only reader (no background jobs,
+# Full-stack logs end-to-end on the reader/writer topology: the prism agent reads
+# a log fixture (batch) and ships logs windows to the writer store, and a second
+# store instance serves the same files as a read-only reader (no background jobs,
 # hot-only queries) over /sql and the Loki-compatible API.
 # Reproduce with `make loki-e2e`.
 services:
@@ -56,7 +56,7 @@ services:
       timeout: 2s
       retries: 40
 
-  # Agent: tail a log fixture → logs parser → parquet → writer ingest.
+  # Agent: batch-read a log fixture → logs parser → parquet → writer ingest.
   prism-agent:
     build:
       context: ..

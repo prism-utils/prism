@@ -869,11 +869,11 @@ filters, and formatters. A clear rejection beats a half-answered query.
 
 ### Streams, lines, and timestamps
 
-- **Timestamp:** logs Parquet carries **no event-time column** (see
-  [`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md) §3.2 — storage stamps ingest time),
-  so every row of a landed window is stamped with that window's **ingest time**
-  in nanoseconds: prefer the leading `<unix_ns>` from the filename
-  (`layout.SegmentName`), else the file mtime.
+- **Timestamp:** parsers must not emit event timestamps
+  ([`OUTPUT_CONTRACT.md`](OUTPUT_CONTRACT.md) §3.2). Storage stamps **ingest
+  time** at land/merge — required for honest charts after compaction. Prefer a
+  per-row `__prism_ts_ns` column when present; otherwise use the leading
+  `<unix_ns>` from the filename (`layout.SegmentName`), else the file mtime.
 - **Line:** `message` when it has text, else the mined `template`, else empty.
   Label endpoints never project `message`.
 - **Labels:** the remaining **text** columns (`format`, `template`, extracted

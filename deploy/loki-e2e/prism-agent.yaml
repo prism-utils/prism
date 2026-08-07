@@ -1,14 +1,16 @@
-# prism agent pipeline for the logs end-to-end test: tail a log file, structure
-# it with the logs parser, and ship two artifacts to the writer store — raw lines
-# (message + format) and mined template counts. The reader store then answers the
-# Loki-compatible API over the same landed files.
+# prism agent pipeline for the logs end-to-end test: read a log fixture once
+# (batch), structure it with the logs parser, and ship two artifacts to the
+# writer store — raw lines (message + format) and mined template counts. The
+# reader store then answers the Loki-compatible API over the same landed files.
+# Batch (not tail) keeps the static fixture reliable; ModeTail SeekEnd would
+# skip a pre-mounted file with no further appends.
 pipelines:
   - name: applogs
     input:
       type: file
       options:
         path: "/var/log/app/app.log"
-        mode: "tail"
+        mode: "batch"
     parser:
       type: logs
       options:

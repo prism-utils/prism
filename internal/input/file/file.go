@@ -87,6 +87,13 @@ type Input struct {
 // Batches returns the channel of emitted RawBatches; closed at EOF/cancel.
 func (in *Input) Batches() <-chan data.RawBatch { return in.batches }
 
+// modeTailSeekInfo starts ModeTail at EOF so only lines written after Start
+// are shipped. Without a durable offset registry, SeekStart would re-emit the
+// entire file on every agent restart.
+func modeTailSeekInfo() *tail.SeekInfo {
+	return &tail.SeekInfo{Whence: io.SeekEnd}
+}
+
 // Start opens the source and launches the producer goroutine. A missing file
 // surfaces synchronously in batch mode.
 func (in *Input) Start(ctx context.Context, _ component.Host) error {
@@ -95,7 +102,7 @@ func (in *Input) Start(ctx context.Context, _ component.Host) error {
 			Follow:        true,
 			ReOpen:        true,
 			CompleteLines: true,
-			Location:      &tail.SeekInfo{Whence: io.SeekStart},
+			Location:      modeTailSeekInfo(),
 			Logger:        tail.DiscardingLogger,
 		})
 		if err != nil {

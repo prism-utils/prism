@@ -135,8 +135,65 @@ func (x *Executor) sourcesSelectSQL(sources []Segment, duckTable string) ([]stri
 
 // sourcesSelectSQLLogs attaches duckdb log sources using LogsRelationForPath
 // so agent landing windows (table "data") and tier segments (table "logs") both merge.
+// Each arm projects __prism_ts_ns from the source window (or keeps an existing column).
 func (x *Executor) sourcesSelectSQLLogs(sources []Segment) ([]string, func(), error) {
-	return x.sourcesSelectSQLWithTable(sources, segformat.LogsRelationForPath)
+	var aliases []string
+	cleanup := func() {
+		for _, a := range aliases {
+			_, _ = x.db.ExecContext(context.Background(), "DETACH "+a)
+		}
+	}
+	parts := make([]string, len(sources))
+	for i, s := range sources {
+		ingestNs := s.MinTs.UTC().UnixNano()
+		var fromSQL string
+		switch {
+		case segformat.IsDuckDB(s.Path):
+			alias := fmt.Sprintf("msrc_%d", i)
+			q := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(s.Path), alias)
+			if _, err := x.db.ExecContext(context.Background(), q); err != nil {
+				cleanup()
+				return nil, func() {}, fmt.Errorf("merge: attach source %s: %w", s.Path, err)
+			}
+			aliases = append(aliases, alias)
+			fromSQL = fmt.Sprintf("SELECT * FROM %s.%s", alias, segformat.LogsRelationForPath(s.Path))
+		default:
+			fromSQL = fmt.Sprintf("SELECT * FROM read_parquet('%s')", layout.ToSlash(s.Path))
+		}
+		hasTS, err := x.relationHasColumn(fromSQL, logIngestTSColumn)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, fmt.Errorf("merge: describe source %s: %w", s.Path, err)
+		}
+		parts[i] = projectLogIngestTSSQL(fromSQL, ingestNs, hasTS)
+	}
+	return parts, cleanup, nil
+}
+
+// projectLogIngestTSSQL wraps a FROM-select so every row carries __prism_ts_ns.
+// When the source already has the column, existing values win (COALESCE); otherwise
+// the source window's ingest ns is stamped onto every row.
+func projectLogIngestTSSQL(fromSQL string, ingestNs int64, hasTS bool) string {
+	if hasTS {
+		return fmt.Sprintf(
+			`SELECT s.* EXCLUDE (%s), COALESCE(s.%s, %d::BIGINT) AS %s FROM (%s) AS s`,
+			logIngestTSColumn, logIngestTSColumn, ingestNs, logIngestTSColumn, fromSQL,
+		)
+	}
+	return fmt.Sprintf(
+		`SELECT *, %d::BIGINT AS %s FROM (%s)`,
+		ingestNs, logIngestTSColumn, fromSQL,
+	)
+}
+
+// relationHasColumn reports whether a SELECT-shaped relation exposes column name.
+func (x *Executor) relationHasColumn(fromSQL, column string) (bool, error) {
+	// fromSQL is built from server-owned segment paths; column is a package constant.
+	//nolint:gosec // G201: DuckDB DESCRIBE cannot use bound identifiers for relation SQL.
+	q := fmt.Sprintf(`SELECT COUNT(*) > 0 FROM (DESCRIBE %s) WHERE column_name = '%s'`, fromSQL, column)
+	var ok bool
+	err := x.db.QueryRowContext(context.Background(), q).Scan(&ok)
+	return ok, err
 }
 
 func (x *Executor) sourcesSelectSQLWithTable(sources []Segment, duckTable func(path string) string) ([]string, func(), error) {

@@ -114,8 +114,10 @@ Emitted by the `logs` parser. Two columns are **guaranteed** on every row:
 
 For a **known format** the parser may add extra **string** columns with the
 format's extracted fields (e.g. `stream` for k8s, structured keys for json).
-Timestamp fields are **never** ingested (storage stamps ingest time). Consumers
-must tolerate these additional string columns.
+Consumers must tolerate those additional string columns. Timestamp fields are
+**never** ingested by parsers. Storage **may and must** stamp ingest-time at
+land/merge (for example as `__prism_ts_ns`) so charts stay honest after
+compaction; that is not an event timestamp from the parser.
 
 ### 3.3 `logs-template`
 
