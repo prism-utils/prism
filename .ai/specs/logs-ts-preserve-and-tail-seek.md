@@ -1,6 +1,6 @@
 # Spec: Preserve log ingest times through merge + ModeTail SeekEnd
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `fix/logs-ts-preserve-and-tail-seek`
