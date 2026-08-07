@@ -94,6 +94,10 @@ spec:
               value: "10"
             - name: SEGMENTS_PER_TIER
               value: "6"
+            - name: LOGS_REFRESH_INTERVAL
+              value: "60"
+            - name: LOGS_REFRESH_MAX_ACTIONS
+              value: "8"
             - name: MAX_SEGMENT_BYTES
               value: "2147483648"
             - name: RETENTION_DAYS

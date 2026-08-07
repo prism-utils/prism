@@ -70,6 +70,12 @@ env:
   # When set, overrides hotWindowMinutes (seconds).
   hotWindowSeconds: ""
   segmentsPerTier: "6"
+  # Searchable lag for logs: buffered landing windows are packed into a tier once
+  # the oldest reaches this age, even below segmentsPerTier. "0" turns the age
+  # trigger off and leaves segmentsPerTier as the only trigger.
+  logsRefreshInterval: "60"
+  # Landing refreshes applied per artifact per merge tick.
+  logsRefreshMaxActions: "8"
   maxSegmentBytes: "2147483648"
   retentionDays: "15"
   rollupSteps: "1m,5m,1h"
