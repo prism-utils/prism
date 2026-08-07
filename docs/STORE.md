@@ -711,21 +711,35 @@ When **`SQL_API_ENABLED=false`** (default `true`), the route is not registered
 | Relation | Schema |
 |---|---|
 | `metrics` | `"__name__"`, `labels`, `value`, `timestamp_ms`, `ts` |
-| `logs` | `message`, `format` (guaranteed) + per-format/`template`/`count` columns (varies) |
+| `logs` | `message`, `format` (guaranteed) + `__prism_ts_ns` (ingest/landing time, nanoseconds) + per-format/`template`/`count` columns (varies) |
 
 The **`logs`** relation unions the tenant's landed `logs-*/*.parquet` windows with
 `union_by_name=true` (variable per-format schemas; missing columns are NULL). It
 is present in every sandbox (empty — zero rows — when a tenant has no logs), is
 tenant-scoped like `metrics`, and is unaffected by `QUERY_HOT_ONLY` (logs have no
-hot/tier split). Logs are **file-backed**: they never enter the metrics hot
-catalog, so they need no hot snapshot export and a **reader** node
-(`RUN_JOBS=false`, read-only mount of the writer's `DATA_DIR`) serves them in
-full — the same rows the writer sees, as soon as a window lands. `make loki-e2e`
-runs exactly that topology. Typical use — total count per mined template:
+hot/tier split). Every sandbox row also carries **`__prism_ts_ns`** (BIGINT
+nanoseconds): prefer a per-row column written at land/merge; otherwise stamp from
+the segment filename window id (same axis Loki uses). There is **no event-time
+Timestamp** column — filter time windows on `__prism_ts_ns`. Logs are
+**file-backed**: they never enter the metrics hot catalog, so they need no hot
+snapshot export and a **reader** node (`RUN_JOBS=false`, read-only mount of the
+writer's `DATA_DIR`) serves them in full — the same rows the writer sees, as soon
+as a window lands. `make loki-e2e` runs exactly that topology. Typical use —
+total count per mined template, and last-hour ingest count:
 
 ```sql
 SELECT template, CAST(sum(count) AS BIGINT) AS count FROM logs GROUP BY template ORDER BY count DESC
 ```
+
+```sql
+SELECT CAST(COUNT(*) AS BIGINT) AS ingested
+FROM logs
+WHERE __prism_ts_ns >= (CAST(epoch_ns(now()) AS BIGINT) - 3600000000000)
+```
+
+When summary windows are present (`count` column), prefer
+`SUM(COALESCE(count, 1))` so each raw row counts as 1 and summary rows use
+their group count.
 
 The `metrics` relation is built from the tenant's **`hot/current.parquet`** snapshot (exported per request)
 plus present **`tiers/L*/*.parquet`** globs when `QUERY_HOT_ONLY` is off — same

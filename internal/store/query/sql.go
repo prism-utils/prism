@@ -318,7 +318,9 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
-	logsSQL, err := buildLogsRelationSQLMixed(logFiles, logsCatalogOpts{})
+	// WithIngestTS matches the Loki path: expose __prism_ts_ns (ingest/landing
+	// time, nanoseconds) so /sql callers can time-bound counts and scans.
+	logsSQL, err := buildLogsRelationSQLMixed(logFiles, logsCatalogOpts{WithIngestTS: true})
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)

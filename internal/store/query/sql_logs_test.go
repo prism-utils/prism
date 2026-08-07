@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/elk-utilities/prism/internal/store/engine"
+	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/elk-utilities/prism/internal/store/query"
 	"github.com/elk-utilities/prism/internal/store/testparquet"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
@@ -114,6 +116,64 @@ func TestSQLLogsUnionByName(t *testing.T) {
 	}
 	if msg, _ := out.Rows[0][0].(string); msg != "hello world" {
 		t.Fatalf("message = %v, want hello world", out.Rows[0][0])
+	}
+}
+
+// TestSQLLogsExposesIngestTSAndTimeBoundedCount proves /sql FROM logs exposes
+// __prism_ts_ns and that a last-hour-style filter returns only recent rows.
+func TestSQLLogsExposesIngestTSAndTimeBoundedCount(t *testing.T) {
+	query.InvalidateLogsMetaCache("")
+	dataDir, eng := newLogsSQLFixture(t)
+	dir := filepath.Join(dataDir, tenantLogs, "logs", "logs-raw")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	recentAt := now.Add(-30 * time.Minute)
+	oldAt := now.Add(-2 * time.Hour)
+	testparquet.WriteLogsRawFile(t, filepath.Join(dir, layout.SegmentName(recentAt)), []testparquet.LogRow{
+		{Message: "recent", Format: "none"},
+	})
+	testparquet.WriteLogsRawFile(t, filepath.Join(dir, layout.SegmentName(oldAt)), []testparquet.LogRow{
+		{Message: "old", Format: "none"},
+	})
+
+	srv := testSQLServer(t, dataDir, nil, eng)
+
+	code, out := execSQL(t, srv, tenantLogs, "SELECT message, __prism_ts_ns FROM logs ORDER BY message")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (column __prism_ts_ns must exist on /sql logs)", code)
+	}
+	if len(out.Rows) != 2 {
+		t.Fatalf("rows = %v, want 2", out.Rows)
+	}
+	foundTS := false
+	for _, col := range out.Columns {
+		if col == "__prism_ts_ns" {
+			foundTS = true
+			break
+		}
+	}
+	if !foundTS {
+		t.Fatalf("columns = %v, want __prism_ts_ns", out.Columns)
+	}
+
+	cutoff := now.Add(-time.Hour).UnixNano()
+	// COUNT(*) is the reliable ingest-row total when only raw windows are present
+	// (no `count` column). Summary-aware tenants use SUM(COALESCE(count, 1)).
+	code, out = execSQL(t, srv, tenantLogs, fmt.Sprintf(
+		`SELECT CAST(COUNT(*) AS BIGINT) AS ingested FROM logs WHERE __prism_ts_ns >= %d`,
+		cutoff,
+	))
+	if code != http.StatusOK {
+		t.Fatalf("time-bounded status = %d, want 200", code)
+	}
+	if len(out.Rows) != 1 {
+		t.Fatalf("time-bounded rows = %v, want 1", out.Rows)
+	}
+	if got := numericCell(t, out.Rows[0][0]); got != 1 {
+		t.Fatalf("ingested last 1h = %v, want 1 (recent only)", got)
 	}
 }
 
