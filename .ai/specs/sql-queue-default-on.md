@@ -1,6 +1,6 @@
 # Spec: SQL queue on by default + live queue snapshot for operators
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 
 - **Slug / branch:** `feat/sql-queue-default-on`
 - **Ships as:** next patch after `v1.9.5` (expected `v1.9.6`) once merged + tagged.
@@ -71,7 +71,8 @@ Homelab `/admin` UI + image bump live in the sibling `feat/prism-queue-admin` wo
 - [x] `GET /admin/queue` registered on admin/combined mux only; protected like `/stats` (ADMIN_TOKEN / RBAC admin action)
 - [x] Coordinator (`MODE=cluster`) does **not** host the limiter snapshot of a data node (no false zeros on the proxy) — either omit the route on coordinator or return `enabled:false` with zeros; document the choice
   - Chose **omit**: the coordinator mux registers no admin routes, so `GET /admin/queue` is `404` there; documented in `STORE.md` (`/admin/queue` section + cluster out-of-scope list), `MIGRATION.md`, and `DESIGN.md`, and pinned by `TestRouterOmitsQueueSnapshotRoute`.
-- [x] Unit tests: snapshot reflects in-flight + waiters under load; rejected increments on 429; route auth walls
+- [ ] Unit tests: snapshot reflects in-flight + waiters under load; rejected increments on 429; route auth walls
+  - Only the `ADMIN_TOKEN` wall is tested; with `AUTHZ_POLICY_FILE` set the route's RBAC wall has no test — add a `TestRBACStatsScoping`-shaped case asserting `403` for a principal with no `stats` binding and `200` for one that has it.
 
 ### Docs
 - [x] `docs/CONFIG.md`, `docs/STORE.md`, `docs/MEMORY.md`, `docs/MIGRATION.md` updated (default-on + new route + sizing note that 10/16 OOMs shared writers)
@@ -82,12 +83,59 @@ Homelab `/admin` UI + image bump live in the sibling `feat/prism-queue-admin` wo
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
 - [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+  - The new `/admin/queue` route has no RBAC-on test, so its `403` failure path is unverified while `STORE.md` now states a specific RBAC contract for it.
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
 - [ ] Full docs/REVIEW.md checklist passes
+  - Blocked by Gate 2 only: "Failure paths + `Validate()` rejection covered, not just happy path" is unmet for the new route's RBAC wall.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: `CHANGES_REQUESTED`** — one gate (Gate 2) fails. Everything else holds.
+
+Verified green by the reviewer, uncached:
+
+- `make lint` → `0 issues`.
+- `go test -count=1 -race -tags duckdb_arrow ./...` → all packages `ok`.
+- `make integration e2e GOFLAGS=-count=1` → `integration 3.1s ok`, `e2e 148.0s ok`.
+- `deploy/charts/prism-store/scripts/check-golden.sh` → `golden manifest OK`.
+- `go mod tidy` → no diff.
+
+Confirmed independently: defaults are `true / 2 / 128 / 120000` in `cmd/prism-store`,
+chart values, and the golden manifest; `rejectedTotal` increments on all three shed
+paths (full queue, expired wait, client cancel), each with its own test; the route is
+registered under `serveAdmin` only and returns `404` on the public plane and on a
+`MODE=cluster` coordinator; `internal/store/admin/stats.go` is untouched so the frozen
+billing JSON is unchanged; `internal/store/cluster` stays a leaf in the production
+dependency graph (the `admin` import is external-test-only); and history shows
+`test:` (`03089a1`) before both implementation commits.
+
+### The one blocking item
+
+`GET /admin/queue` is wired with `rbac.wrapStats`, and `STORE.md` gained a
+dedicated "`/admin/queue` scoping" section asserting that a principal with any
+`stats` binding sees the snapshot. No test exercises that path — only the
+`ADMIN_TOKEN` wall is covered. `TestRBACStatsScoping` in `cmd/prism-store` is the
+established harness for exactly this at the same wiring layer.
+
+This is worth a test rather than trusting construction, because the shared
+`WrapStats` middleware branches on the `ns` query parameter before authorizing.
+`/admin/queue` has no tenant dimension, but `GET /admin/queue?ns=<tenant outside
+the principal's stats scope>` will take that branch and answer `403`/`404` while
+the bare path answers `200`. That is safe (strictly more restrictive), but it is
+undocumented and unpinned, and it makes the STORE.md sentence imprecise.
+
+### Non-blocking observations for the orchestrator
+
+- `internal/store/queue/snapshot_test.go` synchronizes with bounded `time.Sleep(5ms)`
+  poll loops guarded by a one-second deadline. `TESTING.md` prefers
+  `require.Eventually`, but the existing `limiter_test.go` in the same package already
+  uses this shape, so this is consistent with the package rather than new drift.
+  Worth converting the package as a whole some day, not in this PR.
+- The docs are unusually good here: the MEMORY.md sizing rule, the MIGRATION.md
+  upgrade callout, and the DESIGN.md decision entry all carry the OOM evidence, and
+  the coordinator-`404` choice is justified in prose and pinned by a test.
+- Once the RBAC test lands, nothing else needs re-verification beyond `make lint test`;
+  the wiring, docs, chart, and golden manifest are all settled.
