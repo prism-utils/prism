@@ -23,9 +23,17 @@ const (
 
 var legacyIngestNanosRe = regexp.MustCompile(`^metrics-raw-(\d+)-`)
 
-// ExportHotSnapshot writes hot/current.parquet for one tenant.
+// ExportHotSnapshot writes hot/current.parquet for one tenant. Concurrent calls
+// for the same tenant share one export instead of running overlapping exports
+// against the same tenant database, so a dashboard firing many queries at once
+// costs a single export. A caller that joins an export already in flight can
+// miss rows ingested after that export began, which widens its freshness window
+// by at most one export duration — far inside the snapshot ticker's bound.
 func (e *Engine) ExportHotSnapshot(tenant string) error {
-	return e.exportHotSnapshot(tenant)
+	_, err, _ := e.exportGroup.Do(tenant, func() (any, error) {
+		return nil, e.exportHotSnapshot(tenant)
+	})
+	return err
 }
 
 // ExportHotSnapshots writes hot/current.parquet for every tenant with data on disk.
@@ -36,7 +44,7 @@ func (e *Engine) ExportHotSnapshots() error {
 		return err
 	}
 	for _, tenant := range tenants {
-		if err := e.exportHotSnapshot(tenant); err != nil {
+		if err := e.ExportHotSnapshot(tenant); err != nil {
 			e.log.Error("hot snapshot tenant", "tenant", tenant, "err", err)
 		}
 	}
@@ -56,8 +64,11 @@ func (e *Engine) exportHotSnapshot(tenant string) error {
 		return err
 	}
 	selectSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY ts", hotCurrentTable)
-	te.mu.RLock()
-	defer te.mu.RUnlock()
+	// The DuckDB export ATTACHes and DETACHes a database on the tenant
+	// connection, which mutates its catalog, so the export is a writer and takes
+	// the lock exclusively.
+	te.mu.Lock()
+	defer te.mu.Unlock()
 
 	format := e.cfg.HotSegmentFormat
 	if format == "" {

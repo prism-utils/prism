@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,57 @@ func TestHotSnapshotDuckDBExportAtomicNoWAL(t *testing.T) {
 	n := countAttachedMetrics(t, snap)
 	if n != 1 {
 		t.Fatalf("duckdb hot rows=%d, want 1", n)
+	}
+}
+
+func TestConcurrentHotSnapshotDuckDBSameTenant(t *testing.T) {
+	// A dashboard refresh fires many queries at once and each one exports the
+	// tenant's hot snapshot first. Two DuckDB exports on the same tenant would
+	// ATTACH the same alias and temp file on the same connection, so they must
+	// be serialized rather than raced.
+	start := time.Unix(1700000000, 0).UTC()
+	clk := start
+	e := New(Config{
+		DataDir:              t.TempDir(),
+		HotWindow:            time.Hour,
+		HotSegmentFormat:     segformat.DuckDB,
+		DuckDBStorageVersion: segformat.DefaultStorageVersion,
+	}, func() time.Time { return clk })
+	t.Cleanup(func() { _ = e.Close() })
+
+	dir := t.TempDir()
+	path := testparquet.WriteWindow(t, dir, "w.parquet", []testparquet.Row{
+		{Name: "up", Labels: "{}", Value: 1, TimestampMs: 42},
+	})
+	if _, err := e.Ingest(testTenant, readFile(t, path)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	const exporters = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, exporters)
+	for i := 0; i < exporters; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- e.ExportHotSnapshot(testTenant)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent duckdb export: %v", err)
+		}
+	}
+
+	snap := filepath.Join(e.cfg.DataDir, testTenant, "hot", "current.duckdb")
+	if n := countAttachedMetrics(t, snap); n != 1 {
+		t.Fatalf("duckdb hot rows=%d, want 1", n)
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(e.cfg.DataDir, testTenant, "hot", "*.tmp"))
+	if len(leftovers) != 0 {
+		t.Fatalf("temp files should not remain: %v", leftovers)
 	}
 }
 
