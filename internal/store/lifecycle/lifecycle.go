@@ -161,39 +161,37 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 			return err
 		}
 		actions := planner.FindLogMerges(landing, tiers)
-		if len(actions) == 0 {
-			continue
-		}
-		action := actions[0]
-		action.Artifact = artifact
-		x, err := merge.NewExecutor(merge.ExecutorConfig{
-			DataDir:              r.cfg.DataDir,
-			Tenant:               tenant,
-			Threads:              r.cfg.Threads,
-			MemoryLimit:          r.cfg.MemoryLimit,
-			SegmentFormat:        r.cfg.MergeSegmentFormat,
-			DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
-		})
-		if err != nil {
-			return err
-		}
-		mergeStart := r.clock()
-		out, err := x.ExecuteLogMerge(artifact, action, mergeStart)
-		_ = x.Close()
-		if err != nil {
-			return err
-		}
-		if elapsed := r.clock().Sub(mergeStart).Seconds(); elapsed > 0 {
-			if err := stats.AddCompactionCPUSeconds(r.cfg.DataDir, tenant, elapsed); err != nil {
+		for _, action := range actions {
+			action.Artifact = artifact
+			x, err := merge.NewExecutor(merge.ExecutorConfig{
+				DataDir:              r.cfg.DataDir,
+				Tenant:               tenant,
+				Threads:              r.cfg.Threads,
+				MemoryLimit:          r.cfg.MemoryLimit,
+				SegmentFormat:        r.cfg.MergeSegmentFormat,
+				DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
+			})
+			if err != nil {
 				return err
 			}
-		}
-		_ = out
-		if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
-			return err
-		}
-		if err := logmeta.SyncManifest(r.cfg.DataDir, tenant, artifact); err != nil {
-			return err
+			mergeStart := r.clock()
+			out, err := x.ExecuteLogMerge(artifact, action, mergeStart)
+			_ = x.Close()
+			if err != nil {
+				return err
+			}
+			if elapsed := r.clock().Sub(mergeStart).Seconds(); elapsed > 0 {
+				if err := stats.AddCompactionCPUSeconds(r.cfg.DataDir, tenant, elapsed); err != nil {
+					return err
+				}
+			}
+			_ = out
+			if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
+				return err
+			}
+			if err := logmeta.SyncManifest(r.cfg.DataDir, tenant, artifact); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
