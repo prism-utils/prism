@@ -59,7 +59,7 @@ func TestTickRetentionEmptyRollupDoesNotBlockLogFileCap(t *testing.T) {
 	if _, err := os.Stat(emptyPath); !os.IsNotExist(err) {
 		t.Fatalf("empty/unusable rollup should be deleted, still present: %v", err)
 	}
-	got, err := countLogParquet(dataDir, failsafeGoodTenant, artifact)
+	got, err := countDirParquet(landing)
 	if err != nil {
 		t.Fatal(err)
 	}

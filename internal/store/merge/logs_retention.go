@@ -8,7 +8,10 @@ import (
 // LogRetentionConfig controls log segment expiry and optional file caps.
 type LogRetentionConfig struct {
 	RetentionDays int
-	MaxLogFiles   int // 0 = disabled
+	// MaxLogFiles caps segment count (0 = disabled). Callers should pass the
+	// hot landing set only; cold tiers are retained by RetentionDays so a
+	// landing flood cannot erase sealed history.
+	MaxLogFiles int
 }
 
 // LogRetention selects segments to delete by age and optional max file count.

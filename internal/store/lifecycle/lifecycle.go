@@ -239,10 +239,6 @@ func (r *Runner) retainLogsTenant(tenant string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	retCfg := merge.LogRetentionConfig{
-		RetentionDays: r.cfg.RetentionDays,
-		MaxLogFiles:   r.cfg.MaxLogFiles,
-	}
 	var changed bool
 	for _, artifact := range artifacts {
 		landing, err := merge.ScanLogLanding(r.cfg.DataDir, tenant, artifact)
@@ -253,10 +249,29 @@ func (r *Runner) retainLogsTenant(tenant string, now time.Time) error {
 		if err != nil {
 			return err
 		}
+		// Age retention covers landing + cold tiers (RETENTION_DAYS).
 		all := make([]merge.Segment, 0, len(landing)+len(tiers))
 		all = append(all, landing...)
 		all = append(all, tiers...)
-		for _, del := range merge.LogRetention(all, now, retCfg) {
+		for _, del := range merge.LogRetention(all, now, merge.LogRetentionConfig{
+			RetentionDays: r.cfg.RetentionDays,
+		}) {
+			if err := removePath(del.Segment.Path); err != nil {
+				return err
+			}
+			changed = true
+		}
+		// MAX_LOG_FILES applies to the hot landing zone only. Applying it to
+		// landing+tiers together deletes sealed cold segments first (they are
+		// older), which collapses Grafana history to ~minutes under tiny
+		// agent landings. Cold lifetime is RETENTION_DAYS (+ merge/segment caps).
+		landingAfterAge, err := merge.ScanLogLanding(r.cfg.DataDir, tenant, artifact)
+		if err != nil {
+			return err
+		}
+		for _, del := range merge.LogRetention(landingAfterAge, now, merge.LogRetentionConfig{
+			MaxLogFiles: r.cfg.MaxLogFiles,
+		}) {
 			if err := removePath(del.Segment.Path); err != nil {
 				return err
 			}
