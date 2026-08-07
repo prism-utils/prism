@@ -1,6 +1,6 @@
 # Spec: logs refresh interval (ES-like searchable lag)
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 
 - **Slug / branch:** `fix/logs-refresh-interval`
 - **Owner phase:** orchestrator → developer
@@ -92,8 +92,10 @@ the released image and verifies admin logging + Grafana.
       oldest live landing file exceeds the interval (even if count &lt; segments-per-tier).
 - [x] Count trigger (`SEGMENTS_PER_TIER`) still refreshes immediately when enough
       live files accumulate.
-- [x] Loki + `/sql` logs relation **omit landing**; only tier segments are scanned
-      (landing excluded by design).
+- [ ] Loki + `/sql` logs relation **omit landing**; only tier segments are scanned
+      (landing excluded by design). — the relation omits landing, but Loki
+      `label/<name>/values` answers from the logmeta label index, which is still
+      built over landing windows, so buffered values are returned on search.
 - [x] `TickMerge` can apply multiple landing refreshes per artifact per tick
       (`LOGS_REFRESH_MAX_ACTIONS`, default 8).
 - [x] `TickFlush` calls `FlushLogCoalesce` when coalesce is configured.
@@ -105,12 +107,56 @@ the released image and verifies admin logging + Grafana.
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection) — no test asserts the Loki label-values path against a landing-only buffer, which is the gap that let the leak ship.
+- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift) — STORE.md states "neither Loki nor `/sql` opens landing files"; the label index opens and indexes landing parquet.
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [ ] Full docs/REVIEW.md checklist passes — blocked on gates 2 and 3 above.
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+### Review 1 — CHANGES_REQUESTED
+
+**Verified green (re-run by the reviewer, not trusted from the branch):**
+`make lint test` (`golangci-lint`: 0 issues; `go test -count=1 -race -tags
+duckdb_arrow ./...`: all packages ok) and `make full-tests GOFLAGS=-count=1`
+(lint + race unit + docker integration + e2e, 226s, `full-tests: OK`). Both were
+run with `-count=1` because the developer's run was fully cached.
+
+**TDD contract holds.** History is `test:` before every implementation commit,
+three times over (planner/catalog/drain, env+chart loading, duckdb tier
+cataloguing). Conventional Commit subjects with correct package scopes.
+
+**Blocking — the searchable-set change stops at the logs relation.**
+`RebuildManifest` still catalogs landing windows, `EnsureLabelIndex` indexes
+every `.parquet` entry in that manifest, and the Loki handler answers
+`label/<name>/values` from the index for indexed labels instead of scanning the
+relation. Net effect: a label value that only exists in a buffered landing
+window is returned by the label API while `query_range` returns no lines for it,
+for up to a refresh interval. Reproduced against this branch: with one landing
+window (`format=buffered-format`) and one tier segment
+(`format=refreshed-format`), `logmeta.LabelValues(..., "format", ...)` returns
+both. This also makes the delivered STORE.md sentence "neither Loki nor `/sql`
+opens landing files" untrue. Either scope the label index to tier segments (and
+keep the docs as written), or narrow the docs and accept the skew explicitly —
+whichever way, it needs a test that seeds a landing-only buffer and asserts the
+label API result.
+
+**Non-blocking observations (no action required to merge):**
+
+- With `LOGS_REFRESH_INTERVAL=0` on a low-volume artifact, landing can now age
+  past `RETENTION_DAYS` / `MAX_LOG_FILES` and be deleted without ever having
+  been searchable. CONFIG.md warns the artifact "can then stay unsearchable
+  indefinitely", which covers the visibility half but not the deletion half.
+- `envIntAllowZero` silently falls back to the default on unparsable input with
+  no log line, matching the existing `envInt` house pattern. Consistent, but an
+  operator who typos `LOGS_REFRESH_INTERVAL` gets no signal.
+
+**Checked and clean:** planner drain terminates (sealed segments are filtered
+before packing, so a single-segment pack always fits the seal budget and the
+loop always consumes at least one candidate); action sources are disjoint and
+oldest-first; the age arm reads the ingest window id, not event time; landing
+refresh is planned ahead of the cold-tier pack without starving it;
+`FlushLogCoalesce` is a no-op when coalesce is unconfigured and both branches
+are covered; chart values, statefulset env, and the golden fixture agree on
+`60` / `8`; no new dependency, no new goroutine, no global mutable state.

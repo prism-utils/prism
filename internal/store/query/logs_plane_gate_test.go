@@ -259,6 +259,8 @@ func TestLokiLabelValuesUsesCardinalityIndexNotMessageScan(t *testing.T) {
 	}
 	landRaw("k8s")
 	landRaw("none")
+	// Only refreshed windows are searchable, and the index describes that same set.
+	testparquet.PromoteLandedLogsToTier(t, dataDir, tenant, "logs-raw")
 
 	ctx := context.Background()
 	rel := &lokiRelation{dataDir: dataDir, tenant: tenant, columns: []string{"format", lokiMessageColumn}}
@@ -282,6 +284,7 @@ func TestLokiLabelValuesUsesCardinalityIndexNotMessageScan(t *testing.T) {
 	}
 
 	landRaw("json")
+	testparquet.PromoteLandedLogsToTier(t, dataDir, tenant, "logs-raw")
 	idxVals, err := logmeta.LabelValues(dataDir, tenant, "format", 0)
 	if err != nil {
 		t.Fatal(err)
