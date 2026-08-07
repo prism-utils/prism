@@ -13,9 +13,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// nxadm/tail starts a process-wide fsnotify/inotify tracker that outlives tests.
+	// nxadm/tail starts a process-wide fsnotify tracker that outlives tests
+	// (inotify on Linux, kqueue on macOS).
 	goleak.VerifyTestMain(m,
 		goleak.IgnoreAnyFunction("github.com/nxadm/tail/watch.(*InotifyTracker).run"),
+		goleak.IgnoreAnyFunction("github.com/fsnotify/fsnotify.(*inotify).readEvents"),
 		goleak.IgnoreAnyFunction("github.com/fsnotify/fsnotify.(*kqueue).readEvents"),
 		goleak.IgnoreAnyFunction("github.com/fsnotify/fsnotify.(*kqueue).read"),
 	)

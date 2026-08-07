@@ -53,8 +53,8 @@ func TestLokiReaderEndToEnd(t *testing.T) {
 	requireDocker(t)
 	lokiComposeUp(t)
 
-	// The agent tails the mounted fixture and ships windows every couple of
-	// seconds; wait until the writer has landed log rows.
+	// The agent batch-reads the mounted fixture and ships windows; wait until
+	// the writer has landed log rows.
 	if n := waitForLogRows(t, lokiWriterBase, 90*time.Second); n == 0 {
 		dumpLokiComposeLogs(t)
 		t.Fatal("writer never landed any log rows")
