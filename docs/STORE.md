@@ -34,6 +34,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **Loki logs API** | `GET`/`POST /{ns}/loki/api/v1/{query_range,labels,label/<name>/values}` — Loki-compatible read API over the tenant `logs` relation, LogQL subset (`LOKI_API_ENABLED`, default on). Logs-only. |
 | **Read queue** | In-flight limiter on heavy reads (`SQL_API_QUEUE_ENABLED`, **default on**) with `429` + `Retry-After` backpressure on data nodes. |
 | **Queue snapshot** | `GET /admin/queue` — live caps, in-flight, waiting, and shed total for operators. |
+| **Prometheus metrics** | `GET /metrics` on every plane (`METRICS_ENABLED`, **default on**) — Go/process collectors plus USE series for HTTP, per-tenant queries, the read queue, the tenant LRU, and lifecycle jobs. |
 | **RBAC** | Optional JWT/OIDC + deny-by-default YAML policy (`AUTHZ_POLICY_FILE`); fixed roles `reader` / `writer` / `admin`. |
 | **Cluster modes** | `MODE=standalone` (all-in-one), `client` (owned tenants + local engine), `cluster` (stateless coordinator proxy). |
 | **Metering / stats** | `GET /stats?ns=` — frozen billing JSON + on-disk bytes and compaction CPU seconds. |
@@ -321,6 +322,96 @@ Notable groups:
 - **DuckDB governance:** `DUCKDB_THREADS`, `DUCKDB_MEMORY_LIMIT`, `MAX_OPEN_TENANTS`
 - **RBAC:** `AUTHZ_POLICY_FILE`, `OIDC_*`, `AUTHZ_RELOAD_SECONDS`
 - **Legacy admin token:** `ADMIN_TOKEN` (RBAC off only)
+- **Observability:** `METRICS_ENABLED`, `METRICS_PATH`, `METRICS_PER_TENANT`
+
+---
+
+## Observability — Prometheus metrics
+
+`GET /metrics` serves Prometheus text exposition from a registry private to the
+process. It is mounted next to `/healthz` on **every** HTTP plane — public,
+admin, and the `MODE=cluster` coordinator — so a scraper needs no second port.
+Disable with `METRICS_ENABLED=false` (the path then returns `404`); relocate
+with `METRICS_PATH`.
+
+**The endpoint is unauthenticated.** That is the standard scrape contract and
+deliberate: a `NetworkPolicy` is the gate, not a bearer token. The endpoint
+exposes counts, latencies, and caps — never tenant data, query text, or rows.
+On the shared listener, anyone allowed to reach the public port can read it.
+
+### What is exported
+
+Runtime and process series come from the standard collectors (`go_*`,
+`process_*`, including `process_resident_memory_bytes` and
+`process_open_fds`). On top of those, grouped the USE way:
+
+| Metric | Type | Labels | Reads as |
+|---|---|---|---|
+| `prism_store_http_requests_total` | counter | `route`, `method`, `code` | Request rate and error rate per surface |
+| `prism_store_http_request_duration_seconds` | histogram | `route` | Latency per surface |
+| `prism_store_queries_total` | counter | `tenant`, `route` | Read load per tenant; ALL is `sum without (tenant)` |
+| `prism_store_query_errors_total` | counter | `tenant`, `route`, `code_class` | Errors per tenant, bucketed `4xx` / `5xx` |
+| `prism_store_queue_enabled` | gauge | — | Whether heavy reads are gated at all |
+| `prism_store_queue_in_flight` | gauge | — | **Utilization** against `max_in_flight` |
+| `prism_store_queue_waiting` | gauge | — | **Saturation**: reads parked for a slot |
+| `prism_store_queue_max_in_flight` | gauge | — | Configured execution ceiling |
+| `prism_store_queue_max_queue` | gauge | — | Configured wait-queue ceiling |
+| `prism_store_queue_wait_timeout_seconds` | gauge | — | Configured wait budget |
+| `prism_store_queue_rejected_total` | counter | `reason` | **Errors**: `queue_full`, `wait_timeout`, `client_canceled` |
+| `prism_store_queue_wait_seconds` | histogram | — | How long admitted reads queued |
+| `prism_store_engine_open_tenants` | gauge | — | Resident tenant databases |
+| `prism_store_engine_max_open_tenants` | gauge | — | `MAX_OPEN_TENANTS` ceiling |
+| `prism_store_engine_tenant_evictions_total` | counter | — | LRU thrash (shutdown closes excluded) |
+| `prism_store_lifecycle_ticks_total` | counter | `job` | Maintenance passes run |
+| `prism_store_lifecycle_tick_errors_total` | counter | `job` | Failing maintenance |
+| `prism_store_lifecycle_tick_duration_seconds` | histogram | `job` | Pass cost |
+| `prism_store_lifecycle_last_success_timestamp_seconds` | gauge | `job` | Alert on age: a stalled job stops advancing |
+| `prism_store_tier_segment_files` | gauge | `tenant` | Compaction backlog |
+| `prism_store_log_landing_files` | gauge | `tenant`, `artifact` | Landing depth vs the cap |
+| `prism_store_log_landing_files_limit` | gauge | — | `MAX_LOG_FILES` (`0` = off) |
+| `prism_store_compaction_cpu_seconds_total` | counter | `tenant` | Compaction cost per tenant |
+
+`job` is one of `hot_snapshot`, `flush`, `merge`, `retention`.
+
+**A scrape never touches disk.** File gauges are refreshed from scans the
+lifecycle ticks already performed for their own work, so scrape cost is
+independent of how many segments exist. A store with `RUN_JOBS=false` therefore
+reports no file gauges — it runs no ticks.
+
+### Cardinality
+
+Two rules keep the series count bounded:
+
+- **Route labels are a closed set** chosen by the wiring (`healthz`, `readyz`,
+  `metrics`, `ingest`, `query`, `sql`, `promql`, `loki`, `stats`,
+  `admin_queue`, `admin_ensure`) and are **never** derived from a request path.
+  A tenant id can never appear in a route label.
+- **Tenant labels are opt-in and capped.** `METRICS_PER_TENANT=true` (default)
+  adds `tenant` to the query, error, and file families. The store admits at
+  most **256** distinct tenant label values; every namespace past that folds
+  into `tenant="__over_limit__"`, a value no real namespace can take.
+
+Series budget with per-tenant on: roughly `T × (routes + code classes +
+artifacts + 2)` where `T` is the active tenant count capped at 256 — on the
+order of a few thousand series for a busy multi-tenant writer. Set
+`METRICS_PER_TENANT=false` on a store with many short-lived namespaces; the
+route-level HTTP, queue, engine, and lifecycle-job series stay on.
+
+### Scraping in Kubernetes
+
+The chart ships the exporter on by default and an optional ServiceMonitor:
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+```
+
+It targets the existing `http` service port and overrides only the path, since
+metrics share the public listener. If `networkPolicy.enabled=true`, widen the
+ingest selector to admit the monitoring namespace — otherwise the policy blocks
+the scrape along with everything else on that port.
 
 ---
 

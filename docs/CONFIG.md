@@ -799,6 +799,9 @@ see [`STORE.md`](STORE.md).
 | `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments (`Bytes ≥` this) are never merge inputs for metrics tiers **or** logs landing/tiers. Once a merge is triggered, unsealed candidates pack toward this budget. |
 | `MAX_TIER` | int | `8` | Highest tier directory scanned (`L0`…`L8`). |
 | `MERGE_TICK_SECONDS` | int (seconds) | `60` | Tier merge ticker interval. |
+| `METRICS_ENABLED` | bool | `true` | Prometheus exporter. When `false`, no collectors are registered and the scrape path returns `404`. |
+| `METRICS_PATH` | string | `/metrics` | Scrape path, mounted on every HTTP plane next to `/healthz`. A value that is not an absolute path falls back to the default. |
+| `METRICS_PER_TENANT` | bool | `true` | Adds the `tenant` label to query, error, and lifecycle file series. `false` drops those families entirely; route-level HTTP series are unaffected. See the series budget in [`STORE.md`](STORE.md#observability--prometheus-metrics). |
 | `MODE` | string | `standalone` | Deployment role: `standalone`, `client`, or `cluster`. |
 | `OIDC_AUDIENCE` | string (comma-separated) | _(required when RBAC on)_ | Accepted JWT `aud` values. |
 | `OIDC_ISSUER` | string | _(required when RBAC on)_ | OIDC issuer URL; discovery fetches JWKS when JWKS file/URL unset. |
@@ -846,6 +849,7 @@ See [`STORE.md`](STORE.md) for query routes, union shape, rollup thresholds, adm
 |---|---|---|---|
 | `GET` | `/healthz` | `200` body `ok\n` | — |
 | `GET` | `/readyz` | `200` body `ready\n` | `503` when `DATA_DIR` is not writable |
+| `GET` | `/metrics` | `200 text/plain` Prometheus exposition | `404` when `METRICS_ENABLED=false`; unauthenticated, see [`STORE.md`](STORE.md#observability--prometheus-metrics) |
 | `GET` | `<ROUTE_PREFIX>/{tenant}/query?start=&end=&step=` | `200 application/json` | see query validation in [`STORE.md`](STORE.md) |
 | `POST` | `<ROUTE_PREFIX>/{tenant}/sql` | `200 application/json` (default) or `200 application/vnd.apache.arrow.stream` when `Accept` requests Arrow | arbitrary read-only SQL; see [`STORE.md`](STORE.md) § Arbitrary SQL API |
 | `GET`/`POST` | `<ROUTE_PREFIX>/{tenant}/api/v1/query`, `/query_range`, `/series`, `/labels` | `200 application/json` (Prometheus envelope) | PromQL read API; see [`STORE.md`](STORE.md) § PromQL API |

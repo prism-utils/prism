@@ -455,6 +455,28 @@ func (e *Engine) Close() error {
 	return e.lru.closeAll()
 }
 
+// OpenTenants reports how many per-tenant databases are resident right now.
+func (e *Engine) OpenTenants() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lru.len()
+}
+
+// MaxOpenTenants reports the resident-handle ceiling actually in force, which
+// is the configured value after defaulting — not the raw config field.
+func (e *Engine) MaxOpenTenants() int {
+	return e.cfg.MaxOpenTenants
+}
+
+// EvictedTenantsTotal counts handles closed to stay under the ceiling since
+// process start. Handles closed by shutdown are a planned release, not
+// saturation, and are excluded.
+func (e *Engine) EvictedTenantsTotal() int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lru.evicted
+}
+
 func (e *Engine) open(tenant string) (*tenantEntry, error) {
 	if !storetenant.TenantAllowed(tenant) {
 		return nil, fmt.Errorf("engine: invalid tenant %q", tenant)
@@ -631,6 +653,9 @@ type tenantLRU struct {
 	max   int
 	items map[string]*list.Element
 	order *list.List
+	// evicted counts capacity-driven closes only, so the number stays a
+	// saturation signal rather than a shutdown artifact.
+	evicted int64
 }
 
 type lruItem struct {
@@ -661,7 +686,12 @@ func (l *tenantLRU) add(tenant string, ent *tenantEntry) {
 	l.items[tenant] = el
 	for l.order.Len() > l.max {
 		l.evictOldest()
+		l.evicted++
 	}
+}
+
+func (l *tenantLRU) len() int {
+	return l.order.Len()
 }
 
 func (l *tenantLRU) evictOldest() {

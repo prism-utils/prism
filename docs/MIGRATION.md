@@ -54,6 +54,7 @@ default to prism-proxy-equivalent behavior.
 | — | `SQL_API_ENABLED` / `SQL_API_MAX_ROWS` / `SQL_API_TIMEOUT_SECONDS` / `SQL_API_MAX_BODY_BYTES` | New: arbitrary read-only SQL API (`POST {ROUTE_PREFIX}/{ns}/sql`); default on, RBAC-guarded. |
 | — | `SQL_API_QUEUE_ENABLED` / `SQL_API_MAX_INFLIGHT` / `SQL_API_MAX_QUEUE` / `SQL_API_QUEUE_TIMEOUT_MS` | New (v1.3): in-flight limiter on heavy reads. **On by default since v1.9.6** at `2` / `128` / `120000` ms — see the callout below. Set `SQL_API_QUEUE_ENABLED=false` for the pre-v1.9.6 unbounded behavior. |
 | — | `GET /admin/queue` | New (v1.9.6): admin-plane read-queue snapshot (caps, in-flight, waiting, shed total). Same auth as `/stats`; absent (`404`) on a `MODE=cluster` coordinator. |
+| — | `METRICS_ENABLED` / `METRICS_PATH` / `METRICS_PER_TENANT` | New: Prometheus exporter, **on by default**. `GET /metrics` appears on every plane, unauthenticated, beside the health probes — see the callout below. |
 | — | `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT` / `MAX_OPEN_TENANTS` / `QUERY_HOT_ONLY` / `RUN_JOBS` | New: DuckDB governance and reader/writer split; see [`MEMORY.md`](MEMORY.md). |
 | — | **`duckdb_arrow` build tag** | **Build-from-source only:** `prism-store` release/CI builds pass `-tags duckdb_arrow` (CGO) to enable Arrow IPC streaming on `POST /sql` when clients send `Accept: application/vnd.apache.arrow.stream`. Prebuilt images include it; plain `go build ./...` without the tag serves JSON only (Arrow requests → `406`). |
 
@@ -70,6 +71,14 @@ default to prism-proxy-equivalent behavior.
 > `SQL_API_QUEUE_ENABLED=false`; to run hotter, raise `SQL_API_MAX_INFLIGHT`
 > **and** pod memory together (sizing in [`MEMORY.md`](MEMORY.md)). Watch
 > `GET /admin/queue` (`waiting`, `rejectedTotal`) after the upgrade.
+
+> **New unauthenticated endpoint on upgrade.** The Prometheus exporter is on by
+> default, so `GET /metrics` starts answering on `LISTEN_ADDR` (and on
+> `ADMIN_LISTEN_ADDR` when the planes are split) with no bearer required —
+> `ADMIN_TOKEN` and RBAC do not cover it, by design. It publishes counts,
+> latencies, and caps only: no tenant data, query text, or rows. If the public
+> port is reachable beyond your cluster, gate it with a NetworkPolicy or set
+> `METRICS_ENABLED=false`. The frozen `/stats` JSON is untouched.
 
 > **RBAC precedence / caution.** When `AUTHZ_POLICY_FILE` is set, RBAC is
 > authoritative on HTTP data/admin routes and **supersedes `INGEST_TOKEN`/`ADMIN_TOKEN`**

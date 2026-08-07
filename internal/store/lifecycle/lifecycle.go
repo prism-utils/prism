@@ -15,6 +15,33 @@ import (
 	"github.com/elk-utilities/prism/internal/store/stats"
 )
 
+// Job names the maintenance pass an observation belongs to. The set is closed
+// so a metric label built from it stays bounded.
+const (
+	JobHotSnapshot = "hot_snapshot"
+	JobFlush       = "flush"
+	JobMerge       = "merge"
+	JobRetention   = "retention"
+)
+
+// Recorder receives lifecycle observations. File counts are handed over from
+// scans a tick already performed, which is why an exporter built on this never
+// walks the data directory at scrape time. Implementations must not block.
+type Recorder interface {
+	ObserveTick(job string, d time.Duration, err error)
+	ObserveTierSegments(tenant string, files int)
+	ObserveLogLandingFiles(tenant, artifact string, files int)
+	ObserveCompactionSeconds(tenant string, seconds float64)
+}
+
+// nopRecorder keeps every tick path free of nil checks.
+type nopRecorder struct{}
+
+func (nopRecorder) ObserveTick(string, time.Duration, error)   {}
+func (nopRecorder) ObserveTierSegments(string, int)            {}
+func (nopRecorder) ObserveLogLandingFiles(string, string, int) {}
+func (nopRecorder) ObserveCompactionSeconds(string, float64)   {}
+
 // Config drives background merge and retention passes.
 type Config struct {
 	DataDir              string
@@ -31,6 +58,8 @@ type Config struct {
 	DuckDBStorageVersion string
 	// Logger records per-tenant / per-file errors; nil uses slog.Default.
 	Logger *slog.Logger
+	// Recorder receives tick outcomes and file counts; nil discards them.
+	Recorder Recorder
 }
 
 // Runner executes flush, merge, and retention on a ticker schedule.
@@ -39,6 +68,7 @@ type Runner struct {
 	eng   *engine.Engine
 	clock func() time.Time
 	log   *slog.Logger
+	rec   Recorder
 }
 
 // NewRunner builds a lifecycle runner.
@@ -57,22 +87,40 @@ func NewRunner(cfg *Config, eng *engine.Engine, now func() time.Time) *Runner {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Runner{cfg: c, eng: eng, clock: now, log: log}
+	rec := c.Recorder
+	if rec == nil {
+		rec = nopRecorder{}
+	}
+	return &Runner{cfg: c, eng: eng, clock: now, log: log, rec: rec}
+}
+
+// observed runs one maintenance pass and reports how it went. Wall time is read
+// from the wall clock rather than the injected clock so a test clock that never
+// advances still yields honest durations.
+func (r *Runner) observed(job string, pass func() error) error {
+	start := time.Now()
+	err := pass()
+	r.rec.ObserveTick(job, time.Since(start), err)
+	return err
 }
 
 // TickHotSnapshot exports near-real-time hot parquet snapshots for Grafana.
 func (r *Runner) TickHotSnapshot() error {
-	return r.eng.ExportHotSnapshots()
+	return r.observed(JobHotSnapshot, r.eng.ExportHotSnapshots)
 }
 
 // TickFlush rolls hot tables whose window elapsed.
 func (r *Runner) TickFlush() error {
-	return r.eng.FlushDue()
+	return r.observed(JobFlush, r.eng.FlushDue)
 }
 
 // TickMerge plans and executes one merge pass per tenant with tier segments.
 // Per-tenant failures are logged and skipped so one bad tenant cannot block others.
 func (r *Runner) TickMerge() error {
+	return r.observed(JobMerge, r.tickMerge)
+}
+
+func (r *Runner) tickMerge() error {
 	tenants, err := listTenants(r.cfg.DataDir)
 	if err != nil {
 		return err
@@ -102,6 +150,7 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 	if err != nil {
 		return err
 	}
+	r.rec.ObserveTierSegments(tenant, len(segs))
 	actions := planner.FindMerges(segs)
 	if len(actions) == 0 {
 		return nil
@@ -129,6 +178,7 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 		if err := stats.AddCompactionCPUSeconds(r.cfg.DataDir, tenant, elapsed); err != nil {
 			return err
 		}
+		r.rec.ObserveCompactionSeconds(tenant, elapsed)
 	}
 	if action.DestTier >= 1 {
 		rb, err := rollup.NewBuilder(r.cfg.DataDir, tenant, rollup.ParseSteps(r.cfg.RollupSteps), rollup.BuilderConfig{
@@ -156,6 +206,7 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 		if err != nil {
 			return err
 		}
+		r.rec.ObserveLogLandingFiles(tenant, artifact, len(landing))
 		tiers, err := merge.ScanLogTiers(r.cfg.DataDir, tenant, artifact, r.cfg.MaxTier)
 		if err != nil {
 			return err
@@ -184,6 +235,7 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 				if err := stats.AddCompactionCPUSeconds(r.cfg.DataDir, tenant, elapsed); err != nil {
 					return err
 				}
+				r.rec.ObserveCompactionSeconds(tenant, elapsed)
 			}
 			_ = out
 			if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
@@ -201,6 +253,10 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 // Per-tenant and per-file failures are logged and skipped so one bad
 // tenant/file cannot block MAX_LOG_FILES or other tenants.
 func (r *Runner) TickRetention() error {
+	return r.observed(JobRetention, r.tickRetention)
+}
+
+func (r *Runner) tickRetention() error {
 	tenants, err := listTenants(r.cfg.DataDir)
 	if err != nil {
 		return err
@@ -220,6 +276,7 @@ func (r *Runner) TickRetention() error {
 		if err != nil {
 			r.log.Error("retention scan tiers", "tenant", tenant, "err", err)
 		} else {
+			r.rec.ObserveTierSegments(tenant, len(segs))
 			for _, del := range merge.Retention(segs, now, retCfg) {
 				if err := removePath(del.Segment.Path); err != nil {
 					r.log.Error("retention delete segment", "tenant", tenant, "path", del.Segment.Path, "err", err)
@@ -269,14 +326,19 @@ func (r *Runner) retainLogsTenant(tenant string, now time.Time) error {
 		if err != nil {
 			return err
 		}
+		deleted := 0
 		for _, del := range merge.LogRetention(landingAfterAge, now, merge.LogRetentionConfig{
 			MaxLogFiles: r.cfg.MaxLogFiles,
 		}) {
 			if err := removePath(del.Segment.Path); err != nil {
 				return err
 			}
+			deleted++
 			changed = true
 		}
+		// Report what survived this pass: the gauge must show the post-retention
+		// landing depth an operator compares against the cap.
+		r.rec.ObserveLogLandingFiles(tenant, artifact, len(landingAfterAge)-deleted)
 	}
 	if changed {
 		if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {

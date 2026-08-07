@@ -132,6 +132,12 @@ spec:
               value: {{ .Values.env.sqlAPIMaxQueue | quote }}
             - name: SQL_API_QUEUE_TIMEOUT_MS
               value: {{ .Values.env.sqlAPIQueueTimeoutMs | quote }}
+            - name: METRICS_ENABLED
+              value: {{ .Values.metrics.enabled | quote }}
+            - name: METRICS_PATH
+              value: {{ .Values.metrics.path | quote }}
+            - name: METRICS_PER_TENANT
+              value: {{ .Values.metrics.perTenant | quote }}
             {{- if .Values.secrets.existingSecret }}
             - name: INGEST_TOKEN
               valueFrom:

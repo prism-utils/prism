@@ -24,6 +24,11 @@
 // (RBAC action query). Serves the file-backed logs relation with a LogQL subset
 // (stream selectors + line filters). Disable with LOKI_API_ENABLED=false. Reuses
 // SQL_API_MAX_ROWS / SQL_API_TIMEOUT_SECONDS / DUCKDB_* caps.
+// Prometheus exporter: GET /metrics is served next to /healthz on every HTTP
+// plane, unauthenticated, so a scraper needs no credential and no second port
+// (restrict it with a NetworkPolicy). Disable with METRICS_ENABLED=false, move
+// it with METRICS_PATH, and drop the tenant dimension from query, error, and
+// file series with METRICS_PER_TENANT=false.
 // Background jobs: set RUN_JOBS=false to skip all lifecycle maintenance
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
@@ -62,6 +67,7 @@ import (
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
 	"github.com/elk-utilities/prism/internal/store/lifecycle"
+	"github.com/elk-utilities/prism/internal/store/metrics"
 	"github.com/elk-utilities/prism/internal/store/query"
 	"github.com/elk-utilities/prism/internal/store/queue"
 	"github.com/elk-utilities/prism/internal/store/segformat"
@@ -153,6 +159,11 @@ type serverConfig struct {
 	mergeSegmentFormat   string
 	duckdbStorageVersion string
 	rbac                 *rbacConfig
+	metrics              metrics.Config
+	// metricsReg is the process-wide exporter. Both HTTP planes share one
+	// registry so a scrape reports the whole process, not one listener's slice
+	// of it.
+	metricsReg *metrics.Registry
 }
 
 func loadConfig() serverConfig {
@@ -202,6 +213,11 @@ func loadConfig() serverConfig {
 		hotSegmentFormat:     strings.ToLower(envOr("HOT_SEGMENT_FORMAT", "parquet")),
 		mergeSegmentFormat:   strings.ToLower(envOr("MERGE_SEGMENT_FORMAT", "parquet")),
 		duckdbStorageVersion: envOr("DUCKDB_STORAGE_VERSION", segformat.DefaultStorageVersion),
+		metrics: metrics.Config{
+			Enabled:   envBool("METRICS_ENABLED", true),
+			Path:      envOr("METRICS_PATH", metrics.DefaultPath),
+			PerTenant: envBool("METRICS_PER_TENANT", true),
+		},
 	}
 	c.rbac = loadRBACConfig()
 	if v := os.Getenv("MAX_BODY_BYTES"); v != "" {
@@ -351,10 +367,22 @@ func handleReadyz(dataDir string) http.HandlerFunc {
 	}
 }
 
+// registerMetricsRoute mounts the scrape endpoint beside the health probes, so
+// a scraper needs neither a second port nor a credential. Nothing is mounted
+// when the exporter is off, which is what makes the 404 an honest answer.
+func registerMetricsRoute(mux *http.ServeMux, reg *metrics.Registry) {
+	if !reg.Enabled() {
+		return
+	}
+	mux.Handle("GET "+reg.Path(), reg.Instrument(metrics.RouteMetrics, reg.Handler()))
+}
+
 func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, plane servePlane, ownedTenants map[string]struct{}, rbac *rbacStack, sqlLimiter *queue.Limiter) *http.ServeMux {
+	reg := cfg.metricsReg
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", handleHealthz)
-	mux.HandleFunc("GET /readyz", handleReadyz(cfg.dataDir))
+	mux.Handle("GET /healthz", reg.Instrument(metrics.RouteHealthz, http.HandlerFunc(handleHealthz)))
+	mux.Handle("GET /readyz", reg.Instrument(metrics.RouteReadyz, handleReadyz(cfg.dataDir)))
+	registerMetricsRoute(mux, reg)
 	if eng == nil || logger == nil {
 		return mux
 	}
@@ -385,23 +413,27 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		if rbac != nil {
 			ingestHandler = rbac.wrapIngest(ingestHandler)
 		}
-		mux.Handle(storeingest.IngestRoutePattern(cfg.routePrefix), ingestHandler)
+		mux.Handle(storeingest.IngestRoutePattern(cfg.routePrefix), reg.Instrument(metrics.RouteIngest, ingestHandler))
 	}
 	if serveAdmin {
 		ensureHandler := admin.EnsureHandler(adminCfg, eng, logger)
-		mux.Handle(admin.EnsureRoutePattern(), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapEnsure, ensureHandler))
+		mux.Handle(admin.EnsureRoutePattern(), reg.Instrument(metrics.RouteAdminEnsure,
+			protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapEnsure, ensureHandler)))
 
 		statsHandler := admin.StatsHandler(adminCfg, eng)
-		mux.Handle(admin.StatsRoutePattern(), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapStats, statsHandler))
+		mux.Handle(admin.StatsRoutePattern(), reg.Instrument(metrics.RouteStats,
+			protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapStats, statsHandler)))
 
 		queueHandler := admin.QueueHandler(sqlLimiter)
-		mux.Handle(admin.QueueRoutePattern(), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapStats, queueHandler))
+		mux.Handle(admin.QueueRoutePattern(), reg.Instrument(metrics.RouteAdminQueue,
+			protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapStats, queueHandler)))
 
 		queryHandler := query.Handler(queryCfg, eng, logger)
 		if ownedTenants != nil {
 			queryHandler = cluster.OwnedTenantGuard(ownedTenants, queryHandler)
 		}
-		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, queryHandler))
+		mux.Handle(query.QueryRoutePattern(cfg.routePrefix), reg.Instrument(metrics.RouteQuery,
+			protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, queryHandler)))
 
 		if cfg.sqlAPIEnabled {
 			sqlCfg := &query.SQLConfig{
@@ -420,7 +452,8 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			if ownedTenants != nil {
 				h = cluster.OwnedTenantGuard(ownedTenants, h)
 			}
-			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, h))
+			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), reg.Instrument(metrics.RouteSQL,
+				protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, h)))
 		}
 
 		if cfg.promqlAPIEnabled {
@@ -435,7 +468,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			if ownedTenants != nil {
 				ph = cluster.OwnedTenantGuard(ownedTenants, ph)
 			}
-			wrapped := protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, ph)
+			wrapped := reg.Instrument(metrics.RoutePromQL, protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, ph))
 			for _, pattern := range query.PromQLRoutePatterns(cfg.routePrefix) {
 				mux.Handle(pattern, wrapped)
 			}
@@ -459,7 +492,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			if ownedTenants != nil {
 				lh = cluster.OwnedTenantGuard(ownedTenants, lh)
 			}
-			wrapped := protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, lh)
+			wrapped := reg.Instrument(metrics.RouteLoki, protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, lh))
 			for _, pattern := range query.LokiRoutePatterns(cfg.routePrefix) {
 				mux.Handle(pattern, wrapped)
 			}
@@ -516,6 +549,7 @@ func defaultBackgroundLoopStart(ctx context.Context, runner *lifecycle.Runner, c
 var startBackgroundLoop backgroundLoopStartFunc = defaultBackgroundLoopStart
 
 func runStore(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
+	cfg.metricsReg = metrics.New(cfg.metrics)
 	rbac, err := buildRBACStack(ctx, cfg.rbac, logger)
 	if err != nil {
 		return err
@@ -554,6 +588,10 @@ func runCluster(ctx context.Context, cfg *serverConfig, clients map[string]*url.
 		wrapQuery = rbac.wrapQuery
 	}
 	mux := cluster.NewServeMux(clients, cfg.routePrefix, wrapQuery)
+	// A coordinator holds no engine, queue, or lifecycle, so its exporter is the
+	// runtime and process view only — still the RSS/CPU/FD signal an operator
+	// needs for a pod that fans queries out.
+	registerMetricsRoute(mux, cfg.metricsReg)
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
 		Handler:           mux,
@@ -592,6 +630,19 @@ func runCluster(ctx context.Context, cfg *serverConfig, clients map[string]*url.
 	return nil
 }
 
+// attachMetricSources points the scrape-time gauges at the live limiter and
+// engine, and publishes the static caps those gauges are read against.
+func attachMetricSources(cfg *serverConfig, sqlLimiter *queue.Limiter, eng *engine.Engine) error {
+	if err := cfg.metricsReg.SetQueueSource(sqlLimiter); err != nil {
+		return fmt.Errorf("metrics queue source: %w", err)
+	}
+	if err := cfg.metricsReg.SetEngineSource(eng); err != nil {
+		return fmt.Errorf("metrics engine source: %w", err)
+	}
+	cfg.metricsReg.SetLogLandingLimit(cfg.maxLogFiles)
+	return nil
+}
+
 func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, ownedTenants map[string]struct{}, rbac *rbacStack) error {
 	if err := validateRBACFlight(cfg, rbac); err != nil {
 		return err
@@ -608,6 +659,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		MaxInFlight: cfg.sqlAPIMaxInFlight,
 		MaxQueue:    cfg.sqlAPIMaxQueue,
 		Wait:        cfg.sqlAPIQueueTimeout,
+		Observer:    cfg.metricsReg,
 	})
 	eng := engine.New(engine.Config{
 		DataDir:              cfg.dataDir,
@@ -624,6 +676,10 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	eng.SetLogger(logger)
 	defer func() { _ = eng.Close() }()
 
+	if err := attachMetricSources(cfg, sqlLimiter, eng); err != nil {
+		return err
+	}
+
 	runner := lifecycle.NewRunner(&lifecycle.Config{
 		DataDir:              cfg.dataDir,
 		SegmentsPerTier:      cfg.segmentsPerTier,
@@ -638,6 +694,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		MergeSegmentFormat:   cfg.parsedMergeFormat(),
 		DuckDBStorageVersion: cfg.duckdbStorageVersion,
 		Logger:               logger,
+		Recorder:             cfg.metricsReg,
 	}, eng, now)
 
 	if cfg.runJobs {
