@@ -11,7 +11,8 @@ import (
 
 // logSegmentHasIngestTS reports whether a parquet log segment already carries
 // per-row __prism_ts_ns (written at merge). Legacy landing files lack it.
-// .duckdb segments are annotated after ATTACH via annotateDuckLogIngestTS.
+// .duckdb segments cannot be probed from a path alone — HasIngestTS stays
+// false here until DESCRIBE runs on an ATTACHed connection.
 func logSegmentHasIngestTS(path string) bool {
 	if segformat.IsDuckDB(path) {
 		return false
