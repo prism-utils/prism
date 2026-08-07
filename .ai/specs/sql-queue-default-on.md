@@ -1,6 +1,6 @@
 # Spec: SQL queue on by default + live queue snapshot for operators
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `feat/sql-queue-default-on`
 - **Ships as:** next patch after `v1.9.5` (expected `v1.9.6`) once merged + tagged.
@@ -92,9 +92,10 @@ Homelab `/admin` UI + image bump live in the sibling `feat/prism-queue-admin` wo
 - [x] Full docs/REVIEW.md checklist passes
   - The one blocker is cleared: "Failure paths + `Validate()` rejection covered, not just happy path" now holds for the new route's RBAC wall.
 
-## 7. Reviewer notes
+## 7. Reviewer notes — round 1
 
 **Verdict: `CHANGES_REQUESTED`** — one gate (Gate 2) fails. Everything else holds.
+(Resolved in round 2 — see §9.)
 
 Verified green by the reviewer, uncached:
 
@@ -171,3 +172,54 @@ production code changed.
 - **Production code is byte-identical to the reviewed revision** — `git diff` for
   this round touches only `cmd/prism-store/rbac_test.go`, `docs/STORE.md`, and this
   spec.
+
+## 9. Reviewer notes — round 2
+
+**Verdict: `ALL_OK`.** The Gate 2 blocker is cleared. All four gates and the
+`docs/REVIEW.md` checklist pass. Nothing else was reopened.
+
+Re-run uncached by the reviewer:
+
+- `make lint` → `0 issues`.
+- `go test -count=1 -race -tags duckdb_arrow ./...` → all packages `ok`.
+
+### Gate 2 evidence
+
+- **The test exists and is wired the way the store mounts the route.**
+  `TestRBACQueueSnapshotScoping` drives `newServeMux(..., planeCombined, ...)`, so
+  it exercises the real `protectAdminRoute(rbac, token, rbac.wrapStats, queueHandler)`
+  registration rather than a hand-wrapped handler. All five subtests pass.
+- **All four claimed cases are pinned:** `200` + snapshot decoding to
+  `{Enabled:true, MaxInFlight:2, MaxQueue:128, TimeoutMs:120000}` for the `stats`
+  principal; `403` `forbidden` for the `reader` principal with no `stats`; `404`
+  `unknown tenant` for `?ns=<out-of-scope tenant>`; `401` unauthenticated.
+- **The `ns` case reaches the authorization branch, not a syntactic reject.**
+  `user-7a4b1c9d-web` matches the tenant pattern, so `TenantAllowed` passes and the
+  `404` comes from the authorizer's not-found decision — the anti-enumeration body,
+  which is the branch worth pinning.
+- **Teeth verified independently, not taken on report.** Substituting an identity
+  wrapper for `rbac.wrapStats` on the queue route only failed exactly three
+  subtests (`403`, `?ns=` `404`, `401`); the mutation was reverted and the tree
+  confirmed clean. The test is not tautological.
+- **`STORE.md` matches the pinned behavior.** The imprecise "any principal with a
+  `stats` binding sees the snapshot" is split into a no-`ns` bullet (`403` with no
+  `stats` scope) and a `?ns=` bullet (`404` or `403` per the anti-enumeration table
+  above it). Both track the middleware exactly, and the wording now mirrors the
+  neighboring `/stats` scoping section. The claim that `ns` "never changes the
+  response body" holds: the handler ignores the request and the stats scope, so an
+  in-scope `ns` returns the identical snapshot.
+- **No unrelated churn.** The round's diff is three files — the test, that one
+  `STORE.md` section, and this spec. Across the whole branch,
+  `internal/store/admin/stats.go` is untouched, so the frozen billing contract is
+  intact.
+
+### Non-blocking, for the orchestrator
+
+- The wiring-layer test pins the `?ns=` `404` but not the `?ns=` `403` (bound
+  tenant whose role lacks `stats`). That branch is already covered a layer down by
+  `TestMiddlewareStatsNsRequiresStatsOnTenant`, so the decision matrix is complete
+  across the two packages. Not worth a duplicate case.
+- The round-1 observation about `time.Sleep` poll loops in
+  `internal/store/queue/snapshot_test.go` still stands and is still not for this PR.
+
+Clear to merge and tag.
