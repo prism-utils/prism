@@ -14,7 +14,7 @@ Guideline docs this loop enforces (never duplicated into agents):
 
 ---
 
-## Roles (one line each — full definitions in `.github/agents/`)
+## Roles (one line each — full definitions in `.cursor/agents/`)
 
 | Agent | Owns | Never does |
 |---|---|---|
@@ -135,7 +135,7 @@ per `CONTRIBUTING.md` §1 (a `test:` commit precedes implementation commits). It
 When all acceptance items are checked and local checks pass, set
 `Status: IN_REVIEW` and hand back to the orchestrator.
 
-Full role: [`../../.github/agents/prism-developer.agent.md`](../../.github/agents/prism-developer.agent.md).
+Full role: [`../../.cursor/agents/prism-developer.agent.md`](../../.cursor/agents/prism-developer.agent.md).
 
 ---
 
@@ -154,7 +154,7 @@ Then it sets the verdict:
 - otherwise → `Status: CHANGES_REQUESTED`.
 
 The reviewer **never fixes code**. Full role:
-[`../../.github/agents/prism-reviewer.agent.md`](../../.github/agents/prism-reviewer.agent.md).
+[`../../.cursor/agents/prism-reviewer.agent.md`](../../.cursor/agents/prism-reviewer.agent.md).
 
 ---
 
@@ -193,7 +193,7 @@ The task is **done** only after step 5.
 
 - Process rules live **here**. Engineering rules live in `CONTRIBUTING.md` /
   `DESIGN.md` / `TESTING.md`. Gate definitions live in `REVIEW.md`.
-- Agent files under `.github/agents/` are **thin**: role + entry/exit + which
+- Agent files under `.cursor/agents/` are **thin**: role + entry/exit + which
   section of this file / which doc to execute. They must not copy rules.
 - A rule appears in exactly one place. If you find yourself repeating a rule in
   an agent file, delete it and link here instead — that is how we avoid stale
