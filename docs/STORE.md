@@ -470,6 +470,13 @@ on successful export so a format flip does not double-count. Live tenant
 `engine.duckdb` is unchanged. Reads see in-flight rows; a background ticker
 exports every `HOT_SNAPSHOT_SECONDS` (default 15s).
 
+Exports for one tenant are serialized: a writer store exports per query request
+(PromQL and `/sql`), so a dashboard firing many panels at once — plus the
+snapshot ticker — would otherwise run overlapping exports against the same
+tenant database, which DuckDB rejects (`ATTACH` of one file/alias twice on a
+connection). Overlapping callers share the single in-flight export and its
+result, so a burst of N queries costs one export.
+
 Metrics flush→L0 and metrics/logs tier merges emit `.parquet` or `.duckdb`
 according to `MERGE_SEGMENT_FORMAT` (default `parquet`). Query sandboxes ATTACH
 `.duckdb` segments read-only and keep `read_parquet` for Parquet; mixed trees

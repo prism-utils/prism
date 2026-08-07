@@ -1,6 +1,6 @@
 # Spec: Serialize per-tenant hot snapshot exports (prod attach conflict)
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `fix/hot-snapshot-export-singleflight`
 - **Owner phase:** developer (urgent prod fix; orchestrator process compressed)
@@ -71,24 +71,32 @@ snapshot exports so concurrent requests share one export instead of racing.
 
 ## 5. Acceptance checklist
 
-- [ ] Regression test: many concurrent `ExportHotSnapshot` calls on one tenant
+- [x] Regression test: many concurrent `ExportHotSnapshot` calls on one tenant
       with `HOT_SEGMENT_FORMAT=duckdb` all succeed (no attach/unique-file-handle
       error), snapshot is readable, no `.tmp` leftovers
-- [ ] `ExportHotSnapshot` serializes per tenant and waiters reuse the result
-- [ ] Export holds the tenant lock exclusively
-- [ ] `AtomicExportDuckDB` uses a per-attempt temp path
-- [ ] `/sql` exports are covered by the same serialization (same entry point)
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally
+- [x] `ExportHotSnapshot` serializes per tenant and waiters reuse the result
+- [x] Export holds the tenant lock exclusively
+- [x] `AtomicExportDuckDB` uses a per-attempt temp path
+- [x] `/sql` exports are covered by the same serialization (same entry point)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+- TDD history confirmed: `aebe070 test(store/engine): …` → `3d9494a
+  test(store/query): …` → `4a8a1b5 fix(store/engine): …`. Both tests were run
+  against the pre-fix tree and failed for the right reason (engine: `Unique file
+  handle conflict: Cannot attach "exp"`; handler: HTTP 500 `query failed`).
+- `make lint` (0 issues) and `make test` (race) green locally. No I/O format or
+  wiring change, so `make full-tests` was not required.
+- Freshness trade-off is recorded on `ExportHotSnapshot` and accepted: a waiter
+  joins an export that may have begun up to one export duration before it
+  arrived, well inside the 15s snapshot ticker bound.
