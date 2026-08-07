@@ -76,6 +76,41 @@ func ScanLogLanding(dataDir, tenant, artifact string) ([]Segment, error) {
 	return out, nil
 }
 
+// QuarantineCorruptLogLanding deletes empty landing segments that can never
+// ATTACH (0-byte .duckdb from crashed/partial ingest). One such file otherwise
+// stalls FindLogMerges forever, landing floods past DuckDB's expression-depth
+// limit, and Grafana's Loki plugin returns "An error occurred within the plugin".
+// Non-empty files are left alone — attach failures on those are handled at merge time.
+func QuarantineCorruptLogLanding(dataDir, tenant, artifact string) (int, error) {
+	dir := layout.LogsLandingDir(dataDir, tenant, artifact)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() || !isSegmentFile(e.Name()) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.Size() > 0 {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return removed, fmt.Errorf("quarantine empty landing %s: %w", path, err)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 // ScanLogTier lists segments in one logs tier directory.
 func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) {
 	dir := layout.LogsTierDir(dataDir, tenant, artifact, tier)

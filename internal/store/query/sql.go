@@ -314,7 +314,8 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 		return nil, nil, wrapSandboxErr(err)
 	}
 	logFiles = filterExistingLogFiles(logFiles)
-	if err := attachLogsDuckDB(ctx, conn, logFiles); err != nil {
+	logFiles, err = attachLogsDuckDB(ctx, conn, logFiles)
+	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}

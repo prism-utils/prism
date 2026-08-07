@@ -202,6 +202,11 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 		return err
 	}
 	for _, artifact := range artifacts {
+		if n, qerr := merge.QuarantineCorruptLogLanding(r.cfg.DataDir, tenant, artifact); qerr != nil {
+			return qerr
+		} else if n > 0 {
+			r.log.Warn("quarantined empty log landing files", "tenant", tenant, "artifact", artifact, "removed", n)
+		}
 		landing, err := merge.ScanLogLanding(r.cfg.DataDir, tenant, artifact)
 		if err != nil {
 			return err
