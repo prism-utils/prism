@@ -52,7 +52,7 @@ func TestLogsTierMergeCompactsPastSegmentsPerTier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	actions := planner.FindLogMerges(landingSegs, nil)
+	actions := planner.FindLogMerges(base, landingSegs, nil)
 	if len(actions) != 1 {
 		t.Fatalf("want 1 merge action, got %d", len(actions))
 	}

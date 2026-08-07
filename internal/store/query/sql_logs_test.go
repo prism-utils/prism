@@ -29,9 +29,10 @@ func newLogsSQLFixture(t *testing.T) (string, *engine.Engine) {
 	return dataDir, eng
 }
 
-// landLogsSummary builds a logs-summary parquet fixture and lands it via the
-// engine's land-as-file path (the same path HTTP ingest uses for logs).
-func landLogsSummary(t *testing.T, eng *engine.Engine, tenant string, rows []testparquet.LogSummaryRow) {
+// landLogsSummary builds a logs-summary parquet fixture, lands it via the
+// engine's land-as-file path (the same path HTTP ingest uses for logs), and
+// refreshes it into a tier so `/sql` can see the rows.
+func landLogsSummary(t *testing.T, eng *engine.Engine, dataDir, tenant string, rows []testparquet.LogSummaryRow) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "w.parquet")
@@ -44,13 +45,14 @@ func landLogsSummary(t *testing.T, eng *engine.Engine, tenant string, rows []tes
 	if _, err := eng.LandLogWindow(tenant, "logs-summary", f); err != nil {
 		t.Fatalf("land logs-summary: %v", err)
 	}
+	testparquet.PromoteLandedLogsToTier(t, dataDir, tenant, "logs-summary")
 }
 
 func TestSQLLogsTemplateCount(t *testing.T) {
 	dataDir, eng := newLogsSQLFixture(t)
 	// Two summary windows accumulate per-template counts across files.
-	landLogsSummary(t, eng, tenantLogs, []testparquet.LogSummaryRow{{Template: "a", Count: 3}, {Template: "b", Count: 1}})
-	landLogsSummary(t, eng, tenantLogs, []testparquet.LogSummaryRow{{Template: "a", Count: 2}, {Template: "c", Count: 4}})
+	landLogsSummary(t, eng, dataDir, tenantLogs, []testparquet.LogSummaryRow{{Template: "a", Count: 3}, {Template: "b", Count: 1}})
+	landLogsSummary(t, eng, dataDir, tenantLogs, []testparquet.LogSummaryRow{{Template: "a", Count: 2}, {Template: "c", Count: 4}})
 
 	srv := testSQLServer(t, dataDir, nil, eng)
 	code, out := execSQL(t, srv, tenantLogs, "SELECT template, CAST(sum(count) AS BIGINT) AS count FROM logs GROUP BY template ORDER BY count DESC, template")
@@ -94,8 +96,8 @@ func TestSQLLogsEmptyTenantReturnsZeroRows(t *testing.T) {
 // unify into one `logs` relation instead of erroring on mismatched columns.
 func TestSQLLogsUnionByName(t *testing.T) {
 	dataDir, eng := newLogsSQLFixture(t)
-	landLogsSummary(t, eng, tenantLogs, []testparquet.LogSummaryRow{{Template: "a", Count: 3}})
-	landRawLog(t, eng, tenantLogs, "hello world", "none")
+	landLogsSummary(t, eng, dataDir, tenantLogs, []testparquet.LogSummaryRow{{Template: "a", Count: 3}})
+	landRawLog(t, eng, dataDir, tenantLogs, "hello world", "none")
 
 	srv := testSQLServer(t, dataDir, nil, eng)
 	code, out := execSQL(t, srv, tenantLogs, "SELECT count(*) AS c FROM logs")
@@ -124,7 +126,7 @@ func TestSQLLogsUnionByName(t *testing.T) {
 func TestSQLLogsExposesIngestTSAndTimeBoundedCount(t *testing.T) {
 	query.InvalidateLogsMetaCache("")
 	dataDir, eng := newLogsSQLFixture(t)
-	dir := filepath.Join(dataDir, tenantLogs, "logs", "logs-raw")
+	dir := filepath.Join(dataDir, tenantLogs, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -177,8 +179,9 @@ func TestSQLLogsExposesIngestTSAndTimeBoundedCount(t *testing.T) {
 	}
 }
 
-// landRawLog lands a logs-raw parquet (message, format columns) via the engine.
-func landRawLog(t *testing.T, eng *engine.Engine, tenant, message, format string) {
+// landRawLog lands a logs-raw parquet (message, format columns) via the engine
+// and refreshes it into a tier so `/sql` can see the rows.
+func landRawLog(t *testing.T, eng *engine.Engine, dataDir, tenant, message, format string) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "raw.parquet")
@@ -191,6 +194,7 @@ func landRawLog(t *testing.T, eng *engine.Engine, tenant, message, format string
 	if _, err := eng.LandLogWindow(tenant, "logs-raw", f); err != nil {
 		t.Fatalf("land logs-raw: %v", err)
 	}
+	testparquet.PromoteLandedLogsToTier(t, dataDir, tenant, "logs-raw")
 }
 
 func writeRawLogParquet(t *testing.T, path, message, format string) {

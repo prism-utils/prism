@@ -56,7 +56,7 @@ func TestBuildLogsRelationSQLLegacyFilenameJOIN(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, "user-lokits02-apps")
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L1")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}

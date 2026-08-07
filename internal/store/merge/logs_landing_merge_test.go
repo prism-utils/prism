@@ -19,7 +19,7 @@ func TestFindLogLandingMergeIgnoresSealed(t *testing.T) {
 		off := time.Duration(i+1) * time.Hour
 		landing = append(landing, seg(-1, "l"+pathID(i), 20, off, off+time.Minute))
 	}
-	actions := p.FindLogMerges(landing, nil)
+	actions := p.FindLogMerges(fixtureBase, landing, nil)
 	if len(actions) != 1 {
 		t.Fatalf("want 1 landing merge ignoring sealed, got %d", len(actions))
 	}
@@ -45,7 +45,7 @@ func TestFindLogLandingMergeShrinksWhenSumExceedsMax(t *testing.T) {
 		off := time.Duration(i) * time.Minute
 		landing = append(landing, seg(-1, pathID(i), 80, off, off+30*time.Second))
 	}
-	actions := p.FindLogMerges(landing, nil)
+	actions := p.FindLogMerges(fixtureBase, landing, nil)
 	if len(actions) != 1 {
 		t.Fatalf("want 1 merge after shrink, got %d", len(actions))
 	}
@@ -73,7 +73,7 @@ func TestFindLogLandingMergeAllSealedNoAction(t *testing.T) {
 		off := time.Duration(i) * time.Minute
 		landing = append(landing, seg(-1, pathID(i), 200, off, off+30*time.Second))
 	}
-	if actions := p.FindLogMerges(landing, nil); len(actions) != 0 {
+	if actions := p.FindLogMerges(fixtureBase, landing, nil); len(actions) != 0 {
 		t.Fatalf("all-sealed landing should not merge, got %v", actions)
 	}
 }
@@ -93,26 +93,26 @@ func TestFindLogLandingMergePacksTowardMaxBytes(t *testing.T) {
 		off := time.Duration(i) * time.Minute
 		landing = append(landing, seg(-1, pathID(i%26)+pathID((i/26)%26), perFile, off, off+30*time.Second))
 	}
-	actions := p.FindLogMerges(landing, nil)
-	if len(actions) != 1 {
-		t.Fatalf("want 1 pack-to-max merge, got %d", len(actions))
-	}
+	actions := p.FindLogMerges(fixtureBase, landing, nil)
 	wantN := int(maxBytes / perFile) // 20 files fill the budget exactly
-	if len(actions[0].Sources) != wantN {
-		t.Fatalf("want %d sources packing to max, got %d", wantN, len(actions[0].Sources))
-	}
 	if wantN <= 6 {
 		t.Fatalf("test setup: pack count must exceed SEGMENTS_PER_TIER")
 	}
-	sum := int64(0)
-	for _, s := range actions[0].Sources {
-		sum += s.Bytes
+	// 40 files at 20 per budget-filling pack: the drain plans both packs.
+	if len(actions) != 2 {
+		t.Fatalf("want 2 pack-to-max merges, got %d", len(actions))
 	}
-	if sum > maxBytes {
-		t.Fatalf("packed sum %d exceeds max %d", sum, maxBytes)
-	}
-	if sum != maxBytes {
-		t.Fatalf("want packed sum == max (%d), got %d", maxBytes, sum)
+	for i, action := range actions {
+		if len(action.Sources) != wantN {
+			t.Fatalf("action %d: want %d sources packing to max, got %d", i, wantN, len(action.Sources))
+		}
+		sum := int64(0)
+		for _, s := range action.Sources {
+			sum += s.Bytes
+		}
+		if sum != maxBytes {
+			t.Fatalf("action %d: want packed sum == max (%d), got %d", i, maxBytes, sum)
+		}
 	}
 }
 
@@ -128,7 +128,7 @@ func TestFindLogLandingMergeBelowTriggerNoAction(t *testing.T) {
 		off := time.Duration(i) * time.Minute
 		landing = append(landing, seg(-1, pathID(i), 10, off, off+30*time.Second))
 	}
-	if actions := p.FindLogMerges(landing, nil); len(actions) != 0 {
+	if actions := p.FindLogMerges(fixtureBase, landing, nil); len(actions) != 0 {
 		t.Fatalf("below SEGMENTS_PER_TIER must not merge, got %v", actions)
 	}
 }

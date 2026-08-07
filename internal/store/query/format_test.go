@@ -131,15 +131,15 @@ func TestSQLSandboxHotDuckDBOnly(t *testing.T) {
 func TestSQLLogsReadsDuckDBTier(t *testing.T) {
 	dataDir := t.TempDir()
 	tenantRoot := filepath.Join(dataDir, formatTenant)
-	landing := layout.LogsLandingDir(dataDir, formatTenant, "logs-raw")
+	parquetTier := layout.LogsTierDir(dataDir, formatTenant, "logs-raw", 1)
 	tier := layout.LogsTierDir(dataDir, formatTenant, "logs-raw", 0)
-	if err := os.MkdirAll(landing, 0o750); err != nil {
+	if err := os.MkdirAll(parquetTier, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(tier, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	writeTinyLogParquet(t, filepath.Join(landing, layout.SegmentName(time.Unix(1, 0).UTC())), "landed")
+	writeTinyLogParquet(t, filepath.Join(parquetTier, layout.SegmentName(time.Unix(1, 0).UTC())), "packed")
 	writeLogsDuckDBFile(t, filepath.Join(tier, "1700000000000000000-beef.duckdb"), "merged")
 
 	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, time.Now)
@@ -180,7 +180,7 @@ func TestSQLLogsReadsDuckDBTier(t *testing.T) {
 	if out.RowCount != 1 || len(out.Rows) != 1 {
 		t.Fatalf("unexpected response: %+v", out)
 	}
-	// COUNT(*) returns one row; value should be 2 (landing + duckdb tier).
+	// COUNT(*) returns one row; value should be 2 (parquet tier + duckdb tier).
 	got, ok := out.Rows[0][0].(float64)
 	if !ok {
 		// json numbers may decode as float64; also accept json.Number via Decode defaults

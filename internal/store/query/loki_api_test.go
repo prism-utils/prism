@@ -69,7 +69,7 @@ func lokiServer(t *testing.T, cfg *query.LokiConfig) *httptest.Server {
 // is the ingest-time axis the Loki API reports.
 func landLokiRaw(t *testing.T, dataDir, tenant, name string, at time.Time, rows []testparquet.LogRow) {
 	t.Helper()
-	path := filepath.Join(dataDir, tenant, "logs", "logs-raw", name)
+	path := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L0", name)
 	testparquet.WriteLogsRawFile(t, path, rows)
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatalf("chtimes: %v", err)
@@ -78,7 +78,7 @@ func landLokiRaw(t *testing.T, dataDir, tenant, name string, at time.Time, rows 
 
 func landLokiSummary(t *testing.T, dataDir, tenant, name string, at time.Time, rows []testparquet.LogSummaryRow) {
 	t.Helper()
-	path := filepath.Join(dataDir, tenant, "logs", "logs-summary", name)
+	path := filepath.Join(dataDir, tenant, "logs", "logs-summary", "tiers", "L0", name)
 	testparquet.WriteLogsSummaryFile(t, path, rows)
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatalf("chtimes: %v", err)

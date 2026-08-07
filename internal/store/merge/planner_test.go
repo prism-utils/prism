@@ -5,14 +5,17 @@ import (
 	"time"
 )
 
+// fixtureBase anchors every segment fixture so a test can name an instant
+// relative to the segments it built.
+var fixtureBase = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
 func seg(tier int, id string, bytes int64, minOff, maxOff time.Duration) Segment {
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	return Segment{
 		Tier:  tier,
 		Path:  id,
 		Bytes: bytes,
-		MinTs: base.Add(minOff),
-		MaxTs: base.Add(maxOff),
+		MinTs: fixtureBase.Add(minOff),
+		MaxTs: fixtureBase.Add(maxOff),
 	}
 }
 
