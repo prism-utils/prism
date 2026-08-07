@@ -114,26 +114,50 @@ func ScanLogTiers(dataDir, tenant, artifact string, maxTier int) ([]Segment, err
 	return all, nil
 }
 
-// FindLogMerges plans log compaction. When both landing and a cold tier are
-// eligible, both actions are returned so one tick can drain landing and pack
-// L0 toward MaxSegmentBytes (landing must not starve tier catch-up).
-func (p *Planner) FindLogMerges(landing, tiers []Segment) []LogMergeAction {
-	var out []LogMergeAction
-	if action, ok := p.findLogLandingMerge(landing); ok {
-		out = append(out, action)
-	}
+// FindLogMerges plans log compaction as of now. Landing refreshes are planned
+// first and may span several actions, so a searchable-lag backlog drains ahead
+// of cold-tier packing; the eligible cold tier is still returned in the same
+// pass so landing traffic cannot starve tier catch-up.
+func (p *Planner) FindLogMerges(now time.Time, landing, tiers []Segment) []LogMergeAction {
+	out := p.findLogLandingRefreshes(now, landing)
 	if action, ok := p.findLogTierPack(tiers); ok {
 		out = append(out, action)
 	}
 	return out
 }
 
-func (p *Planner) findLogLandingMerge(landing []Segment) (LogMergeAction, bool) {
-	sources, ok := p.packUnsealedLogs(landing)
-	if !ok {
-		return LogMergeAction{}, false
+// findLogLandingRefreshes packs the live landing buffer into disjoint landing→L0
+// actions, oldest first, while a trigger still fires and the action budget
+// holds. Each action's sources are removed from the candidate pool, so one tick
+// can shrink a backlog that a single pack could not.
+func (p *Planner) findLogLandingRefreshes(now time.Time, landing []Segment) []LogMergeAction {
+	live := p.sortedLiveLogs(landing)
+	var out []LogMergeAction
+	for len(out) < p.cfg.LogsRefreshMaxActions && len(live) > 0 {
+		if !p.logRefreshDue(now, live) {
+			break
+		}
+		sources, ok := p.packLiveLogs(live)
+		if !ok {
+			break
+		}
+		out = append(out, LogMergeAction{Sources: sources, DestTier: 0})
+		live = live[len(sources):]
 	}
-	return LogMergeAction{Sources: sources, DestTier: 0}, true
+	return out
+}
+
+// logRefreshDue reports whether the buffered segments have either accumulated
+// to the count trigger or aged past the refresh interval. The age arm reads the
+// oldest segment because that is the row that has been invisible the longest.
+func (p *Planner) logRefreshDue(now time.Time, live []Segment) bool {
+	if len(live) >= p.cfg.SegmentsPerTier {
+		return true
+	}
+	if p.cfg.LogsRefreshInterval <= 0 {
+		return false
+	}
+	return !live[0].MinTs.After(now.Add(-p.cfg.LogsRefreshInterval))
 }
 
 // findLogTierPack packs the lowest tier with enough unsealed segments toward
@@ -162,15 +186,22 @@ func (p *Planner) findLogTierPack(tiers []Segment) (LogMergeAction, bool) {
 // fills toward MaxSegmentBytes (capped by MaxMergeAtOnce), once the
 // SegmentsPerTier trigger is met.
 func (p *Planner) packUnsealedLogs(segs []Segment) ([]Segment, bool) {
-	var live []Segment
+	live := p.sortedLiveLogs(segs)
+	if len(live) < p.cfg.SegmentsPerTier {
+		return nil, false
+	}
+	return p.packLiveLogs(live)
+}
+
+// sortedLiveLogs drops sealed segments and orders the rest oldest first, which
+// is the order every log pack consumes candidates in.
+func (p *Planner) sortedLiveLogs(segs []Segment) []Segment {
+	live := make([]Segment, 0, len(segs))
 	for _, s := range segs {
 		if s.Bytes >= p.cfg.MaxSegmentBytes {
 			continue
 		}
 		live = append(live, s)
-	}
-	if len(live) < p.cfg.SegmentsPerTier {
-		return nil, false
 	}
 	sort.Slice(live, func(i, j int) bool {
 		if live[i].MinTs.Equal(live[j].MinTs) {
@@ -178,6 +209,13 @@ func (p *Planner) packUnsealedLogs(segs []Segment) ([]Segment, bool) {
 		}
 		return live[i].MinTs.Before(live[j].MinTs)
 	})
+	return live
+}
+
+// packLiveLogs fills toward MaxSegmentBytes from the head of a live, time-ordered
+// candidate set (capped by MaxMergeAtOnce), shrinking the set until the summed
+// bytes fit the seal budget.
+func (p *Planner) packLiveLogs(live []Segment) ([]Segment, bool) {
 	n := p.cfg.MaxMergeAtOnce
 	if n > len(live) {
 		n = len(live)

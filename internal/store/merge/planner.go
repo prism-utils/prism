@@ -12,6 +12,14 @@ type PlannerConfig struct {
 	MaxMergeAtOnce  int
 	MaxSegmentBytes int64
 	FloorBytes      int64
+	// LogsRefreshInterval bounds how long a landed log window may stay in the
+	// non-searchable buffer: once the oldest live landing segment reaches this
+	// age, a landing→L0 refresh is planned even below SegmentsPerTier. Zero
+	// disables the age trigger, leaving the count trigger as the only path.
+	LogsRefreshInterval time.Duration
+	// LogsRefreshMaxActions caps landing→L0 refreshes planned in one pass, so a
+	// backlog drains over several ticks instead of stampeding DuckDB.
+	LogsRefreshMaxActions int
 }
 
 // DefaultPlannerConfig returns production defaults with a 1 MiB floor for tests
@@ -19,12 +27,21 @@ type PlannerConfig struct {
 // derive how many floor-sized pieces fit under MaxSegmentBytes.
 func DefaultPlannerConfig() PlannerConfig {
 	return PlannerConfig{
-		SegmentsPerTier: 6,
-		MaxMergeAtOnce:  0,
-		MaxSegmentBytes: 2 << 30,
-		FloorBytes:      1 << 20,
+		SegmentsPerTier:       6,
+		MaxMergeAtOnce:        0,
+		MaxSegmentBytes:       2 << 30,
+		FloorBytes:            1 << 20,
+		LogsRefreshInterval:   defaultLogsRefreshInterval,
+		LogsRefreshMaxActions: defaultLogsRefreshMaxActions,
 	}
 }
+
+// Refresh defaults: a minute of searchable lag is the trade for rewriting whole
+// segments, and eight actions per pass outrun typical agent fill rates.
+const (
+	defaultLogsRefreshInterval   = time.Minute
+	defaultLogsRefreshMaxActions = 8
+)
 
 // Planner selects tier merges without DuckDB (pure Go, fast tests).
 type Planner struct {
@@ -44,6 +61,12 @@ func NewPlanner(cfg PlannerConfig) *Planner {
 	}
 	if cfg.MaxMergeAtOnce <= 0 {
 		cfg.MaxMergeAtOnce = derivedMaxMergeAtOnce(cfg.MaxSegmentBytes, cfg.FloorBytes, cfg.SegmentsPerTier)
+	}
+	if cfg.LogsRefreshMaxActions <= 0 {
+		cfg.LogsRefreshMaxActions = defaultLogsRefreshMaxActions
+	}
+	if cfg.LogsRefreshInterval < 0 {
+		cfg.LogsRefreshInterval = 0
 	}
 	return &Planner{cfg: cfg}
 }

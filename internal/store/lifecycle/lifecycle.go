@@ -56,6 +56,12 @@ type Config struct {
 	MemoryLimit          string
 	MergeSegmentFormat   segformat.Format
 	DuckDBStorageVersion string
+	// LogsRefreshInterval is the searchable lag budget for logs: once the oldest
+	// buffered landing window reaches this age, the merge tick opens it into a
+	// tier. Zero keeps refreshes count-triggered only.
+	LogsRefreshInterval time.Duration
+	// LogsRefreshMaxActions caps landing refreshes per artifact per merge tick.
+	LogsRefreshMaxActions int
 	// Logger records per-tenant / per-file errors; nil uses slog.Default.
 	Logger *slog.Logger
 	// Recorder receives tick outcomes and file counts; nil discards them.
@@ -109,9 +115,18 @@ func (r *Runner) TickHotSnapshot() error {
 	return r.observed(JobHotSnapshot, r.eng.ExportHotSnapshots)
 }
 
-// TickFlush rolls hot tables whose window elapsed.
+// TickFlush rolls hot tables whose window elapsed and seals aged log coalesce
+// buffers. Sealing shares the flush cadence because a buffer that never seals
+// keeps its rows out of every query.
 func (r *Runner) TickFlush() error {
-	return r.observed(JobFlush, r.eng.FlushDue)
+	return r.observed(JobFlush, r.tickFlush)
+}
+
+func (r *Runner) tickFlush() error {
+	if err := r.eng.FlushDue(); err != nil {
+		return err
+	}
+	return r.eng.FlushLogCoalesce()
 }
 
 // TickMerge plans and executes one merge pass per tenant with tier segments.
@@ -129,9 +144,11 @@ func (r *Runner) tickMerge() error {
 		SegmentsPerTier: r.cfg.SegmentsPerTier,
 		// MaxMergeAtOnce 0 → derive from MaxSegmentBytes/FloorBytes so tiny
 		// unsealed segments pack toward the seal budget in one action.
-		MaxMergeAtOnce:  0,
-		MaxSegmentBytes: r.cfg.MaxSegmentBytes,
-		FloorBytes:      r.cfg.FloorBytes,
+		MaxMergeAtOnce:        0,
+		MaxSegmentBytes:       r.cfg.MaxSegmentBytes,
+		FloorBytes:            r.cfg.FloorBytes,
+		LogsRefreshInterval:   r.cfg.LogsRefreshInterval,
+		LogsRefreshMaxActions: r.cfg.LogsRefreshMaxActions,
 	})
 	for _, tenant := range tenants {
 		if err := r.mergeTenant(tenant, planner); err != nil {
@@ -211,7 +228,7 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 		if err != nil {
 			return err
 		}
-		actions := planner.FindLogMerges(landing, tiers)
+		actions := planner.FindLogMerges(r.clock(), landing, tiers)
 		for _, action := range actions {
 			action.Artifact = artifact
 			x, err := merge.NewExecutor(merge.ExecutorConfig{
