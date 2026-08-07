@@ -940,7 +940,9 @@ Worst-case lag is the interval plus up to one `MERGE_TICK_SECONDS`.
 `LOGS_REFRESH_INTERVAL=0` drops the age arm and restores count-only triggering.
 
 Refresh output keeps `MERGE_SEGMENT_FORMAT` (parquet by default), so a dashboard
-globbing `tiers/L*/*.parquet` needs no query change. A backlog drains over
+globbing `tiers/L*/*.parquet` needs no query change; a `duckdb` refresh is
+catalogued and searchable too, it is just opened by `ATTACH` instead of
+`read_parquet`. A backlog drains over
 several ticks: each tick applies up to `LOGS_REFRESH_MAX_ACTIONS` (default 8)
 packs per artifact, which bounds rewrite CPU while still shrinking a buffer that
 multiple agents are filling.
