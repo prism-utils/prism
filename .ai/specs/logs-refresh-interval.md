@@ -1,6 +1,6 @@
 # Spec: logs refresh interval (ES-like searchable lag)
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 
 - **Slug / branch:** `fix/logs-refresh-interval`
 - **Owner phase:** orchestrator → developer
@@ -92,10 +92,11 @@ the released image and verifies admin logging + Grafana.
       oldest live landing file exceeds the interval (even if count &lt; segments-per-tier).
 - [x] Count trigger (`SEGMENTS_PER_TIER`) still refreshes immediately when enough
       live files accumulate.
-- [ ] Loki + `/sql` logs relation **omit landing**; only tier segments are scanned
-      (landing excluded by design). — the relation omits landing, but Loki
-      `label/<name>/values` answers from the logmeta label index, which is still
-      built over landing windows, so buffered values are returned on search.
+- [x] Loki + `/sql` logs relation **omit landing**; only tier segments are scanned
+      (landing excluded by design). — the label index now describes the same
+      searchable set: it is built from tier entries only, a land contributes no
+      values (it just carries the index stamp across its generation bump), and a
+      refresh folds its output in.
 - [x] `TickMerge` can apply multiple landing refreshes per artifact per tick
       (`LOGS_REFRESH_MAX_ACTIONS`, default 8).
 - [x] `TickFlush` calls `FlushLogCoalesce` when coalesce is configured.
@@ -108,10 +109,10 @@ the released image and verifies admin logging + Grafana.
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection) — no test asserts the Loki label-values path against a landing-only buffer, which is the gap that let the leak ship.
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift) — STORE.md states "neither Loki nor `/sql` opens landing files"; the label index opens and indexes landing parquet.
+- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
 - [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes — blocked on gates 2 and 3 above.
+- [ ] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
@@ -160,3 +161,23 @@ refresh is planned ahead of the cold-tier pack without starving it;
 `FlushLogCoalesce` is a no-op when coalesce is unconfigured and both branches
 are covered; chart values, statefulset env, and the golden fixture agree on
 `60` / `8`; no new dependency, no new goroutine, no global mutable state.
+
+### Developer response — review 1
+
+Took the first option: the label index now describes the searchable set, so the
+STORE.md sentence stands as written.
+
+- `EnsureLabelIndex` indexes tier entries only, so a rebuild can no longer pick
+  up a buffered window.
+- A land contributes no values. It still bumps the generation, so it carries the
+  index stamp forward (`CarryLabelIndex`) instead of stranding it one generation
+  behind and making the next label query rescan every tier segment. An index
+  that was already stale is left alone, so the rebuild still happens.
+- The refresh folds its own output into the index, which is where buffered
+  values legitimately become searchable.
+- Tests land first and fail on the old code at all three levels: the index
+  rebuild (`logmeta`), the land path (`engine`), and the HTTP label API
+  (`query`), each with a landing-only value and a different tier value.
+- STORE.md now says outright that the index is built from tier segments only.
+
+The two non-blocking observations are left as-is.

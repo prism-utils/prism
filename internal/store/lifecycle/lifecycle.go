@@ -254,11 +254,16 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 				}
 				r.rec.ObserveCompactionSeconds(tenant, elapsed)
 			}
-			_ = out
 			if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
 				return err
 			}
 			if err := logmeta.SyncManifest(r.cfg.DataDir, tenant, artifact); err != nil {
+				return err
+			}
+			// A refresh is what publishes buffered rows, so this is where their
+			// label values enter the index; folding in just the new segment keeps
+			// the next label query off a full rescan of every tier.
+			if err := logmeta.MergeLabelIndexFromParquet(r.cfg.DataDir, tenant, out.Path); err != nil {
 				return err
 			}
 		}

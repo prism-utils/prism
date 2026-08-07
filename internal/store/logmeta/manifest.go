@@ -80,6 +80,13 @@ func isSegmentName(name string) bool {
 	}
 }
 
+// isTierRelPath reports whether a manifest entry, recorded relative to the
+// artifact directory, names a tier segment. Everything else is a landing window
+// the refresh has not opened yet.
+func isTierRelPath(rel string) bool {
+	return strings.HasPrefix(filepath.ToSlash(rel), "tiers/")
+}
+
 // RebuildManifest scans landing + tiers for one artifact and returns a manifest
 // tagged with version.
 func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest, error) {
