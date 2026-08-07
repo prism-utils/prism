@@ -142,24 +142,6 @@ func TestLogsFileCapPreservesColdTiers(t *testing.T) {
 	}
 }
 
-func countLogParquet(dataDir, tenant, artifact string) (int, error) {
-	n := 0
-	landing := layout.LogsLandingDir(dataDir, tenant, artifact)
-	c, err := countDirParquet(landing)
-	if err != nil {
-		return 0, err
-	}
-	n += c
-	for tier := 0; tier <= 8; tier++ {
-		c, err := countDirParquet(layout.LogsTierDir(dataDir, tenant, artifact, tier))
-		if err != nil {
-			return 0, err
-		}
-		n += c
-	}
-	return n, nil
-}
-
 func countDirParquet(dir string) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
