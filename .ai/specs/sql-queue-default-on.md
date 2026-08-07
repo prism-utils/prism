@@ -1,6 +1,6 @@
 # Spec: SQL queue on by default + live queue snapshot for operators
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/sql-queue-default-on`
 - **Ships as:** next patch after `v1.9.5` (expected `v1.9.6`) once merged + tagged.
@@ -71,8 +71,9 @@ Homelab `/admin` UI + image bump live in the sibling `feat/prism-queue-admin` wo
 - [x] `GET /admin/queue` registered on admin/combined mux only; protected like `/stats` (ADMIN_TOKEN / RBAC admin action)
 - [x] Coordinator (`MODE=cluster`) does **not** host the limiter snapshot of a data node (no false zeros on the proxy) — either omit the route on coordinator or return `enabled:false` with zeros; document the choice
   - Chose **omit**: the coordinator mux registers no admin routes, so `GET /admin/queue` is `404` there; documented in `STORE.md` (`/admin/queue` section + cluster out-of-scope list), `MIGRATION.md`, and `DESIGN.md`, and pinned by `TestRouterOmitsQueueSnapshotRoute`.
-- [ ] Unit tests: snapshot reflects in-flight + waiters under load; rejected increments on 429; route auth walls
-  - Only the `ADMIN_TOKEN` wall is tested; with `AUTHZ_POLICY_FILE` set the route's RBAC wall has no test — add a `TestRBACStatsScoping`-shaped case asserting `403` for a principal with no `stats` binding and `200` for one that has it.
+- [x] Unit tests: snapshot reflects in-flight + waiters under load; rejected increments on 429; route auth walls
+  - Both walls are now covered: `TestAdminQueueRouteRequiresAdminToken` for `ADMIN_TOKEN`, and `TestRBACQueueSnapshotScoping` (`cmd/prism-store`, same harness shape as `TestRBACStatsScoping`) for RBAC — `200` + decoded snapshot for a principal with a `stats` binding, `403` for one without, `401` unauthenticated, and `404` (`unknown tenant`) on the `?ns=<out-of-scope tenant>` branch.
+  - Verified the test has teeth: dropping `rbac.wrapStats` from the route fails the forbidden, unauthenticated, and `ns` cases.
 
 ### Docs
 - [x] `docs/CONFIG.md`, `docs/STORE.md`, `docs/MEMORY.md`, `docs/MIGRATION.md` updated (default-on + new route + sizing note that 10/16 OOMs shared writers)
@@ -84,12 +85,12 @@ Homelab `/admin` UI + image bump live in the sibling `feat/prism-queue-admin` wo
 ## 6. Mandatory review gates  (reviewer owns)
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-  - The new `/admin/queue` route has no RBAC-on test, so its `403` failure path is unverified while `STORE.md` now states a specific RBAC contract for it.
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+  - Fixed by `TestRBACQueueSnapshotScoping`: the route's RBAC `403`, `401`, and `?ns=` `404` paths are pinned alongside the `200`, and `STORE.md` now states the `ns` narrowing the test pins.
 - [x] **Gate 3 — Docs & comments match the task and the delivered code**
 - [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
-  - Blocked by Gate 2 only: "Failure paths + `Validate()` rejection covered, not just happy path" is unmet for the new route's RBAC wall.
+- [x] Full docs/REVIEW.md checklist passes
+  - The one blocker is cleared: "Failure paths + `Validate()` rejection covered, not just happy path" now holds for the new route's RBAC wall.
 
 ## 7. Reviewer notes
 
@@ -139,3 +140,34 @@ undocumented and unpinned, and it makes the STORE.md sentence imprecise.
   the coordinator-`404` choice is justified in prose and pinned by a test.
 - Once the RBAC test lands, nothing else needs re-verification beyond `make lint test`;
   the wiring, docs, chart, and golden manifest are all settled.
+
+## 8. Developer notes — round 2 (addressing `CHANGES_REQUESTED`)
+
+Scope of this round: the single Gate 2 blocker. No settled work reopened; no
+production code changed.
+
+- **`TestRBACQueueSnapshotScoping`** (`cmd/prism-store/rbac_test.go`) — built on the
+  same harness as `TestRBACStatsScoping` (`authtest.NewJWTEnv` + policy file +
+  `buildRBACStack`), but driven through `newServeMux` rather than a hand-wrapped
+  handler, so it pins the wiring the store actually mounts. Policy binds
+  `queue-admin` (role `admin`, has `stats`) and `queue-reader` (role `reader`, no
+  `stats`), both on one tenant. Cases:
+  | Request | Expected |
+  |---|---|
+  | `GET /admin/queue` as `queue-admin` | `200` + snapshot decoding to the configured caps |
+  | `GET /admin/queue` as `queue-reader` | `403` `forbidden` |
+  | `GET /admin/queue?ns=<tenant outside scope>` as `queue-admin` | `404` `unknown tenant` |
+  | `GET /admin/queue` unauthenticated | `401` |
+- **The `ns` branch is now pinned, not just observed.** The reviewer's read is
+  confirmed: the shared stats wall branches on `ns` before authorizing, so naming
+  an out-of-scope tenant answers `404` (anti-enumeration body) even though the
+  snapshot has no tenant dimension. Strictly more restrictive, and now a contract.
+- **Teeth verified.** Replacing the route's `protectAdminRoute(..., rbac.wrapStats, ...)`
+  with the bare handler fails three of the four cases (`403`, `401`, `ns` `404`);
+  reverted immediately. The test is not tautological.
+- **`STORE.md` `/admin/queue` scoping** — the one imprecise sentence ("any principal
+  with a `stats` binding sees the snapshot") is split into the no-`ns` and `?ns=`
+  bullets so the prose matches what the test pins. Docs-only, one section.
+- **Production code is byte-identical to the reviewed revision** — `git diff` for
+  this round touches only `cmd/prism-store/rbac_test.go`, `docs/STORE.md`, and this
+  spec.

@@ -174,9 +174,15 @@ client guard. This blocks tenant enumeration (OWASP BOLA).
 ### `/admin/queue` scoping
 
 `GET /admin/queue` reuses the `stats` action but reports **process-wide** limiter
-state, not per-tenant data: any principal with a `stats` binding sees the node's
-caps, occupancy, and shed total. It exposes no tenant names, query text, or row
+state, not per-tenant data: it exposes no tenant names, query text, or row
 counts. Grant it with the same care as any node-level operational metric.
+
+- `GET /admin/queue` (no `ns`) — a principal with a `stats` binding on **any**
+  tenant sees the node's caps, occupancy, and shed total; no `stats` scope → `403`.
+- `GET /admin/queue?ns=X` — the route has no tenant dimension, but the shared
+  stats wall still scopes on `X` before authorizing, so an `X` the principal may
+  not `stats` on → `404` or `403` as above. `ns` can only narrow access here; it
+  never changes the response body.
 
 ### Arrow Flight (fail-fast)
 
