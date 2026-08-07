@@ -89,8 +89,8 @@ func TestAdminQueueRouteRequiresAdminToken(t *testing.T) {
 	}
 }
 
-// TestAdminQueueRoutePatternMatchesMux pins the wiring contract: the pattern the
-// admin package advertises is the pattern the store actually mounts.
+// TestAdminQueueRoutePatternMatchesMux pins the wiring contract: the advertised
+// queue-snapshot pattern is the pattern the store actually mounts.
 func TestAdminQueueRoutePatternMatchesMux(t *testing.T) {
 	cfg, eng, logger := queueRouteFixture(t)
 	method, path, ok := splitPattern(admin.QueueRoutePattern())
