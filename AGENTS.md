@@ -19,14 +19,14 @@
 
 ## The three agents
 
-Located under [`.github/agents/`](.github/agents/). Each is thin and references
+Located under [`.cursor/agents/`](.cursor/agents/). Each is thin and references
 the docs above — no rule is restated in an agent file.
 
 | Agent | Role | When to use |
 |---|---|---|
-| [`prism-orchestrator`](.github/agents/prism-orchestrator.agent.md) | **Entry point.** Understands the task, resolves design questions up front, writes+finalizes the spec, drives the dev↔reviewer loop, merges, cleans up. | Anything: feature, fix, chore. Start here. |
-| [`prism-developer`](.github/agents/prism-developer.agent.md) | Implements a `READY` spec test-first; checks off acceptance items; self-verifies green. | Invoked by the orchestrator to implement or to fix unchecked items. |
-| [`prism-reviewer`](.github/agents/prism-reviewer.agent.md) | The merge gate. Runs the checklist + four mandatory gates; unchecks failures; sets the verdict. | Invoked by the orchestrator after each implementation pass. |
+| [`prism-orchestrator`](.cursor/agents/prism-orchestrator.agent.md) | **Entry point.** Understands the task, resolves design questions up front, writes+finalizes the spec, drives the dev↔reviewer loop, merges, cleans up. | Anything: feature, fix, chore. Start here. |
+| [`prism-developer`](.cursor/agents/prism-developer.agent.md) | Implements a `READY` spec test-first; checks off acceptance items; self-verifies green. | Invoked by the orchestrator to implement or to fix unchecked items. |
+| [`prism-reviewer`](.cursor/agents/prism-reviewer.agent.md) | The merge gate. Runs the checklist + four mandatory gates; unchecks failures; sets the verdict. | Invoked by the orchestrator after each implementation pass. |
 
 ## Specs and state
 
