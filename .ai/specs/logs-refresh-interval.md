@@ -1,6 +1,6 @@
 # Spec: logs refresh interval (ES-like searchable lag)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `fix/logs-refresh-interval`
 - **Owner phase:** orchestrator → developer
@@ -112,9 +112,9 @@ Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
 - [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
 - [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
@@ -273,3 +273,32 @@ set, and it records the duckdb gap as pre-existing.
 
 The non-blocking suggestion of a test for the stale-index carry branch is noted
 and left for a follow-up, since this round is docs-only.
+
+### Review 3 — ALL_OK
+
+Final re-review scoped to the review-2 blocker (STORE.md wording), docs-only
+diff (`c3d9e42`, no code touched). **Verified accurate against the code, not
+just internally consistent:** `EnsureLabelIndex` (`internal/store/logmeta/label_index.go`)
+walks manifest entries, skips anything that is not `isTierRelPath` (landing),
+then skips anything whose extension is not `.parquet` — so a `tiers/L0/<id>.duckdb`
+refresh output is excluded from the index build, matching the new sentence "That
+index is built from **parquet** tier segments." The same segment is not excluded
+from the searchable catalog: `RebuildManifest` / `isSegmentName`
+(`internal/store/logmeta/manifest.go`) and the query-side scan
+(`internal/store/query/logs_catalog.go`: `listParquetInDir`,
+`sandboxLogsRelationSQL`'s `hasDuck`/ATTACH path) both admit `.duckdb` tier
+files, matching "`query_range` and `/sql` still return its rows (they `ATTACH`
+the segment)." No overclaim remains — the paragraph no longer asserts the label
+index and the `query_range`/`/sql` open set are the same thing under
+`MERGE_SEGMENT_FORMAT=duckdb`; it states the opposite (index misses it, query
+still returns it) and frames the gap as pre-existing. The acceptance-item-3
+annotation was checked against the same code and carries no stronger claim than
+STORE.md.
+
+**Re-ran `make lint`:** `golangci-lint run --build-tags duckdb_arrow ./...` → `0
+issues.` No code changed since review 2's `make full-tests` run, so the prior
+green (lint + race unit + docker integration + e2e, 168s) still applies; not
+re-run here per docs-only scope.
+
+All four mandatory gates and the full `docs/REVIEW.md` checklist hold. No code
+change requested. **Verdict: ALL_OK.**
