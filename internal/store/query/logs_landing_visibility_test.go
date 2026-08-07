@@ -158,3 +158,35 @@ func TestLogsLandingExclusionAppliesToManifestCatalog(t *testing.T) {
 		t.Fatalf("manifest-backed open set = %v, want only the tier segment", fileBases(files))
 	}
 }
+
+// A refresh writes L0 in MERGE_SEGMENT_FORMAT, so the searchable tier can hold
+// duckdb segments; the manifest-backed catalog has to open those too or logs
+// vanish the moment landing stops being searchable.
+func TestLogsCatalogOpensDuckDBTierSegments(t *testing.T) {
+	InvalidateLogsMetaCache("")
+	dataDir := t.TempDir()
+	tierDir := filepath.Join(dataDir, visibilityTenant, "logs", "logs-raw", "tiers", "L0")
+	if err := os.MkdirAll(tierDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	duckSeg := filepath.Join(tierDir, layout.SegmentNameFormat(time.Unix(300, 0).UTC(), "duckdb"))
+	if err := os.WriteFile(duckSeg, []byte("duckdb segment"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tenantRoot := absTenantRoot(t, dataDir, visibilityTenant)
+	if err := logmeta.Bump(dataDir, visibilityTenant); err != nil {
+		t.Fatal(err)
+	}
+	if err := logmeta.SyncManifest(dataDir, visibilityTenant, "logs-raw"); err != nil {
+		t.Fatal(err)
+	}
+	InvalidateLogsMetaCache(tenantRoot)
+
+	_, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	if err != nil {
+		t.Fatalf("sandboxLogsRelationSQL: %v", err)
+	}
+	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(duckSeg) {
+		t.Fatalf("open set = %v, want the duckdb tier segment", fileBases(files))
+	}
+}

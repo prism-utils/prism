@@ -20,6 +20,7 @@ import (
 
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/elk-utilities/prism/internal/store/lifecycle"
 	"github.com/elk-utilities/prism/internal/store/query"
 )
 
@@ -32,7 +33,8 @@ type sqlAPIResponse struct {
 
 // TestQuickLogsEndToEnd drives the full logs path: real `prism run --quick logs`
 // subprocess reads log lines on stdin, ships logs-summary parquet to an
-// in-process prism-store, which lands them as files and answers the advertised
+// in-process prism-store, which buffers them as landing files, refreshes them
+// into a searchable tier on the merge tick, and answers the advertised
 // template→count query over the `logs` relation on /sql.
 func TestQuickLogsEndToEnd(t *testing.T) {
 	dataDir := t.TempDir()
@@ -68,7 +70,21 @@ func TestQuickLogsEndToEnd(t *testing.T) {
 
 	runQuickLogsAgent(t, srv.URL, quickLogsTenant, logs)
 
-	// The store now holds a landed logs-summary window; query it back.
+	// The landed window is a non-searchable buffer until a refresh packs it into
+	// a tier; a merge tick past the refresh interval opens it.
+	refreshed := time.Now().Add(2 * time.Minute)
+	runner := lifecycle.NewRunner(&lifecycle.Config{
+		DataDir:             dataDir,
+		SegmentsPerTier:     6,
+		MaxSegmentBytes:     1 << 30,
+		FloorBytes:          1 << 20,
+		MaxTier:             8,
+		LogsRefreshInterval: time.Minute,
+		Logger:              logger,
+	}, eng, func() time.Time { return refreshed })
+	require.NoError(t, runner.TickMerge())
+
+	// The store now holds a refreshed logs-summary segment; query it back.
 	counts := queryTemplateCounts(t, srv.URL, quickLogsTenant)
 	loginTemplate := ""
 	for tmpl := range counts {
