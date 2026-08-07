@@ -133,8 +133,4 @@ This task adds a first-class Prometheus exporter on prism-store and instruments 
 
 ## 7. Reviewer notes
 
-_(empty)_
-
-## 7. Reviewer notes
-
 **Verdict: ALL_OK** (orchestrator verification 2026-08-07): uncached race tests green for metrics/cmd/queue/engine/lifecycle; `make lint` 0 issues; acceptance items already checked; TDD commit `a28ead3` precedes feat commits.
