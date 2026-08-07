@@ -75,21 +75,27 @@ import (
 )
 
 const (
-	defaultListenAddr        = ":8080"
-	defaultDataDir           = "/data"
-	defaultMaxBodyBytes      = 268435456
-	defaultArtifacts         = "metrics-raw"
-	defaultAuthMode          = "none"
-	defaultHotWindowMinutes  = 10
-	defaultSegmentsPerTier   = 6
-	defaultMaxSegmentBytes   = 2147483648
-	defaultRetentionDays     = 15
-	defaultRollupSteps       = "1m,5m,1h"
-	defaultMaxTier           = 8
-	defaultHotSnapshotSec    = 15
-	defaultFlushTickSec      = 30
-	defaultMergeTickSec      = 60
-	defaultRetentionTickHour = 1
+	defaultListenAddr       = ":8080"
+	defaultDataDir          = "/data"
+	defaultMaxBodyBytes     = 268435456
+	defaultArtifacts        = "metrics-raw"
+	defaultAuthMode         = "none"
+	defaultHotWindowMinutes = 10
+	defaultSegmentsPerTier  = 6
+	// defaultLogsRefreshSec is the searchable-lag budget for logs: buffered
+	// windows open into a tier within a minute even below the count trigger.
+	defaultLogsRefreshSec = 60
+	// defaultLogsRefreshMaxActions bounds refreshes per artifact per merge tick
+	// so a backlog drains without stampeding DuckDB.
+	defaultLogsRefreshMaxActions = 8
+	defaultMaxSegmentBytes       = 2147483648
+	defaultRetentionDays         = 15
+	defaultRollupSteps           = "1m,5m,1h"
+	defaultMaxTier               = 8
+	defaultHotSnapshotSec        = 15
+	defaultFlushTickSec          = 30
+	defaultMergeTickSec          = 60
+	defaultRetentionTickHour     = 1
 	// Each /sql sandbox honors DUCKDB_MEMORY_LIMIT independently, so peak read
 	// memory is MaxInFlight × that limit: shared writers OOM at higher
 	// concurrency, and a deep queue with a long wait absorbs dashboard fan-out
@@ -127,6 +133,8 @@ type serverConfig struct {
 	maxSegmentBytes      int64
 	retentionDays        int
 	maxLogFiles          int
+	logsRefreshInterval  time.Duration
+	logsRefreshMaxActs   int
 	logCoalesceMaxAge    time.Duration
 	logCoalesceMaxBytes  int64
 	logsRecentLookback   time.Duration
@@ -182,6 +190,8 @@ func loadConfig() serverConfig {
 		maxSegmentBytes:      envInt64("MAX_SEGMENT_BYTES", defaultMaxSegmentBytes),
 		retentionDays:        envInt("RETENTION_DAYS", defaultRetentionDays),
 		maxLogFiles:          envInt("MAX_LOG_FILES", 0),
+		logsRefreshInterval:  time.Duration(envIntAllowZero("LOGS_REFRESH_INTERVAL", defaultLogsRefreshSec)) * time.Second,
+		logsRefreshMaxActs:   envInt("LOGS_REFRESH_MAX_ACTIONS", defaultLogsRefreshMaxActions),
 		logCoalesceMaxAge:    time.Duration(envInt("LOG_COALESCE_MAX_AGE_SECONDS", 0)) * time.Second,
 		logCoalesceMaxBytes:  envInt64("LOG_COALESCE_MAX_BYTES", 0),
 		logsRecentLookback:   time.Duration(envInt("LOGS_RECENT_LOOKBACK_HOURS", 0)) * time.Hour,
@@ -300,6 +310,17 @@ func envIntZero(key string) int {
 func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+// envIntAllowZero reads a non-negative int knob where 0 is a meaningful setting
+// (the feature turned off) rather than an unset value.
+func envIntAllowZero(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			return n
 		}
 	}
@@ -681,20 +702,22 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	}
 
 	runner := lifecycle.NewRunner(&lifecycle.Config{
-		DataDir:              cfg.dataDir,
-		SegmentsPerTier:      cfg.segmentsPerTier,
-		MaxSegmentBytes:      cfg.maxSegmentBytes,
-		FloorBytes:           lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
-		RetentionDays:        cfg.retentionDays,
-		MaxLogFiles:          cfg.maxLogFiles,
-		RollupSteps:          cfg.rollupSteps,
-		MaxTier:              cfg.maxTier,
-		Threads:              cfg.duckdbThreads,
-		MemoryLimit:          cfg.duckdbMemoryLimit,
-		MergeSegmentFormat:   cfg.parsedMergeFormat(),
-		DuckDBStorageVersion: cfg.duckdbStorageVersion,
-		Logger:               logger,
-		Recorder:             cfg.metricsReg,
+		DataDir:               cfg.dataDir,
+		SegmentsPerTier:       cfg.segmentsPerTier,
+		MaxSegmentBytes:       cfg.maxSegmentBytes,
+		FloorBytes:            lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
+		RetentionDays:         cfg.retentionDays,
+		MaxLogFiles:           cfg.maxLogFiles,
+		LogsRefreshInterval:   cfg.logsRefreshInterval,
+		LogsRefreshMaxActions: cfg.logsRefreshMaxActs,
+		RollupSteps:           cfg.rollupSteps,
+		MaxTier:               cfg.maxTier,
+		Threads:               cfg.duckdbThreads,
+		MemoryLimit:           cfg.duckdbMemoryLimit,
+		MergeSegmentFormat:    cfg.parsedMergeFormat(),
+		DuckDBStorageVersion:  cfg.duckdbStorageVersion,
+		Logger:                logger,
+		Recorder:              cfg.metricsReg,
 	}, eng, now)
 
 	if cfg.runJobs {
@@ -743,6 +766,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 			"auth_mode", cfg.authMode,
 			"hot_window", cfg.hotWindow.String(),
 			"segments_per_tier", cfg.segmentsPerTier,
+			"logs_refresh_interval", cfg.logsRefreshInterval.String(),
 			"query_hot_only", cfg.queryHotOnly,
 			"run_jobs", cfg.runJobs,
 			"sql_api_queue_enabled", cfg.sqlAPIQueueEnabled,

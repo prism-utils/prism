@@ -110,9 +110,12 @@ func (c *logsFileMetaCache) rescanCount() int {
 	return c.rescans
 }
 
-// scanLogParquetFiles walks landing windows and compacted tiers under
-// <tenant>/logs/<artifact>/ and <tenant>/logs/<artifact>/tiers/L{n}/.
-// When manifests match the generation stamp they are preferred over directory walks.
+// scanLogParquetFiles walks the searchable log segments of a tenant:
+// <tenant>/logs/<artifact>/tiers/L{n}/. Windows sitting in the artifact's
+// landing directory are a write buffer and stay out of every query until a
+// refresh packs them into a tier, so search results never depend on how deep
+// that buffer currently is. When manifests match the generation stamp they are
+// preferred over directory walks.
 func scanLogParquetFiles(absTenantRoot string) ([]logFileMeta, error) {
 	dataDir := filepath.Dir(absTenantRoot)
 	tenant := filepath.Base(absTenantRoot)
@@ -156,13 +159,8 @@ func scanArtifactLogFiles(absTenantRoot, dataDir, tenant, artifact string, gen u
 	}
 	// Missing, stale, or corrupt manifest: rebuild listing from disk.
 	var out []logFileMeta
-	landing := layout.LogsLandingDir(dataDir, tenant, artifact)
-	files, err := listParquetInDir(absTenantRoot, landing, artifact)
-	if err != nil {
-		return nil, err
-	}
-	out = append(out, files...)
-	tiersRoot := filepath.Join(landing, "tiers")
+	artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
+	tiersRoot := filepath.Join(artifactRoot, "tiers")
 	tierEntries, err := os.ReadDir(tiersRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -190,6 +188,9 @@ func manifestToLogFiles(absTenantRoot, dataDir, tenant, artifact string, m logme
 	artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
 	out := make([]logFileMeta, 0, len(m.Files))
 	for _, f := range m.Files {
+		if !isLogTierRelPath(f.Path) {
+			continue
+		}
 		abs := filepath.Join(artifactRoot, filepath.FromSlash(f.Path))
 		ok, err := safeTenantParquetFile(absTenantRoot, abs)
 		if err != nil || !ok {
@@ -217,6 +218,13 @@ func manifestToLogFiles(absTenantRoot, dataDir, tenant, artifact string, m logme
 		})
 	}
 	return out, true
+}
+
+// isLogTierRelPath reports whether a catalog entry recorded relative to an
+// artifact directory names a tier segment. Anything else is an unrefreshed
+// landing window, which is not searchable.
+func isLogTierRelPath(rel string) bool {
+	return strings.HasPrefix(filepath.ToSlash(rel), "tiers/")
 }
 
 func listParquetInDir(absTenantRoot, dir, artifact string) ([]logFileMeta, error) {

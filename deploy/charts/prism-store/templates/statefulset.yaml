@@ -81,6 +81,10 @@ spec:
             {{- end }}
             - name: SEGMENTS_PER_TIER
               value: {{ .Values.env.segmentsPerTier | quote }}
+            - name: LOGS_REFRESH_INTERVAL
+              value: {{ .Values.env.logsRefreshInterval | quote }}
+            - name: LOGS_REFRESH_MAX_ACTIONS
+              value: {{ .Values.env.logsRefreshMaxActions | quote }}
             - name: MAX_SEGMENT_BYTES
               value: {{ .Values.env.maxSegmentBytes | quote }}
             - name: RETENTION_DAYS

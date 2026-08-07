@@ -118,7 +118,10 @@ func writeLabelIndexLocked(dataDir, tenant string, idx LabelIndex) error {
 	return os.Rename(tmpName, path)
 }
 
-// MergeLabelIndexFromParquet adds distinct indexed-column values from one file.
+// MergeLabelIndexFromParquet adds distinct indexed-column values from one file
+// and stamps the index at the current generation. Callers pass a searchable
+// segment: a refresh publishes buffered rows, and this is the cheap way to
+// account for them without rescanning every tier.
 func MergeLabelIndexFromParquet(dataDir, tenant, parquetPath string) error {
 	mu := labelIndexMu(dataDir, tenant)
 	mu.Lock()
@@ -137,8 +140,9 @@ func MergeLabelIndexFromParquet(dataDir, tenant, parquetPath string) error {
 	}
 	deltas, indexErr := distinctIndexedValues(parquetPath)
 	if indexErr != nil {
-		// Non-parquet or schema-less payloads skip index enrichment; land still succeeds.
-		return nil //nolint:nilerr // index enrichment is best-effort on land
+		// Non-parquet or schema-less segments skip index enrichment; the caller's
+		// write still succeeds.
+		return nil //nolint:nilerr // index enrichment is best-effort
 	}
 	for label, vals := range deltas {
 		set := map[string]struct{}{}
@@ -154,6 +158,31 @@ func MergeLabelIndexFromParquet(dataDir, tenant, parquetPath string) error {
 		}
 		sort.Strings(out)
 		idx.Values[label] = out
+	}
+	idx.Generation = gen
+	return writeLabelIndexLocked(dataDir, tenant, idx)
+}
+
+// CarryLabelIndex re-stamps an index that was current at fromGen, for a write
+// that changed nothing searchable — a landing window. Without it every land
+// would strand the index one generation behind and make the next label query
+// rescan every tier segment. An index that was already stale at fromGen is left
+// alone so the rebuild still happens.
+func CarryLabelIndex(dataDir, tenant string, fromGen uint64) error {
+	mu := labelIndexMu(dataDir, tenant)
+	mu.Lock()
+	defer mu.Unlock()
+
+	gen, err := Read(dataDir, tenant)
+	if err != nil {
+		return err
+	}
+	idx, err := ReadLabelIndex(dataDir, tenant)
+	if err != nil {
+		return err
+	}
+	if idx.Generation != fromGen || len(idx.Values) == 0 {
+		return nil
 	}
 	idx.Generation = gen
 	return writeLabelIndexLocked(dataDir, tenant, idx)
@@ -194,6 +223,17 @@ func EnsureLabelIndex(dataDir, tenant string) (LabelIndex, error) {
 		}
 		artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
 		for _, f := range m.Files {
+			// The index has to describe the searchable set, so a window still in
+			// the landing buffer contributes nothing: offering its values would
+			// name a label a range query cannot answer for yet.
+			if !isTierRelPath(f.Path) {
+				continue
+			}
+			// Indexing reads parquet schemas; duckdb segments are catalogued for
+			// the query planners but carry no index contribution.
+			if filepath.Ext(f.Path) != ".parquet" {
+				continue
+			}
 			abs := filepath.Join(artifactRoot, filepath.FromSlash(f.Path))
 			deltas, err := distinctIndexedValues(abs)
 			if err != nil {

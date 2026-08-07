@@ -791,6 +791,8 @@ see [`STORE.md`](STORE.md).
 | `LISTEN_ADDR` | string | `:8080` | Primary HTTP bind (`/healthz`, `/readyz`, ingest or combined mux). |
 | `LOKI_API_ENABLED` | bool | `true` | When `false`, the Loki logs read API (`/{ns}/loki/api/v1/*`) is not registered. Logs-only; reuses the `/sql` sandbox, RBAC `query`, the `/sql` in-flight queue, `SQL_API_MAX_ROWS` (entries per query), and `SQL_API_TIMEOUT_SECONDS`. |
 | `LOGS_RECENT_LOOKBACK_HOURS` | int (hours) | `0` (off) | When `> 0`, Loki label/browse requests with omitted `start` only open log files within now−lookback. Explicit `start`/`end` still reach cold history. |
+| `LOGS_REFRESH_INTERVAL` | int (seconds) | `60` | Searchable lag for logs. Landed windows are a non-searchable buffer; a merge tick packs them into `logs/<artifact>/tiers/L0/` once the oldest buffered window reaches this age, even below `SEGMENTS_PER_TIER`. `0` disables the age trigger, leaving `SEGMENTS_PER_TIER` as the only trigger (a low-volume artifact can then stay unsearchable indefinitely). Actual worst-case lag is this plus up to one `MERGE_TICK_SECONDS`. |
+| `LOGS_REFRESH_MAX_ACTIONS` | int | `8` | Landing→L0 refreshes applied per artifact per merge tick. Each action rewrites a pack of buffered windows, so this bounds refresh CPU while still letting a backlog shrink faster than agents fill it. |
 | `MAX_LOG_FILES` | int | `0` (off) | Per-artifact cap across landing + `logs/<artifact>/tiers/`. When exceeded, retention deletes oldest windows first. Enforced on each retention tick even if another tenant's metrics/rollup step fails (fail-safe). |
 | `LOG_COALESCE_MAX_AGE_SECONDS` | int (seconds) | `0` (off) | When `> 0` (or bytes set), buffer same-artifact lands and seal one Parquet after this age. |
 | `LOG_COALESCE_MAX_BYTES` | int (bytes) | `0` (off) | Seal coalesced log buffer when pending bytes reach this size. |
@@ -819,7 +821,7 @@ see [`STORE.md`](STORE.md).
 | `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. |
 | `ROUTE_PREFIX` | string | _(empty)_ | Optional path prefix for ingest/query/SQL routes (e.g. `/prism-proxy`). |
 | `RUN_JOBS` | bool | `true` | When `false`, skip background maintenance (snapshot, flush, merge, rollups, retention). Ingest/query still run. |
-| `SEGMENTS_PER_TIER` | int | `6` | Minimum **unsealed** live segments at a tier (or logs landing) before merge compaction **starts** (trigger only). Once triggered, the planner packs toward `MAX_SEGMENT_BYTES` (up to a derived max-merge-at-once ≈ max/floor), shrinking the candidate set when the sum would exceed the seal budget. |
+| `SEGMENTS_PER_TIER` | int | `6` | Minimum **unsealed** live segments at a tier (or logs landing) before merge compaction **starts** (trigger only). Once triggered, the planner packs toward `MAX_SEGMENT_BYTES` (up to a derived max-merge-at-once ≈ max/floor), shrinking the candidate set when the sum would exceed the seal budget. For logs landing this is the count arm of the refresh trigger; `LOGS_REFRESH_INTERVAL` is the age arm, and whichever fires first wins. |
 | `SQL_API_ENABLED` | bool | `true` | When `false`, `POST /{ns}/sql` is not registered. |
 | `SQL_API_MAX_BODY_BYTES` | int64 (bytes) | `1048576` | Maximum POST `/sql` JSON body (1 MiB). |
 | `SQL_API_MAX_INFLIGHT` | int | `2` | Max concurrent heavy read executions (`/sql`, PromQL, Loki) when `SQL_API_QUEUE_ENABLED=true`. Peak read memory is this × `DUCKDB_MEMORY_LIMIT`, so raise it only with pod memory to match — `10` or `16` OOM-kills a shared writer at a `6500MB` DuckDB cap. |

@@ -56,7 +56,7 @@ func TestBuildLogsRelationSQLLegacyFilenameJOIN(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, "user-lokits02-apps")
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L1")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +89,18 @@ func TestBuildLogsRelationSQLMixedColumnAndLegacy(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, "user-lokits03-apps")
-	landing := filepath.Join(tenantRoot, "logs", "logs-raw")
-	tier := filepath.Join(landing, "tiers", "L0")
+	artifact := filepath.Join(tenantRoot, "logs", "logs-raw")
+	legacyTier := filepath.Join(artifact, "tiers", "L1")
+	tier := filepath.Join(artifact, "tiers", "L0")
 	if err := os.MkdirAll(tier, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(legacyTier, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
 	legacyAt := time.Date(2026, 5, 3, 1, 0, 0, 0, time.UTC)
-	legacyPath := filepath.Join(landing, layout.SegmentName(legacyAt))
+	legacyPath := filepath.Join(legacyTier, layout.SegmentName(legacyAt))
 	testparquet.WriteLogsRawFile(t, legacyPath, []testparquet.LogRow{{Message: "legacy", Format: "none"}})
 
 	colRowTS := time.Date(2026, 5, 3, 0, 30, 0, 0, time.UTC).UnixNano()

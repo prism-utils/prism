@@ -23,7 +23,7 @@ func TestLokiLogsSQLConstantDepthUnder1100Files(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, gateTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestLokiOpenSetTimePrunedToRange(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, gateTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestLokiAndSQLShareIdenticalLogsRelationSQL(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, gateTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestLokiLabelAPIsDoNotProjectMessageColumn(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, gateTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestLogsFileMetaCacheServesSecondLabelsWithoutFullRescan(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, gateTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestLogsQueryDefaultsToRecentSegmentsNotFullHistory(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, gateTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +259,8 @@ func TestLokiLabelValuesUsesCardinalityIndexNotMessageScan(t *testing.T) {
 	}
 	landRaw("k8s")
 	landRaw("none")
+	// Only refreshed windows are searchable, and the index describes that same set.
+	testparquet.PromoteLandedLogsToTier(t, dataDir, tenant, "logs-raw")
 
 	ctx := context.Background()
 	rel := &lokiRelation{dataDir: dataDir, tenant: tenant, columns: []string{"format", lokiMessageColumn}}
@@ -282,6 +284,7 @@ func TestLokiLabelValuesUsesCardinalityIndexNotMessageScan(t *testing.T) {
 	}
 
 	landRaw("json")
+	testparquet.PromoteLandedLogsToTier(t, dataDir, tenant, "logs-raw")
 	idxVals, err := logmeta.LabelValues(dataDir, tenant, "format", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -302,7 +305,7 @@ func TestLogsQuerySandboxThreadsIndependentOfMergeThreads(t *testing.T) {
 	dataDir := t.TempDir()
 	tenant := gateTenant
 	tenantRoot := filepath.Join(dataDir, tenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -392,12 +395,25 @@ func TestLogsManifestUpdatedOnLandAndReadByPlanner(t *testing.T) {
 		t.Fatalf("manifest after second land = %+v err=%v", m2, err)
 	}
 
+	_, buffered, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buffered) != 0 {
+		t.Fatalf("planner open set = %d, want 0 while both windows are still buffered", len(buffered))
+	}
+
+	testparquet.PromoteLandedLogsToTier(t, dataDir, tenant, "logs-raw")
+	m3, err := logmeta.ReadManifest(dataDir, tenant, "logs-raw")
+	if err != nil || len(m3.Files) != 2 {
+		t.Fatalf("manifest after refresh = %+v err=%v", m3, err)
+	}
 	_, openSet, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(openSet) != len(m2.Files) {
-		t.Fatalf("planner open set = %d, manifest files = %d", len(openSet), len(m2.Files))
+	if len(openSet) != len(m3.Files) {
+		t.Fatalf("planner open set = %d, manifest files = %d", len(openSet), len(m3.Files))
 	}
 
 	if err := os.Remove(mpath); err != nil {
@@ -456,7 +472,7 @@ func TestSandboxLogsSkipsDeletedCachedParquet(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()
 	tenantRoot := filepath.Join(root, gateTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +513,7 @@ func TestPrepareMetricsSandboxIgnoresStaleLogCache(t *testing.T) {
 	testparquet.WriteSegmentRows(t, metricsPath, []testparquet.SegRow{
 		{Name: "up", Labels: `job="api"`, Value: 1, Ts: time.Unix(1, 0).UTC()},
 	})
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}

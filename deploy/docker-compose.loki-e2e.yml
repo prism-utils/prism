@@ -18,6 +18,10 @@ services:
       LOKI_API_ENABLED: "true"
       HOT_SNAPSHOT_SECONDS: "2"
       FLUSH_TICK_SECONDS: "2"
+      # Refresh fast: landed windows are only searchable once a merge tick
+      # packs them into a tier, and the test asserts within seconds.
+      MERGE_TICK_SECONDS: "2"
+      LOGS_REFRESH_INTERVAL: "2"
     volumes:
       - logs-data:/data
     ports:

@@ -272,7 +272,7 @@ func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, 
 	if err := os.WriteFile(final, bodyBytes, 0o600); err != nil {
 		return 0, fmt.Errorf("engine: land log window: %w", err)
 	}
-	if err := e.finishLogLand(tenant, artifact, final); err != nil {
+	if err := e.finishLogLand(tenant, artifact); err != nil {
 		return n, err
 	}
 	return n, nil

@@ -69,7 +69,7 @@ func lokiServer(t *testing.T, cfg *query.LokiConfig) *httptest.Server {
 // is the ingest-time axis the Loki API reports.
 func landLokiRaw(t *testing.T, dataDir, tenant, name string, at time.Time, rows []testparquet.LogRow) {
 	t.Helper()
-	path := filepath.Join(dataDir, tenant, "logs", "logs-raw", name)
+	path := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L0", name)
 	testparquet.WriteLogsRawFile(t, path, rows)
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatalf("chtimes: %v", err)
@@ -78,7 +78,7 @@ func landLokiRaw(t *testing.T, dataDir, tenant, name string, at time.Time, rows 
 
 func landLokiSummary(t *testing.T, dataDir, tenant, name string, at time.Time, rows []testparquet.LogSummaryRow) {
 	t.Helper()
-	path := filepath.Join(dataDir, tenant, "logs", "logs-summary", name)
+	path := filepath.Join(dataDir, tenant, "logs", "logs-summary", "tiers", "L0", name)
 	testparquet.WriteLogsSummaryFile(t, path, rows)
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatalf("chtimes: %v", err)
@@ -574,6 +574,33 @@ func TestLokiLabelValues(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The label dropdown must offer only values query_range can answer for. A
+// window still sitting in the landing buffer is not searchable, so its values
+// stay out of the label API until a refresh opens them.
+func TestLokiLabelValuesOmitsLandingBufferValues(t *testing.T) {
+	dataDir := t.TempDir()
+	landLokiRaw(t, dataDir, lokiTenant, "refreshed.parquet", lokiBase, []testparquet.LogRow{
+		{Message: "refreshed line", Format: "refreshed-format"},
+	})
+	landing := filepath.Join(dataDir, lokiTenant, "logs", "logs-raw", "buffered.parquet")
+	testparquet.WriteLogsRawFile(t, landing, []testparquet.LogRow{
+		{Message: "buffered line", Format: "buffered-format"},
+	})
+	srv := lokiServer(t, lokiConfig(dataDir))
+
+	status, env := lokiGet(t, srv.URL+"/"+lokiTenant+"/loki/api/v1/label/format/values")
+	if status != http.StatusOK || env.Status != "success" {
+		t.Fatalf("status=%d env=%+v", status, env)
+	}
+	var vals []string
+	if err := json.Unmarshal(env.Data, &vals); err != nil {
+		t.Fatalf("decode %s: %v", env.Data, err)
+	}
+	if len(vals) != 1 || vals[0] != "refreshed-format" {
+		t.Fatalf("label values = %v, want only the refreshed tier value", vals)
 	}
 }
 

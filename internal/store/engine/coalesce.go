@@ -133,23 +133,24 @@ func (e *Engine) sealLogCoalesce(tenant, artifact string) error {
 	}
 	_ = os.Remove(pendingDir)
 
-	if err := e.finishLogLand(tenant, artifact, final); err != nil {
-		return err
-	}
-	return nil
+	return e.finishLogLand(tenant, artifact)
 }
 
-func (e *Engine) finishLogLand(tenant, artifact, finalPath string) error {
+// finishLogLand re-stamps the log catalog after a window reaches the landing
+// buffer. The window is not searchable yet, so it contributes no label values;
+// the index is only carried across the bump it would otherwise be stranded by.
+func (e *Engine) finishLogLand(tenant, artifact string) error {
+	prevGen, err := logmeta.Read(e.cfg.DataDir, tenant)
+	if err != nil {
+		return err
+	}
 	if err := logmeta.Bump(e.cfg.DataDir, tenant); err != nil {
 		return err
 	}
 	if err := logmeta.SyncManifest(e.cfg.DataDir, tenant, artifact); err != nil {
 		return err
 	}
-	if err := logmeta.MergeLabelIndexFromParquet(e.cfg.DataDir, tenant, finalPath); err != nil {
-		return err
-	}
-	return nil
+	return logmeta.CarryLabelIndex(e.cfg.DataDir, tenant, prevGen)
 }
 
 func mergeParquetUnion(ctx context.Context, sources []string, dest string, rowGroupSize int) error {

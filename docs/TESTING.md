@@ -99,7 +99,9 @@ make clean
   a **writer** store (`RUN_JOBS=true`) and a second **reader** store
   (`RUN_JOBS=false`, `QUERY_HOT_ONLY=true`, the writer's data dir mounted
   read-only) answer both `/sql FROM logs` and the Loki API — `query_range` with a
-  line filter, `labels`, `label/job/values` — over the same landed files. It also
+  line filter, `labels`, `label/job/values` — over the same refreshed segments
+  (the compose file shortens `LOGS_REFRESH_INTERVAL` so the assertion does not
+  wait out the production default). It also
   asserts metric LogQL is rejected with `400`. Logs are file-backed, so this is
   the acceptance test for reader/writer parity. `LOKI_API_ENABLED` (default
   `true`) gates the routes; see [`CONFIG.md`](CONFIG.md) §14.

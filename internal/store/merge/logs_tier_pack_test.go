@@ -21,7 +21,7 @@ func TestFindLogTierMergePacksSparseTimestamps(t *testing.T) {
 		off := time.Duration(i) * 6 * time.Minute // typical merge-tick spacing
 		tiers = append(tiers, seg(0, pathID(i%26)+pathID((i/26)%26), perFile, off, off))
 	}
-	actions := p.FindLogMerges(nil, tiers)
+	actions := p.FindLogMerges(fixtureBase, nil, tiers)
 	if len(actions) != 1 {
 		t.Fatalf("want 1 L0 pack-to-max merge, got %d", len(actions))
 	}
@@ -51,7 +51,7 @@ func TestFindLogMergesReturnsLandingAndTier(t *testing.T) {
 		off := time.Duration(i) * 6 * time.Minute
 		tiers = append(tiers, seg(0, "t"+pathID(i), 10, off, off))
 	}
-	actions := p.FindLogMerges(landing, tiers)
+	actions := p.FindLogMerges(fixtureBase, landing, tiers)
 	if len(actions) != 2 {
 		t.Fatalf("want landing + L0 actions, got %d", len(actions))
 	}
