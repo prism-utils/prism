@@ -796,7 +796,7 @@ see [`STORE.md`](STORE.md).
 | `LOG_COALESCE_MAX_BYTES` | int (bytes) | `0` (off) | Seal coalesced log buffer when pending bytes reach this size. |
 | `MAX_BODY_BYTES` | int64 (bytes) | `268435456` | Maximum HTTP ingest body size (256 MiB). |
 | `MAX_OPEN_TENANTS` | int | `32` | LRU cap on concurrently open per-tenant DuckDB engines (`engine.duckdb`). |
-| `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments (`Bytes ≥` this) are never merge inputs for metrics tiers **or** logs landing/tiers. |
+| `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments (`Bytes ≥` this) are never merge inputs for metrics tiers **or** logs landing/tiers. Once a merge is triggered, unsealed candidates pack toward this budget. |
 | `MAX_TIER` | int | `8` | Highest tier directory scanned (`L0`…`L8`). |
 | `MERGE_TICK_SECONDS` | int (seconds) | `60` | Tier merge ticker interval. |
 | `MODE` | string | `standalone` | Deployment role: `standalone`, `client`, or `cluster`. |
@@ -816,7 +816,7 @@ see [`STORE.md`](STORE.md).
 | `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. |
 | `ROUTE_PREFIX` | string | _(empty)_ | Optional path prefix for ingest/query/SQL routes (e.g. `/prism-proxy`). |
 | `RUN_JOBS` | bool | `true` | When `false`, skip background maintenance (snapshot, flush, merge, rollups, retention). Ingest/query still run. |
-| `SEGMENTS_PER_TIER` | int | `6` | Minimum **unsealed** live segments at a tier (or logs landing) before merge compaction runs. Candidate sets shrink when summed bytes would exceed `MAX_SEGMENT_BYTES`. |
+| `SEGMENTS_PER_TIER` | int | `6` | Minimum **unsealed** live segments at a tier (or logs landing) before merge compaction **starts** (trigger only). Once triggered, the planner packs toward `MAX_SEGMENT_BYTES` (up to a derived max-merge-at-once ≈ max/floor), shrinking the candidate set when the sum would exceed the seal budget. |
 | `SQL_API_ENABLED` | bool | `true` | When `false`, `POST /{ns}/sql` is not registered. |
 | `SQL_API_MAX_BODY_BYTES` | int64 (bytes) | `1048576` | Maximum POST `/sql` JSON body (1 MiB). |
 | `SQL_API_MAX_INFLIGHT` | int | `4` | Max concurrent `/sql` executions when `SQL_API_QUEUE_ENABLED=true`. |

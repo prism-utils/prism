@@ -154,7 +154,9 @@ func (p *Planner) findLogLandingMerge(landing []Segment) (LogMergeAction, bool) 
 		}
 		return live[i].MinTs.Before(live[j].MinTs)
 	})
-	n := p.cfg.SegmentsPerTier
+	// Pack toward MaxSegmentBytes: take up to MaxMergeAtOnce time-ordered
+	// unsealed segments, then shrink so the sum fits the seal budget.
+	n := p.cfg.MaxMergeAtOnce
 	if n > len(live) {
 		n = len(live)
 	}

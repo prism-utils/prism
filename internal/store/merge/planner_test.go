@@ -208,6 +208,59 @@ func TestFindMergesDeterministic(t *testing.T) {
 	}
 }
 
+func TestFindMergesPacksTowardMaxWhenMaxMergeAtOnceHigh(t *testing.T) {
+	const maxBytes int64 = 200
+	const perFile int64 = 10
+	p := NewPlanner(PlannerConfig{
+		SegmentsPerTier: 6,
+		MaxMergeAtOnce:  100,
+		MaxSegmentBytes: maxBytes,
+		FloorBytes:      10,
+	})
+	var segs []Segment
+	for i := 0; i < 40; i++ {
+		off := time.Duration(i) * time.Minute
+		segs = append(segs, seg(0, pathID(i%26)+pathID((i/26)%26), perFile, off, off+30*time.Second))
+	}
+	actions := p.FindMerges(segs)
+	if len(actions) != 1 {
+		t.Fatalf("want 1 merge, got %d", len(actions))
+	}
+	wantN := int(maxBytes / perFile)
+	if len(actions[0].Sources) != wantN {
+		t.Fatalf("want %d sources packing to max, got %d", wantN, len(actions[0].Sources))
+	}
+	if wantN <= 6 {
+		t.Fatalf("test setup: pack count must exceed SEGMENTS_PER_TIER")
+	}
+}
+
+func TestNewPlannerDerivesMaxMergeAtOnce(t *testing.T) {
+	p := NewPlanner(PlannerConfig{
+		SegmentsPerTier: 6,
+		MaxMergeAtOnce:  0,
+		MaxSegmentBytes: 200,
+		FloorBytes:      10,
+	})
+	// 200/10 = 20 floor-sized pieces fit under max.
+	if p.cfg.MaxMergeAtOnce != 20 {
+		t.Fatalf("derived MaxMergeAtOnce = %d, want 20", p.cfg.MaxMergeAtOnce)
+	}
+}
+
+func TestNewPlannerDerivedMaxMergeAtOnceAtLeastSegmentsPerTier(t *testing.T) {
+	p := NewPlanner(PlannerConfig{
+		SegmentsPerTier: 6,
+		MaxMergeAtOnce:  0,
+		MaxSegmentBytes: 50,
+		FloorBytes:      20,
+	})
+	// 50/20 = 2, but trigger floor is SegmentsPerTier.
+	if p.cfg.MaxMergeAtOnce != 6 {
+		t.Fatalf("derived MaxMergeAtOnce = %d, want ≥ SegmentsPerTier (6)", p.cfg.MaxMergeAtOnce)
+	}
+}
+
 func pathID(i int) string {
 	return string(rune('a' + i))
 }

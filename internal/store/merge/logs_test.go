@@ -58,8 +58,9 @@ func TestLogsTierMergeCompactsPastSegmentsPerTier(t *testing.T) {
 	}
 	action := actions[0]
 	action.Artifact = artifact
-	if len(action.Sources) != segmentsPerTier {
-		t.Fatalf("merge sources = %d, want %d", len(action.Sources), segmentsPerTier)
+	// Default planner derives a high MaxMergeAtOnce; tiny landings pack all that fit.
+	if len(action.Sources) != n {
+		t.Fatalf("merge sources = %d, want all %d landing files under max bytes", len(action.Sources), n)
 	}
 
 	x, err := NewExecutor(ExecutorConfig{DataDir: dataDir, Tenant: tenant, RowGroupSize: 1000})
