@@ -1,6 +1,6 @@
 # Spec: logs refresh interval (ES-like searchable lag)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `fix/logs-refresh-interval`
 - **Owner phase:** orchestrator → developer
@@ -88,18 +88,18 @@ the released image and verifies admin logging + Grafana.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `LOGS_REFRESH_INTERVAL` (seconds, default 60) age-triggers landing→L0 when
+- [x] `LOGS_REFRESH_INTERVAL` (seconds, default 60) age-triggers landing→L0 when
       oldest live landing file exceeds the interval (even if count &lt; segments-per-tier).
-- [ ] Count trigger (`SEGMENTS_PER_TIER`) still refreshes immediately when enough
+- [x] Count trigger (`SEGMENTS_PER_TIER`) still refreshes immediately when enough
       live files accumulate.
-- [ ] Loki + `/sql` logs relation **omit landing**; only tier segments are scanned
+- [x] Loki + `/sql` logs relation **omit landing**; only tier segments are scanned
       (landing excluded by design).
-- [ ] `TickMerge` can apply multiple landing refreshes per artifact per tick
+- [x] `TickMerge` can apply multiple landing refreshes per artifact per tick
       (`LOGS_REFRESH_MAX_ACTIONS`, default 8).
-- [ ] `TickFlush` calls `FlushLogCoalesce` when coalesce is configured.
-- [ ] Chart/values + CONFIG.md + STORE.md document the knobs and semantics.
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] `TickFlush` calls `FlushLogCoalesce` when coalesce is configured.
+- [x] Chart/values + CONFIG.md + STORE.md document the knobs and semantics.
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 

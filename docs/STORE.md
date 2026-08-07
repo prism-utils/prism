@@ -537,10 +537,10 @@ Lucene **TieredMergePolicy** analogue over immutable Parquet tiers. Merge DuckDB
 connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store config.
 
 - **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs (metrics tiers **and** logs landing / log tiers).
-- **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, compaction may start. `SEGMENTS_PER_TIER` is the trigger only — not the pack size.
+- **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, compaction may start. `SEGMENTS_PER_TIER` is the trigger only — not the pack size. Logs landing has a second, age-based trigger (`LOGS_REFRESH_INTERVAL`, below).
 - **Pack:** once triggered, the planner packs as many time-ordered unsealed candidates as fit under `MAX_SEGMENT_BYTES` (capped by a derived `MaxMergeAtOnce` ≈ `MAX_SEGMENT_BYTES / floor`, never below `SEGMENTS_PER_TIER`), then shrinks the set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`. Metrics tiers group by size level (floor-rounded log scale) and require a time-adjacent contiguous run (gap ≤ one segment span). Logs landing uses the same seal exclusion and fill-toward-max / shrink-to-fit rule without size-level grouping.
 - **One action per tick (metrics):** no cascade — at most one merge per tenant per merge tick, lowest tier first.
-- **Logs:** one tick may run landing→L0 and one cold-tier pack (time-ordered fill toward `MAX_SEGMENT_BYTES`, no Lucene adjacency — L0 files from merge ticks are often minutes apart).
+- **Logs:** one tick may run up to `LOGS_REFRESH_MAX_ACTIONS` landing→L0 refreshes per artifact plus one cold-tier pack (time-ordered fill toward `MAX_SEGMENT_BYTES`, no Lucene adjacency — L0 files from merge ticks are often minutes apart). Refreshes are planned oldest-first and before the cold pack, so searchable lag stays bounded while tier catch-up still progresses.
 - **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are deleted only after the output is atomically renamed.
 
 Path helpers live in `internal/store/layout` (`TierDir`, `RollupDir`, `ToSlash`).
@@ -720,19 +720,23 @@ When **`SQL_API_ENABLED=false`** (default `true`), the route is not registered
 | `metrics` | `"__name__"`, `labels`, `value`, `timestamp_ms`, `ts` |
 | `logs` | `message`, `format` (guaranteed) + `__prism_ts_ns` (ingest/landing time, nanoseconds) + per-format/`template`/`count` columns (varies) |
 
-The **`logs`** relation unions the tenant's landed `logs-*/*.parquet` windows with
-`union_by_name=true` (variable per-format schemas; missing columns are NULL). It
-is present in every sandbox (empty — zero rows — when a tenant has no logs), is
-tenant-scoped like `metrics`, and is unaffected by `QUERY_HOT_ONLY` (logs have no
-hot/tier split). Every sandbox row also carries **`__prism_ts_ns`** (BIGINT
-nanoseconds): prefer a per-row column written at land/merge; otherwise stamp from
-the segment filename window id (same axis Loki uses). There is **no event-time
-Timestamp** column — filter time windows on `__prism_ts_ns`. Logs are
-**file-backed**: they never enter the metrics hot catalog, so they need no hot
-snapshot export and a **reader** node (`RUN_JOBS=false`, read-only mount of the
-writer's `DATA_DIR`) serves them in full — the same rows the writer sees, as soon
-as a window lands. `make loki-e2e` runs exactly that topology. Typical use —
-total count per mined template, and last-hour ingest count:
+The **`logs`** relation unions the tenant's refreshed `logs-*/tiers/L*/*.parquet`
+segments with `union_by_name=true` (variable per-format schemas; missing columns
+are NULL). Windows still sitting in the landing buffer are **not** part of it —
+they become visible once a refresh opens them into a tier (see "Refresh
+(searchable lag)"). The relation is present in every sandbox (empty — zero rows —
+when a tenant has no refreshed logs), is tenant-scoped like `metrics`, and is
+unaffected by `QUERY_HOT_ONLY` (logs have no hot/tier split). Every sandbox row
+also carries **`__prism_ts_ns`** (BIGINT nanoseconds): prefer a per-row column
+written at land/merge; otherwise stamp from the segment filename window id (same
+axis Loki uses). There is **no event-time Timestamp** column — filter time
+windows on `__prism_ts_ns`. Logs are **file-backed**: they never enter the metrics
+hot catalog, so they need no hot snapshot export and a **reader** node
+(`RUN_JOBS=false`, read-only mount of the writer's `DATA_DIR`) serves them in
+full — the same rows the writer sees, one refresh after they land. Only the
+writer refreshes, so a reader-only deployment needs a writer with `RUN_JOBS=true`
+behind it. `make loki-e2e` runs exactly that topology. Typical use — total count
+per mined template, and last-hour ingest count:
 
 ```sql
 SELECT template, CAST(sum(count) AS BIGINT) AS count FROM logs GROUP BY template ORDER BY count DESC
@@ -919,16 +923,37 @@ Landed windows live under `<tenant>/logs/<artifact>/*.parquet`. Background jobs
 
 | Path | Role |
 |---|---|
-| `logs/<artifact>/*.parquet` | Landing windows (agent seals) |
-| `logs/<artifact>/tiers/L{n}/*.parquet` | Compacted segments (merge when ≥ `SEGMENTS_PER_TIER`) |
+| `logs/<artifact>/*.parquet` | Landing buffer (agent seals) — **not searchable** |
+| `logs/<artifact>/tiers/L{n}/*.parquet` | Refreshed / compacted segments — the searchable set |
 | `logs/<artifact>/_manifest.json` | Atomic file catalog for planners |
 | `logs/.meta_generation` | Cache invalidation stamp |
+
+### Refresh (searchable lag)
+
+Landing is a write buffer, the way an Elasticsearch index buffer is: rows are
+durable as soon as they land, but no query returns them until a **refresh** packs
+them into `tiers/L0/`. A refresh is planned on the merge tick when either arm
+fires — the oldest buffered window has reached `LOGS_REFRESH_INTERVAL`
+(default 60s) **or** the buffer holds `SEGMENTS_PER_TIER` unsealed windows — so a
+low-volume artifact becomes searchable on a clock rather than waiting for volume.
+Worst-case lag is the interval plus up to one `MERGE_TICK_SECONDS`.
+`LOGS_REFRESH_INTERVAL=0` drops the age arm and restores count-only triggering.
+
+Refresh output keeps `MERGE_SEGMENT_FORMAT` (parquet by default), so a dashboard
+globbing `tiers/L*/*.parquet` needs no query change. A backlog drains over
+several ticks: each tick applies up to `LOGS_REFRESH_MAX_ACTIONS` (default 8)
+packs per artifact, which bounds rewrite CPU while still shrinking a buffer that
+multiple agents are filling.
+
+Because only tiers are searchable, query cost no longer tracks how deep the
+buffer is, and neither Loki nor `/sql` opens landing files.
 
 Planners **time-prune** the open set using the window id in
 `<unix_ns>-*.parquet` (else mtime) before opening Parquet. Label APIs omit the
 `message` column and prefer an in-process cardinality index for
 `format`/`template`/`stream`/`job`. Optional knobs: `MAX_LOG_FILES`,
-`LOG_COALESCE_MAX_*`, `LOGS_RECENT_LOOKBACK_HOURS`, `QUERY_DUCKDB_THREADS`
+`LOG_COALESCE_MAX_*` (buffered lands sealed on the flush tick),
+`LOGS_RECENT_LOOKBACK_HOURS`, `QUERY_DUCKDB_THREADS`
 (see [`CONFIG.md`](CONFIG.md)).
 
 Reference: [Grafana Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/).
