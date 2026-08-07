@@ -15,6 +15,11 @@
 // Arbitrary SQL API: POST /{ns}/sql (RBAC action query, or ADMIN_TOKEN when RBAC
 // off). Disable with SQL_API_ENABLED=false. Limits: SQL_API_MAX_ROWS (default
 // 100000), SQL_API_TIMEOUT_SECONDS (default 30). Reuses DUCKDB_MEMORY_LIMIT.
+// Heavy reads (/sql, PromQL, Loki) share an in-flight queue that is ON by
+// default (SQL_API_QUEUE_ENABLED=true, SQL_API_MAX_INFLIGHT=2,
+// SQL_API_MAX_QUEUE=128, SQL_API_QUEUE_TIMEOUT_MS=120000); raise the caps only
+// with memory headroom for one DUCKDB_MEMORY_LIMIT per in-flight slot. The
+// admin plane serves GET /admin/queue with the live snapshot.
 // Loki logs API: GET|POST /{ns}/loki/api/v1/{query_range,labels,label/{name}/values}
 // (RBAC action query). Serves the file-backed logs relation with a LogQL subset
 // (stream selectors + line filters). Disable with LOKI_API_ENABLED=false. Reuses
@@ -64,24 +69,29 @@ import (
 )
 
 const (
-	defaultListenAddr         = ":8080"
-	defaultDataDir            = "/data"
-	defaultMaxBodyBytes       = 268435456
-	defaultArtifacts          = "metrics-raw"
-	defaultAuthMode           = "none"
-	defaultHotWindowMinutes   = 10
-	defaultSegmentsPerTier    = 6
-	defaultMaxSegmentBytes    = 2147483648
-	defaultRetentionDays      = 15
-	defaultRollupSteps        = "1m,5m,1h"
-	defaultMaxTier            = 8
-	defaultHotSnapshotSec     = 15
-	defaultFlushTickSec       = 30
-	defaultMergeTickSec       = 60
-	defaultRetentionTickHour  = 1
-	defaultSQLAPIMaxInFlight  = 4
-	defaultSQLAPIMaxQueue     = 64
-	defaultSQLAPIQueueTimeout = 5000
+	defaultListenAddr        = ":8080"
+	defaultDataDir           = "/data"
+	defaultMaxBodyBytes      = 268435456
+	defaultArtifacts         = "metrics-raw"
+	defaultAuthMode          = "none"
+	defaultHotWindowMinutes  = 10
+	defaultSegmentsPerTier   = 6
+	defaultMaxSegmentBytes   = 2147483648
+	defaultRetentionDays     = 15
+	defaultRollupSteps       = "1m,5m,1h"
+	defaultMaxTier           = 8
+	defaultHotSnapshotSec    = 15
+	defaultFlushTickSec      = 30
+	defaultMergeTickSec      = 60
+	defaultRetentionTickHour = 1
+	// Each /sql sandbox honors DUCKDB_MEMORY_LIMIT independently, so peak read
+	// memory is MaxInFlight × that limit: shared writers OOM at higher
+	// concurrency, and a deep queue with a long wait absorbs dashboard fan-out
+	// instead of shedding it. See docs/MEMORY.md.
+	defaultSQLAPIQueueEnabled = true
+	defaultSQLAPIMaxInFlight  = 2
+	defaultSQLAPIMaxQueue     = 128
+	defaultSQLAPIQueueTimeout = 120000
 	defaultMaxOpenTenants     = 32
 	readHeaderTimeout         = 15 * time.Second
 	shutdownTimeout           = 10 * time.Second
@@ -184,7 +194,7 @@ func loadConfig() serverConfig {
 		mode:                 envOr("MODE", "standalone"),
 		clientTenants:        os.Getenv("CLIENT_TENANTS"),
 		clusterClients:       os.Getenv("CLUSTER_CLIENTS"),
-		sqlAPIQueueEnabled:   envBool("SQL_API_QUEUE_ENABLED", false),
+		sqlAPIQueueEnabled:   envBool("SQL_API_QUEUE_ENABLED", defaultSQLAPIQueueEnabled),
 		sqlAPIMaxInFlight:    envInt("SQL_API_MAX_INFLIGHT", defaultSQLAPIMaxInFlight),
 		sqlAPIMaxQueue:       envInt("SQL_API_MAX_QUEUE", defaultSQLAPIMaxQueue),
 		sqlAPIQueueTimeout:   time.Duration(envInt("SQL_API_QUEUE_TIMEOUT_MS", defaultSQLAPIQueueTimeout)) * time.Millisecond,
@@ -383,6 +393,9 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 
 		statsHandler := admin.StatsHandler(adminCfg, eng)
 		mux.Handle(admin.StatsRoutePattern(), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapStats, statsHandler))
+
+		queueHandler := admin.QueueHandler(sqlLimiter)
+		mux.Handle(admin.QueueRoutePattern(), protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapStats, queueHandler))
 
 		queryHandler := query.Handler(queryCfg, eng, logger)
 		if ownedTenants != nil {

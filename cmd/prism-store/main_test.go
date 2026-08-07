@@ -146,17 +146,17 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if !cfg.runJobs {
 		t.Fatalf("runJobs = false, want true by default")
 	}
-	if cfg.sqlAPIQueueEnabled {
-		t.Fatal("sqlAPIQueueEnabled = true, want false by default")
+	if !cfg.sqlAPIQueueEnabled {
+		t.Fatal("sqlAPIQueueEnabled = false, want true by default")
 	}
-	if cfg.sqlAPIMaxInFlight != 4 {
-		t.Fatalf("sqlAPIMaxInFlight = %d, want 4", cfg.sqlAPIMaxInFlight)
+	if cfg.sqlAPIMaxInFlight != 2 {
+		t.Fatalf("sqlAPIMaxInFlight = %d, want 2", cfg.sqlAPIMaxInFlight)
 	}
-	if cfg.sqlAPIMaxQueue != 64 {
-		t.Fatalf("sqlAPIMaxQueue = %d, want 64", cfg.sqlAPIMaxQueue)
+	if cfg.sqlAPIMaxQueue != 128 {
+		t.Fatalf("sqlAPIMaxQueue = %d, want 128", cfg.sqlAPIMaxQueue)
 	}
-	if cfg.sqlAPIQueueTimeout != 5*time.Second {
-		t.Fatalf("sqlAPIQueueTimeout = %v, want 5s", cfg.sqlAPIQueueTimeout)
+	if cfg.sqlAPIQueueTimeout != 120*time.Second {
+		t.Fatalf("sqlAPIQueueTimeout = %v, want 120s", cfg.sqlAPIQueueTimeout)
 	}
 	if cfg.maxOpenTenants != 32 {
 		t.Fatalf("maxOpenTenants = %d, want 32", cfg.maxOpenTenants)
@@ -165,9 +165,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 
 func TestLoadConfigSQLQueueFromEnv(t *testing.T) {
 	clearStoreEnv(t)
-	t.Setenv("SQL_API_QUEUE_ENABLED", "true")
 	t.Setenv("SQL_API_MAX_INFLIGHT", "8")
-	t.Setenv("SQL_API_MAX_QUEUE", "128")
+	t.Setenv("SQL_API_MAX_QUEUE", "256")
 	t.Setenv("SQL_API_QUEUE_TIMEOUT_MS", "3000")
 	t.Setenv("MAX_OPEN_TENANTS", "16")
 	cfg := loadConfig()
@@ -177,14 +176,22 @@ func TestLoadConfigSQLQueueFromEnv(t *testing.T) {
 	if cfg.sqlAPIMaxInFlight != 8 {
 		t.Fatalf("sqlAPIMaxInFlight = %d, want 8", cfg.sqlAPIMaxInFlight)
 	}
-	if cfg.sqlAPIMaxQueue != 128 {
-		t.Fatalf("sqlAPIMaxQueue = %d, want 128", cfg.sqlAPIMaxQueue)
+	if cfg.sqlAPIMaxQueue != 256 {
+		t.Fatalf("sqlAPIMaxQueue = %d, want 256", cfg.sqlAPIMaxQueue)
 	}
 	if cfg.sqlAPIQueueTimeout != 3*time.Second {
 		t.Fatalf("sqlAPIQueueTimeout = %v, want 3s", cfg.sqlAPIQueueTimeout)
 	}
 	if cfg.maxOpenTenants != 16 {
 		t.Fatalf("maxOpenTenants = %d, want 16", cfg.maxOpenTenants)
+	}
+}
+
+func TestLoadConfigSQLQueueDisabledByEnv(t *testing.T) {
+	clearStoreEnv(t)
+	t.Setenv("SQL_API_QUEUE_ENABLED", "false")
+	if loadConfig().sqlAPIQueueEnabled {
+		t.Fatal("SQL_API_QUEUE_ENABLED=false must disable the queue")
 	}
 }
 

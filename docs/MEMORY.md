@@ -122,29 +122,50 @@ queue is enabled.
 
 ---
 
-## `/sql` in-flight queue (v1.3+)
+## Read queue (v1.3+, on by default since v1.9.6)
 
-Without the queue, concurrent `/sql` requests are unbounded — worst-case memory
-scales as `concurrent_requests × DUCKDB_MEMORY_LIMIT`.
-
-Optional env (all default to prior behavior — queue **off**):
+Without the queue, concurrent reads are unbounded — worst-case memory scales as
+`concurrent_requests × DUCKDB_MEMORY_LIMIT`.
 
 | Env | Default | Role |
 |---|---|---|
-| `SQL_API_QUEUE_ENABLED` | `false` | Master switch |
-| `SQL_API_MAX_INFLIGHT` | `4` | Max concurrent `/sql` executions |
-| `SQL_API_MAX_QUEUE` | `64` | Max requests waiting for a slot |
-| `SQL_API_QUEUE_TIMEOUT_MS` | `5000` | Max wait before `429` |
+| `SQL_API_QUEUE_ENABLED` | `true` | Master switch (`false` = unbounded reads) |
+| `SQL_API_MAX_INFLIGHT` | `2` | Max concurrent read executions |
+| `SQL_API_MAX_QUEUE` | `128` | Max requests waiting for a slot |
+| `SQL_API_QUEUE_TIMEOUT_MS` | `120000` | Max wait before `429` |
 
-When enabled on a **data node** (standalone or client — **not** the cluster
-coordinator), middleware order is: auth → `OwnedTenantGuard` → limiter → handler.
-Cheap rejections do not consume a slot.
+On a **data node** (standalone or client — **not** the cluster coordinator),
+middleware order is: auth → `OwnedTenantGuard` → limiter → handler. Cheap
+rejections do not consume a slot. One limiter is shared by `/sql`, PromQL, and
+Loki reads, so the caps bound total heavy-read concurrency on the node.
 
 Backpressure: `429 Too Many Requests`, body `too many concurrent queries`,
-header `Retry-After: 1`.
+header `Retry-After: 1`. `GET /admin/queue` on the admin plane reports live
+in-flight, waiting, and cumulative shed counts — read it before changing caps.
 
-Sizing rule: **`SQL_API_MAX_INFLIGHT × DUCKDB_THREADS ≈ CPU cores`** for the
-pod.
+**Sizing rule — memory first, then CPU.** Each read sandbox honors
+`DUCKDB_MEMORY_LIMIT` independently, so the hard constraint is
+
+```
+SQL_API_MAX_INFLIGHT × DUCKDB_MEMORY_LIMIT + merge/ingest + Go heap < pod limit
+```
+
+and only then **`SQL_API_MAX_INFLIGHT × DUCKDB_THREADS ≈ CPU cores`**.
+
+Production evidence for the `2 / 128 / 120s` default, from a shared
+multi-tenant writer with `DUCKDB_MEMORY_LIMIT=6500MB` behind admin Grafana
+dashboards that fan out to 100+ panels per refresh:
+
+- `SQL_API_MAX_INFLIGHT=16` with a 6Gi pod limit → **OOMKilled**.
+- `SQL_API_MAX_INFLIGHT=10` is likewise unsafe at that DuckDB cap: `10 ×
+  6500MB` cannot fit under a 10Gi limit with merge and Go headroom.
+- `2 / 128 / 120000` with a 10Gi limit soaks at a **~7.5 GiB** 7-day working-set
+  peak, no restarts.
+
+So raise in-flight only together with pod memory (or by lowering
+`DUCKDB_MEMORY_LIMIT`). Prefer **depth + a long wait** over concurrency for
+dashboard fan-out: a queued panel renders a second late, a shed panel renders
+an error.
 
 ---
 

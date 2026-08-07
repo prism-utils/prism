@@ -52,9 +52,24 @@ default to prism-proxy-equivalent behavior.
 | — | `AUTHZ_POLICY_FILE` | New (optional): enables **RBAC** (JWT/OIDC + deny-by-default per-tenant `reader`/`writer`/`admin` policy) on HTTP query/ingest/admin routes. Leave unset to keep prism-proxy token behavior. |
 | — | `OIDC_ISSUER` / `OIDC_JWKS_URL` / `OIDC_JWKS_FILE` / `OIDC_AUDIENCE` / `AUTHZ_RELOAD_SECONDS` | New: JWT verification config, required when RBAC is enabled (`OIDC_JWKS_FILE` for offline/air-gapped). |
 | — | `SQL_API_ENABLED` / `SQL_API_MAX_ROWS` / `SQL_API_TIMEOUT_SECONDS` / `SQL_API_MAX_BODY_BYTES` | New: arbitrary read-only SQL API (`POST {ROUTE_PREFIX}/{ns}/sql`); default on, RBAC-guarded. |
-| — | `SQL_API_QUEUE_ENABLED` / `SQL_API_MAX_INFLIGHT` / `SQL_API_MAX_QUEUE` / `SQL_API_QUEUE_TIMEOUT_MS` | New (v1.3): optional `/sql` in-flight limiter; **all default off / backward-compatible** (`SQL_API_QUEUE_ENABLED=false`). |
+| — | `SQL_API_QUEUE_ENABLED` / `SQL_API_MAX_INFLIGHT` / `SQL_API_MAX_QUEUE` / `SQL_API_QUEUE_TIMEOUT_MS` | New (v1.3): in-flight limiter on heavy reads. **On by default since v1.9.6** at `2` / `128` / `120000` ms — see the callout below. Set `SQL_API_QUEUE_ENABLED=false` for the pre-v1.9.6 unbounded behavior. |
+| — | `GET /admin/queue` | New (v1.9.6): admin-plane read-queue snapshot (caps, in-flight, waiting, shed total). Same auth as `/stats`; absent (`404`) on a `MODE=cluster` coordinator. |
 | — | `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT` / `MAX_OPEN_TENANTS` / `QUERY_HOT_ONLY` / `RUN_JOBS` | New: DuckDB governance and reader/writer split; see [`MEMORY.md`](MEMORY.md). |
 | — | **`duckdb_arrow` build tag** | **Build-from-source only:** `prism-store` release/CI builds pass `-tags duckdb_arrow` (CGO) to enable Arrow IPC streaming on `POST /sql` when clients send `Accept: application/vnd.apache.arrow.stream`. Prebuilt images include it; plain `go build ./...` without the tag serves JSON only (Arrow requests → `406`). |
+
+> **Read queue default flip (v1.9.6) — the one behavior change on upgrade.**
+> Heavy reads (`/sql`, PromQL, Loki) are now capped at **2 concurrent** per data
+> node, with **128** queued and a **120 s** wait before `429 Too Many Requests`
+> (`Retry-After: 1`). Deployments that already set these env vars are unaffected
+> — explicit values still win. Deployments that relied on unbounded read
+> concurrency will see requests **queue** rather than fail; only a request that
+> waits longer than 120 s, or arrives with 128 already waiting, gets a `429`. The
+> flip exists because unbounded sandboxes OOM-kill shared writers: `inflight=16`
+> was OOMKilled at 6Gi, and `inflight=10` does not fit a 10Gi pod at
+> `DUCKDB_MEMORY_LIMIT=6500MB`. To restore the old behavior set
+> `SQL_API_QUEUE_ENABLED=false`; to run hotter, raise `SQL_API_MAX_INFLIGHT`
+> **and** pod memory together (sizing in [`MEMORY.md`](MEMORY.md)). Watch
+> `GET /admin/queue` (`waiting`, `rejectedTotal`) after the upgrade.
 
 > **RBAC precedence / caution.** When `AUTHZ_POLICY_FILE` is set, RBAC is
 > authoritative on HTTP data/admin routes and **supersedes `INGEST_TOKEN`/`ADMIN_TOKEN`**
@@ -112,6 +127,7 @@ Roll back at the gitops layer (revert the values PR); the PVC data is untouched.
 - [ ] Grafana `prism-metrics-overview` renders (view SQL from `print-view-sql`).
 - [ ] `/stats?ns=` JSON matches the pre-cutover shape byte-for-byte; `credit-metering.ts` bills correctly off the same PVC.
 - [ ] Compaction/rollups/retention tick (segment counts in `/stats` evolve; `.metering.json` accrues `compactionCpuSeconds`).
+- [ ] `/admin/queue` reports `enabled: true` with the expected caps, and after a dashboard refresh `rejectedTotal` stays flat (shedding means the caps are too tight for the panel count, or the pod needs more memory to run hotter).
 
 ## Acceptance (issue #30, consumer-side)
 

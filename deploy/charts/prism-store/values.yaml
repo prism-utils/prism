@@ -92,10 +92,13 @@ env:
   duckdbThreads: ""
   duckdbMemoryLimit: ""
 
-  sqlAPIQueueEnabled: "false"
-  sqlAPIMaxInFlight: "4"
-  sqlAPIMaxQueue: "64"
-  sqlAPIQueueTimeoutMs: "5000"
+  # Read backpressure is on by default. Peak read memory is sqlAPIMaxInFlight ×
+  # duckdbMemoryLimit, so raise in-flight only with matching pod memory; a deep
+  # queue with a long wait makes dashboard fan-out wait instead of getting 429s.
+  sqlAPIQueueEnabled: "true"
+  sqlAPIMaxInFlight: "2"
+  sqlAPIMaxQueue: "128"
+  sqlAPIQueueTimeoutMs: "120000"
 
 # Tokens are never inlined here. Point existingSecret at a pre-created Secret; the chart
 # does not create or rotate credentials (no ESO/SealedSecrets dependency).
