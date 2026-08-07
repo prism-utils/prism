@@ -1,6 +1,6 @@
 # Spec: prism-store Prometheus exporter (USE KPIs)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `feat/prism-store-metrics`
 - **Ships as:** next patch after current tip (expect `v1.9.9` or `v1.10.0` — tag after merge)
@@ -61,15 +61,67 @@ This task adds a first-class Prometheus exporter on prism-store and instruments 
 
 ## 5. Acceptance checklist
 
-- [ ] `GET /metrics` returns Prometheus text; includes `go_*` / `process_*` when enabled
-- [ ] Queue gauges/counters present and move under load (tests)
-- [ ] HTTP duration + request totals with bounded route labels
-- [ ] Per-tenant query/error series when `METRICS_PER_TENANT=true`; absent/empty when false
-- [ ] Engine open-tenant gauges + eviction counter
-- [ ] Lifecycle file/job metrics updated from ticks (unit/integration coverage for at least one path)
-- [ ] Helm values + optional ServiceMonitor template + golden updated
-- [ ] Docs updated (CONFIG defaults, STORE observability section)
-- [ ] Tests first (`test:` commit); `make lint test` green (+ full-tests if wiring warrants)
+- [x] `GET /metrics` returns Prometheus text; includes `go_*` / `process_*` when enabled
+  - The registry is a bare `prometheus.NewRegistry()`, never `DefaultRegisterer`;
+    `TestScrapeUsesPrivateRegistryNotTheGlobalDefault` fails if that changes.
+    `TestScrapeExposesGoAndProcessCollectors` pins `go_goroutines`,
+    `process_resident_memory_bytes`, and `process_open_fds`.
+  - Mounted on both planes plus the `MODE=cluster` coordinator
+    (`TestMetricsRouteServedOnBothPlanes`), unauthenticated with `ADMIN_TOKEN` set
+    (`TestMetricsRouteNeedsNoCredential`), `404` when disabled, relocatable via
+    `METRICS_PATH`. Defaults verified in `TestMetricsConfigDefaultsOn`.
+- [x] Queue gauges/counters present and move under load (tests)
+  - Gauges are pulled from `Limiter.Snapshot()` at scrape time by a custom collector,
+    so they cannot drift from `/admin/queue`: `TestQueueInFlightGaugeMovesUnderLoad`
+    holds a slot and asserts the gauge moves; `TestQueueGaugesReportDisabledLimiter`
+    covers the off case.
+  - `rejected_total` is split by `reason` via a new `queue.Observer`, and
+    `TestQueueRejectionsCarryReasonAndMatchSnapshotTotal` asserts the three reason
+    series sum to the frozen `Snapshot().RejectedTotal` — the counters cannot
+    disagree with the admin JSON. All three shed paths have observer tests in
+    `internal/store/queue/observer_test.go`.
+- [x] HTTP duration + request totals with bounded route labels
+  - `TestInstrumentNeverLabelsRoutesWithTheRequestPath` drives tenant-shaped paths
+    through the middleware and fails if any label value contains a path segment.
+  - `TestInstrumentKeepsResponseStreamable` pins that the status-capturing wrapper
+    still flushes, so instrumenting did not silently buffer the streaming responses.
+- [x] Per-tenant query/error series when `METRICS_PER_TENANT=true`; absent/empty when false
+  - `TestPerTenantSeriesAbsentWhenDisabled` and
+    `TestTenantLifecycleSeriesAbsentWhenPerTenantDisabled` cover the off case; the
+    label is dropped, not emptied.
+  - Cardinality has a hard stop: namespaces are validated first
+    (`TestPerTenantSeriesSkipMalformedNamespaces`) and the 257th distinct tenant
+    folds into `tenant="__over_limit__"` (`TestPerTenantSeriesFoldOverflowIntoOneLabel`).
+- [x] Engine open-tenant gauges + eviction counter
+  - `TestEngineGaugesReadSourceOnEachScrape` pins that the gauges are read live
+    rather than cached at registration.
+  - `TestEvictedTenantsTotalCountsCapacityEvictionsOnly` keeps shutdown closes out of
+    the counter, so it means LRU thrash and nothing else.
+- [x] Lifecycle file/job metrics updated from ticks (unit/integration coverage for at least one path)
+  - A `lifecycle.Recorder` hands over counts the ticks already scanned, so a scrape
+    performs no disk I/O. `TestEveryTickReportsItsJobToTheRecorder` covers all four
+    jobs; `TestRetentionTickReportsLandingFileCountAfterDeletes` is the end-to-end
+    path — real files on disk, deleted by retention, gauge lands on the post-delete
+    count.
+  - `TestLastSuccessTimestampOnlyMovesOnSuccess` makes the staleness alert
+    trustworthy: a failing tick must not advance the timestamp.
+- [x] Helm values + optional ServiceMonitor template + golden updated
+  - The ServiceMonitor targets the existing `http` service port and overrides only
+    the path, because metrics share the public listener; adding a second container
+    port for the same number would not render.
+  - Golden regenerated (`check-golden.sh` → OK) and CI gained a
+    `--set metrics.serviceMonitor.enabled=true` template variant, so the optional
+    branch cannot rot untested.
+- [x] Docs updated (CONFIG defaults, STORE observability section)
+  - `CONFIG.md` (three vars + the route), `STORE.md` (USE table, cardinality budget,
+    scrape wiring), `DESIGN.md` decision entry, and a `MIGRATION.md` callout — the
+    exporter defaults on, so an upgrade opens a new unauthenticated endpoint on the
+    public port and that must not be a surprise.
+- [x] Tests first (`test:` commit); `make lint test` green (+ full-tests if wiring warrants)
+  - `a28ead3 test(store/metrics)` precedes both `feat` commits and the `docs` commit.
+  - `make lint` → 0 issues; `make test` → all packages ok (race, `-tags duckdb_arrow`).
+    Wiring touched `cmd/prism-store` serve paths, so `make full-tests` was run:
+    `full-tests: OK` (integration 3.6s, e2e 140.1s).
 
 ## 6. Mandatory review gates
 
