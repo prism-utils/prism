@@ -115,13 +115,24 @@ func TestLokiReaderEndToEnd(t *testing.T) {
 
 func lokiComposeUp(t *testing.T) {
 	t.Helper()
-	cmd := exec.Command("docker", "compose", "-f", lokiComposeFile, "up", "-d", "--build", "--wait")
+	// Wait only on the stores. The agent uses mode=batch and exits 0 after
+	// shipping the fixture; `compose up --wait` would treat that exit as failure.
+	cmd := exec.Command("docker", "compose", "-f", lokiComposeFile, "up", "-d", "--build", "--wait",
+		"prism-store-writer", "prism-store-reader")
 	cmd.Stdout = testWriter{t}
 	cmd.Stderr = testWriter{t}
 	if err := cmd.Run(); err != nil {
 		dumpLokiComposeLogs(t)
 		lokiComposeDown(t)
-		t.Fatalf("compose up: %v", err)
+		t.Fatalf("compose up stores: %v", err)
+	}
+	agent := exec.Command("docker", "compose", "-f", lokiComposeFile, "up", "-d", "prism-agent")
+	agent.Stdout = testWriter{t}
+	agent.Stderr = testWriter{t}
+	if err := agent.Run(); err != nil {
+		dumpLokiComposeLogs(t)
+		lokiComposeDown(t)
+		t.Fatalf("compose up agent: %v", err)
 	}
 	t.Cleanup(func() { lokiComposeDown(t) })
 }
