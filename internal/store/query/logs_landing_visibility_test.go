@@ -15,52 +15,65 @@ import (
 
 const visibilityTenant = "user-refresh-4b2e"
 
-// seedLandingAndTier writes one buffered landing window and one refreshed tier
-// segment, and returns their paths.
-func seedLandingAndTier(t *testing.T, tenantRoot, artifact string) (landingPath, tierPath string) {
+// logsFixture is one tenant holding a buffered landing window and a refreshed
+// tier segment, with the tenant root already symlink-resolved the way the
+// sandbox resolves it.
+type logsFixture struct {
+	dataDir    string
+	tenantRoot string
+	landing    string
+	tier       string
+}
+
+func seedLandingAndTier(t *testing.T, artifact string) logsFixture {
 	t.Helper()
-	landingDir := filepath.Join(tenantRoot, "logs", artifact)
-	tierDir := filepath.Join(landingDir, "tiers", "L0")
+	dataDir := t.TempDir()
+	artifactDir := filepath.Join(dataDir, visibilityTenant, "logs", artifact)
+	tierDir := filepath.Join(artifactDir, "tiers", "L0")
 	if err := os.MkdirAll(tierDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	landingPath = filepath.Join(landingDir, layout.SegmentName(time.Unix(100, 0).UTC()))
-	tierPath = filepath.Join(tierDir, layout.SegmentName(time.Unix(200, 0).UTC()))
-	testparquet.WriteLogsRawFile(t, landingPath, []testparquet.LogRow{{Message: "buffered", Format: "none"}})
-	testparquet.WriteLogsRawFile(t, tierPath, []testparquet.LogRow{{Message: "refreshed", Format: "none"}})
-	return landingPath, tierPath
+	fx := logsFixture{
+		dataDir: dataDir,
+		landing: filepath.Join(artifactDir, layout.SegmentName(time.Unix(100, 0).UTC())),
+		tier:    filepath.Join(tierDir, layout.SegmentName(time.Unix(200, 0).UTC())),
+	}
+	testparquet.WriteLogsRawFile(t, fx.landing, []testparquet.LogRow{{Message: "buffered", Format: "none"}})
+	testparquet.WriteLogsRawFile(t, fx.tier, []testparquet.LogRow{{Message: "refreshed", Format: "none"}})
+	fx.tenantRoot = absTenantRoot(t, dataDir, visibilityTenant)
+	return fx
 }
 
 func TestLogsCatalogOmitsLandingWindows(t *testing.T) {
 	InvalidateLogsMetaCache("")
-	tenantRoot := filepath.Join(t.TempDir(), visibilityTenant)
-	landingPath, tierPath := seedLandingAndTier(t, tenantRoot, "logs-raw")
+	fx := seedLandingAndTier(t, "logs-raw")
 
-	sqlText, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	sqlText, files, err := sandboxLogsRelationSQL(fx.tenantRoot, logsCatalogOpts{})
 	if err != nil {
 		t.Fatalf("sandboxLogsRelationSQL: %v", err)
 	}
 	if len(files) != 1 {
 		t.Fatalf("open set = %v, want only the tier segment", fileBases(files))
 	}
-	if files[0].Path != tierPath {
-		t.Fatalf("open set = %s, want %s", files[0].Path, tierPath)
+	if filepath.Base(files[0].Path) != filepath.Base(fx.tier) {
+		t.Fatalf("open set = %s, want %s", files[0].Path, fx.tier)
 	}
-	if strings.Contains(sqlText, filepath.Base(landingPath)) {
+	if strings.Contains(sqlText, filepath.Base(fx.landing)) {
 		t.Fatalf("relation SQL must not scan the landing buffer: %s", truncate(sqlText, 300))
 	}
 }
 
 func TestLogsCatalogEmptyWhenOnlyLandingBuffered(t *testing.T) {
 	InvalidateLogsMetaCache("")
-	tenantRoot := filepath.Join(t.TempDir(), visibilityTenant)
-	dir := filepath.Join(tenantRoot, "logs", "logs-raw")
+	dataDir := t.TempDir()
+	dir := filepath.Join(dataDir, visibilityTenant, "logs", "logs-raw")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	testparquet.WriteLogsRawFile(t, filepath.Join(dir, layout.SegmentName(time.Unix(1, 0).UTC())), []testparquet.LogRow{
 		{Message: "buffered", Format: "none"},
 	})
+	tenantRoot := absTenantRoot(t, dataDir, visibilityTenant)
 
 	sqlText, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
 	if err != nil {
@@ -76,25 +89,23 @@ func TestLogsCatalogEmptyWhenOnlyLandingBuffered(t *testing.T) {
 
 func TestLokiOpenSetOmitsLandingWindows(t *testing.T) {
 	InvalidateLogsMetaCache("")
-	tenantRoot := filepath.Join(t.TempDir(), visibilityTenant)
-	_, tierPath := seedLandingAndTier(t, tenantRoot, "logs-raw")
+	fx := seedLandingAndTier(t, "logs-raw")
 
-	_, files, err := sandboxLokiLogsSQL(tenantRoot, 0, 0, false, 0)
+	_, files, err := sandboxLokiLogsSQL(fx.tenantRoot, 0, 0, false, 0)
 	if err != nil {
 		t.Fatalf("sandboxLokiLogsSQL: %v", err)
 	}
-	if len(files) != 1 || files[0].Path != tierPath {
+	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(fx.tier) {
 		t.Fatalf("loki open set = %v, want only the tier segment", fileBases(files))
 	}
 }
 
 func TestSQLSandboxLogsViewOmitsLandingRows(t *testing.T) {
 	InvalidateLogsMetaCache("")
-	tenantRoot := filepath.Join(t.TempDir(), visibilityTenant)
-	seedLandingAndTier(t, tenantRoot, "logs-raw")
+	fx := seedLandingAndTier(t, "logs-raw")
 
 	ctx := context.Background()
-	conn, cleanup, err := prepareSandboxConn(ctx, tenantRoot, false, sandboxLimits{})
+	conn, cleanup, err := prepareSandboxConn(ctx, fx.tenantRoot, false, sandboxLimits{})
 	if err != nil {
 		t.Fatalf("prepareSandboxConn: %v", err)
 	}
@@ -123,26 +134,27 @@ func TestSQLSandboxLogsViewOmitsLandingRows(t *testing.T) {
 
 func TestLogsLandingExclusionAppliesToManifestCatalog(t *testing.T) {
 	InvalidateLogsMetaCache("")
-	dataDir := t.TempDir()
-	tenant := visibilityTenant
-	tenantRoot := absTenantRoot(t, dataDir, tenant)
-	_, tierPath := seedLandingAndTier(t, filepath.Join(dataDir, tenant), "logs-raw")
+	fx := seedLandingAndTier(t, "logs-raw")
 
 	// A synced manifest catalogs landing and tiers alike; the searchable open set
 	// still has to drop the landing entries.
-	if err := logmeta.Bump(dataDir, tenant); err != nil {
+	if err := logmeta.Bump(fx.dataDir, visibilityTenant); err != nil {
 		t.Fatal(err)
 	}
-	if err := logmeta.SyncManifest(dataDir, tenant, "logs-raw"); err != nil {
+	if err := logmeta.SyncManifest(fx.dataDir, visibilityTenant, "logs-raw"); err != nil {
 		t.Fatal(err)
 	}
-	InvalidateLogsMetaCache(tenantRoot)
+	m, err := logmeta.ReadManifest(fx.dataDir, visibilityTenant, "logs-raw")
+	if err != nil || len(m.Files) != 2 {
+		t.Fatalf("manifest = %+v err = %v, want both windows catalogued", m, err)
+	}
+	InvalidateLogsMetaCache(fx.tenantRoot)
 
-	_, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	_, files, err := sandboxLogsRelationSQL(fx.tenantRoot, logsCatalogOpts{})
 	if err != nil {
 		t.Fatalf("sandboxLogsRelationSQL: %v", err)
 	}
-	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(tierPath) {
+	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(fx.tier) {
 		t.Fatalf("manifest-backed open set = %v, want only the tier segment", fileBases(files))
 	}
 }
