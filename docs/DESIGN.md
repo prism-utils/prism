@@ -834,3 +834,45 @@ unbounded reads. The frozen `/stats` billing JSON is untouched. A `MODE=cluster`
 coordinator holds no limiter, so it does not register the route (`404`) rather
 than publish zeros an operator would misread. See [`MEMORY.md`](MEMORY.md),
 [`STORE.md`](STORE.md), and [`MIGRATION.md`](MIGRATION.md).
+
+### Prometheus USE exporter on the store (2026-08)
+
+**Decision:** prism-store serves `GET /metrics` from a **private**
+`prometheus.Registry` — never the global default, so no test or library can
+leak collectors into it — carrying the standard Go and process collectors plus
+a USE-shaped store surface: utilization and saturation as gauges (queue
+in-flight and waiting against their caps, resident tenant handles against
+`MAX_OPEN_TENANTS`, landing-file depth against `MAX_LOG_FILES`), errors as
+counters (HTTP status classes, reason-tagged queue sheds, lifecycle tick
+failures), and latency as histograms. `METRICS_ENABLED` defaults **on**,
+`METRICS_PATH` defaults `/metrics`, and `METRICS_PER_TENANT` defaults **on**
+because the product ask is per-tenant load with ALL derived as
+`sum without (tenant)`.
+
+The endpoint sits on the same listener as the health probes on every plane —
+including the `MODE=cluster` coordinator, which exports the runtime view even
+though it owns no engine or queue — and is unauthenticated. A dedicated
+metrics port is deferred; a NetworkPolicy is the gate.
+
+Two invariants keep cardinality finite. HTTP route labels come from a closed
+set supplied at wiring time and are never derived from a request path, so no
+URL can mint a series. Tenant labels are validated, capped at 256 distinct
+values, and fold into a single overflow series beyond that. File gauges are
+handed over from scans the lifecycle ticks already ran, so a scrape performs no
+disk I/O and its cost does not grow with the data directory.
+
+**References:** client_golang registry + Go/process collectors —
+https://prometheus.io/docs/guides/go-application/ ; the USE method (utilization
+/ saturation / errors) — https://www.brendangregg.com/usemethod.html ; metric
+and label naming, including cardinality guidance —
+https://prometheus.io/docs/practices/naming/ .
+
+**Consequences:** `github.com/prometheus/client_golang` becomes a direct
+dependency of `internal/store` only; it is pure Go, so the `CGO_ENABLED=0`
+agent build is unaffected. The frozen `/stats` billing JSON and the
+`/admin/queue` snapshot are unchanged — the exporter is additive, and
+`/admin/queue` remains the authenticated, tenant-free JSON a UI already calls.
+Turning the exporter off registers no collectors at all, so the cost of running
+without it is zero. Homelab scrape wiring, alert rules, and `/admin/resources`
+charts are a sibling task. See [`STORE.md`](STORE.md) and
+[`CONFIG.md`](CONFIG.md) §14.
