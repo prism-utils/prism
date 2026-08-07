@@ -57,6 +57,8 @@ Two production bugs. **(A)** After log tier merges, Grafana/Loki show every row 
   - ref: https://ganeshvernekar.com/blog/prometheus-tsdb-compaction-and-retention/ — Prometheus TSDB compaction N-way merges samples while preserving original sample timestamps.
   - perf: No-op if already correct (`ExecuteMerge` already `ORDER BY ts` / `SELECT *`).
   - product: Same invariant as logs: compaction must not rewrite sample time.
+  - **Audit (implementation):** `ExecuteMerge` is `SELECT * FROM (UNION ALL …) ORDER BY ts` — per-row `ts` and `timestamp_ms` are preserved; nothing stamps from the segment filename or merge wall-clock. Covered by `TestExecuteMergePreservesPerRowTimestamps`. No metrics code change.
+  - **Audit result (2026-08-07):** `TestExecuteMergePreservesPerRowTimestamps` confirms metrics merge keeps per-row `ts` (not merge wall-clock / filename). No code change.
 
 - ModeTail SeekEnd on start (not SeekStart); durable offsets deferred:
   - ref: https://www.elastic.co/docs/reference/beats/filebeat/filebeat-input-log — Filebeat `tail_files: true` starts at end for files never seen; production shipping avoids re-indexing entire history on first/restart without registry. Durable registry is best long-term, but SeekEnd is the critical fix when no checkpoint exists (current state).
@@ -65,14 +67,14 @@ Two production bugs. **(A)** After log tier merges, Grafana/Loki show every row 
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] Log merge projects per-source ingest ns onto rows as `__prism_ts_ns` (coalesce if already present; careful EXCLUDE so UNION schemas stay clean)
-- [ ] Merged log segment filename uses **min source MinTs**, not wall-clock `now`
-- [ ] Loki/`buildLogsRelationSQL` (and mixed path): prefer `__prism_ts_ns` column when present; filename JOIN only for legacy files lacking the column
-- [ ] Metrics merge/PromQL audit documented in Decision Log (and fixed if any path stamps from filename or overwrites `ts`)
-- [ ] ModeTail uses `io.SeekEnd`; tests assert seek-end behavior (and that SeekStart is not used for ModeTail)
-- [ ] OUTPUT_CONTRACT.md + STORE.md + Loki-related comments: one clear sentence that storage ingest-time at land/merge is allowed/required; parsers still must not emit event timestamps
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` because I/O/encoding/wiring touched)
+- [x] Log merge projects per-source ingest ns onto rows as `__prism_ts_ns` (coalesce if already present; careful EXCLUDE so UNION schemas stay clean)
+- [x] Merged log segment filename uses **min source MinTs**, not wall-clock `now`
+- [x] Loki/`buildLogsRelationSQL` (and mixed path): prefer `__prism_ts_ns` column when present; filename JOIN only for legacy files lacking the column
+- [x] Metrics merge/PromQL audit documented in Decision Log (and fixed if any path stamps from filename or overwrites `ts`)
+- [x] ModeTail uses `io.SeekEnd`; tests assert seek-end behavior (and that SeekStart is not used for ModeTail)
+- [x] OUTPUT_CONTRACT.md + STORE.md + Loki-related comments: one clear sentence that storage ingest-time at land/merge is allowed/required; parsers still must not emit event timestamps
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` because I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 

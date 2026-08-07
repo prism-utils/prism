@@ -15,6 +15,10 @@ import (
 
 const logLandingTier = -1
 
+// logIngestTSColumn is the per-row storage ingest-time axis (nanoseconds) written
+// at land/merge so compaction does not collapse charts to merge wall-clock.
+const logIngestTSColumn = "__prism_ts_ns"
+
 // LogMergeAction merges log Sources into DestTier under Artifact.
 type LogMergeAction struct {
 	Artifact string
@@ -193,6 +197,9 @@ func (p *Planner) packUnsealedLogs(segs []Segment) ([]Segment, bool) {
 }
 
 // ExecuteLogMerge compacts sources into logs/<artifact>/tiers/L{DestTier}/ via union_by_name.
+// Per-source rows are stamped with __prism_ts_ns (ingest window ns). The output
+// filename uses min source MinTs so legacy filename consumers stay near truth;
+// now is only a fallback when bounds are unset.
 func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now time.Time) (Segment, error) {
 	if len(action.Sources) == 0 {
 		return Segment{}, fmt.Errorf("log merge: no sources")
@@ -201,7 +208,12 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		return Segment{}, err
 	}
-	final := filepath.Join(destDir, layout.SegmentNameFormat(now, x.cfg.SegmentFormat.Ext()))
+	minTs, maxTs := mergedLogBounds(action.Sources)
+	nameTs := minTs
+	if nameTs.IsZero() {
+		nameTs = now
+	}
+	final := filepath.Join(destDir, layout.SegmentNameFormat(nameTs, x.cfg.SegmentFormat.Ext()))
 	tmp := final + ".tmp"
 
 	fromParts, cleanup, err := x.sourcesSelectSQLLogs(action.Sources)
@@ -210,32 +222,12 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 	}
 	defer cleanup()
 
-	// Prefer list read_parquet when every source is parquet (schema-flexible);
-	// otherwise UNION ALL BY NAME across mixed parquet/duckdb selects.
-	var selectSQL string
-	allParquet := true
-	for _, s := range action.Sources {
-		if segformat.IsDuckDB(s.Path) {
-			allParquet = false
-			break
-		}
+	// Per-source arms project __prism_ts_ns (ingest ns); bulk list read cannot.
+	union := fromParts[0]
+	for _, p := range fromParts[1:] {
+		union += " UNION ALL BY NAME " + p
 	}
-	if allParquet {
-		quoted := make([]string, len(action.Sources))
-		for i, s := range action.Sources {
-			quoted[i] = "'" + strings.ReplaceAll(layout.ToSlash(s.Path), "'", "''") + "'"
-		}
-		selectSQL = fmt.Sprintf(
-			"SELECT * FROM read_parquet([%s], union_by_name=true)",
-			strings.Join(quoted, ", "),
-		)
-	} else {
-		union := fromParts[0]
-		for _, p := range fromParts[1:] {
-			union += " UNION ALL BY NAME " + p
-		}
-		selectSQL = fmt.Sprintf("SELECT * FROM (%s)", union)
-	}
+	selectSQL := fmt.Sprintf("SELECT * FROM (%s)", union)
 
 	switch x.cfg.SegmentFormat {
 	case segformat.DuckDB:
@@ -263,7 +255,6 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 		_ = os.Remove(final)
 		return Segment{}, err
 	}
-	minTs, maxTs := mergedLogBounds(action.Sources)
 	seg := Segment{
 		Tier:  action.DestTier,
 		Path:  final,

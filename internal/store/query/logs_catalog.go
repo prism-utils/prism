@@ -15,13 +15,14 @@ import (
 
 // logFileMeta is one landed or compacted log segment the planners may open.
 type logFileMeta struct {
-	Path      string
-	Artifact  string
-	Bytes     int64
-	MinTsNs   int64
-	MaxTsNs   int64
-	Mtime     time.Time
-	duckAlias string // set after sandbox ATTACH for .duckdb segments
+	Path        string
+	Artifact    string
+	Bytes       int64
+	MinTsNs     int64
+	MaxTsNs     int64
+	Mtime       time.Time
+	HasIngestTS bool   // file already carries per-row __prism_ts_ns
+	duckAlias   string // set after sandbox ATTACH for .duckdb segments
 }
 
 // logsCatalogOpts controls how the shared logs relation is built.
@@ -29,7 +30,8 @@ type logsCatalogOpts struct {
 	// StartNs/EndNs, when EndNs > StartNs, keep only files overlapping [Start,End).
 	StartNs int64
 	EndNs   int64
-	// WithIngestTS adds __prism_ts_ns (Loki time axis) via a path→ts map JOIN.
+	// WithIngestTS adds __prism_ts_ns (Loki time axis). Prefers a per-row column
+	// when present; falls back to a path→ts filename JOIN for legacy files.
 	WithIngestTS bool
 	// OmitMessage drops the message column from the relation (label APIs).
 	OmitMessage bool
@@ -205,12 +207,13 @@ func manifestToLogFiles(absTenantRoot, dataDir, tenant, artifact string, m logme
 			minNs, maxNs = logFileTimeBounds(abs, fi.ModTime())
 		}
 		out = append(out, logFileMeta{
-			Path:     abs,
-			Artifact: artifact,
-			Bytes:    f.Bytes,
-			MinTsNs:  minNs,
-			MaxTsNs:  maxNs,
-			Mtime:    fi.ModTime().UTC(),
+			Path:        abs,
+			Artifact:    artifact,
+			Bytes:       f.Bytes,
+			MinTsNs:     minNs,
+			MaxTsNs:     maxNs,
+			Mtime:       fi.ModTime().UTC(),
+			HasIngestTS: logSegmentHasIngestTS(abs),
 		})
 	}
 	return out, true
@@ -250,12 +253,13 @@ func listParquetInDir(absTenantRoot, dir, artifact string) ([]logFileMeta, error
 		}
 		minNs, maxNs := logFileTimeBounds(match, fi.ModTime())
 		out = append(out, logFileMeta{
-			Path:     match,
-			Artifact: artifact,
-			Bytes:    fi.Size(),
-			MinTsNs:  minNs,
-			MaxTsNs:  maxNs,
-			Mtime:    fi.ModTime().UTC(),
+			Path:        match,
+			Artifact:    artifact,
+			Bytes:       fi.Size(),
+			MinTsNs:     minNs,
+			MaxTsNs:     maxNs,
+			Mtime:       fi.ModTime().UTC(),
+			HasIngestTS: logSegmentHasIngestTS(match),
 		})
 	}
 	return out, nil
@@ -300,7 +304,7 @@ func filterLogFiles(files []logFileMeta, opts logsCatalogOpts) []logFileMeta {
 }
 
 // buildLogsRelationSQL builds the shared logs relation body over the given files.
-// Depth is O(1) in file count (one read_parquet list), matching /sql.
+// Depth is O(1) in file count (one read_parquet list per ingest-ts group), matching /sql.
 func buildLogsRelationSQL(files []logFileMeta, opts logsCatalogOpts) string {
 	if len(files) == 0 {
 		if opts.WithIngestTS {
@@ -308,30 +312,78 @@ func buildLogsRelationSQL(files []logFileMeta, opts logsCatalogOpts) string {
 		}
 		return emptyLogsViewSQL
 	}
+	if !opts.WithIngestTS {
+		quoted := make([]string, len(files))
+		for i, f := range files {
+			quoted[i] = "'" + escapeSQLLiteral(layout.ToSlash(f.Path)) + "'"
+		}
+		base := fmt.Sprintf("read_parquet([%s], union_by_name=true, filename=true)", strings.Join(quoted, ", "))
+		inner := fmt.Sprintf(`SELECT * EXCLUDE (filename) FROM (SELECT * FROM %s)`, base)
+		if opts.OmitMessage {
+			return fmt.Sprintf(`SELECT * EXCLUDE (%s) FROM (%s)`, lokiMessageColumn, inner)
+		}
+		return inner
+	}
+
+	var withCol, legacy []logFileMeta
+	for _, f := range files {
+		if f.HasIngestTS {
+			withCol = append(withCol, f)
+		} else {
+			legacy = append(legacy, f)
+		}
+	}
+	var parts []string
+	if len(withCol) > 0 {
+		parts = append(parts, buildLogsIngestTSColumnSQL(withCol, opts.OmitMessage))
+	}
+	if len(legacy) > 0 {
+		parts = append(parts, buildLogsIngestTSFilenameSQL(legacy, opts.OmitMessage))
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts, " UNION ALL BY NAME ")
+}
+
+// buildLogsIngestTSColumnSQL projects the per-row __prism_ts_ns already stored in files.
+func buildLogsIngestTSColumnSQL(files []logFileMeta, omitMessage bool) string {
+	quoted := make([]string, len(files))
+	for i, f := range files {
+		quoted[i] = "'" + escapeSQLLiteral(layout.ToSlash(f.Path)) + "'"
+	}
+	base := fmt.Sprintf("read_parquet([%s], union_by_name=true)", strings.Join(quoted, ", "))
+	// Name the column explicitly so planners and tests see the Loki time axis in SQL
+	// (SELECT * alone would carry it silently from the parquet schema).
+	inner := fmt.Sprintf(
+		`SELECT t.* EXCLUDE (%s), t.%s AS %s FROM %s AS t`,
+		lokiTSColumn, lokiTSColumn, lokiTSColumn, base,
+	)
+	if omitMessage {
+		return fmt.Sprintf(`SELECT * EXCLUDE (%s) FROM (%s)`, lokiMessageColumn, inner)
+	}
+	return inner
+}
+
+// buildLogsIngestTSFilenameSQL stamps __prism_ts_ns from each file's window id (legacy).
+func buildLogsIngestTSFilenameSQL(files []logFileMeta, omitMessage bool) string {
 	quoted := make([]string, len(files))
 	for i, f := range files {
 		quoted[i] = "'" + escapeSQLLiteral(layout.ToSlash(f.Path)) + "'"
 	}
 	base := fmt.Sprintf("read_parquet([%s], union_by_name=true, filename=true)", strings.Join(quoted, ", "))
 	inner := "SELECT * FROM " + base
-	if opts.WithIngestTS {
-		values := make([]string, len(files))
-		for i, f := range files {
-			values[i] = fmt.Sprintf("('%s', %d::BIGINT)",
-				escapeSQLLiteral(layout.ToSlash(f.Path)), f.MinTsNs)
-		}
-		inner = fmt.Sprintf(
-			`SELECT l.* EXCLUDE (filename), v.ts AS %s FROM (%s) AS l JOIN (VALUES %s) AS v(path, ts) ON l.filename = v.path`,
-			lokiTSColumn, inner, strings.Join(values, ", "),
-		)
-	} else {
-		inner = fmt.Sprintf(`SELECT * EXCLUDE (filename) FROM (%s)`, inner)
+	values := make([]string, len(files))
+	for i, f := range files {
+		values[i] = fmt.Sprintf("('%s', %d::BIGINT)",
+			escapeSQLLiteral(layout.ToSlash(f.Path)), f.MinTsNs)
 	}
-	if opts.OmitMessage {
-		return fmt.Sprintf(
-			`SELECT * EXCLUDE (%s) FROM (%s)`,
-			lokiMessageColumn, inner,
-		)
+	inner = fmt.Sprintf(
+		`SELECT l.* EXCLUDE (filename), v.ts AS %s FROM (%s) AS l JOIN (VALUES %s) AS v(path, ts) ON l.filename = v.path`,
+		lokiTSColumn, inner, strings.Join(values, ", "),
+	)
+	if omitMessage {
+		return fmt.Sprintf(`SELECT * EXCLUDE (%s) FROM (%s)`, lokiMessageColumn, inner)
 	}
 	return inner
 }

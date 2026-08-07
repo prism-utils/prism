@@ -59,13 +59,10 @@ pipelines:
 func TestE2E_LoggingThreePhaseParquet(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "app.log")
-	lines := []string{
-		`user 1 logged in from 10.0.0.1`,
-		`user 2 logged in from 10.0.0.2`,
-		`user 3 request failed code 500`,
-	}
-	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		t.Fatalf("write log: %v", err)
+	// Create the file before Start; ModeTail seeks to EOF so pre-existing
+	// content is not re-shipped (append below after the pipeline is running).
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatalf("create log: %v", err)
 	}
 
 	out := filepath.Join(dir, "out")
@@ -89,6 +86,28 @@ func TestE2E_LoggingThreePhaseParquet(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- set.Run(ctx, obs.NewHost(logger)) }()
+
+	// Give the tailer a moment to open at EOF before appending.
+	time.Sleep(200 * time.Millisecond)
+	lines := []string{
+		`user 1 logged in from 10.0.0.1`,
+		`user 2 logged in from 10.0.0.2`,
+		`user 3 request failed code 500`,
+	}
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test-owned path
+	if err != nil {
+		cancel()
+		t.Fatalf("open log: %v", err)
+	}
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		_ = f.Close()
+		cancel()
+		t.Fatalf("append log: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		cancel()
+		t.Fatalf("close log: %v", err)
+	}
 
 	rawDir := filepath.Join(out, "logs", "raw")
 	tmplDir := filepath.Join(out, "logs", "template")

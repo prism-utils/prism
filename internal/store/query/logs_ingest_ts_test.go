@@ -44,9 +44,6 @@ func TestBuildLogsRelationSQLPrefersIngestTSColumn(t *testing.T) {
 	if strings.Contains(sqlText, "AS v(path, ts)") {
 		t.Fatalf("expected column path (no filename VALUES JOIN), got: %s", truncate(sqlText, 400))
 	}
-	if !strings.Contains(sqlText, lokiTSColumn) {
-		t.Fatalf("expected %s in SQL, got: %s", lokiTSColumn, truncate(sqlText, 400))
-	}
 
 	got := evalLokiIngestTS(t, sqlText)
 	if got["col-row"] != rowTS {

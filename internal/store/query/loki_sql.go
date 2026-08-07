@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// lokiTSColumn is the synthetic ingest-time column projected onto every log row.
-// The prism output contract forbids event timestamps inside a logs Parquet, so a
-// window's landing time is the only honest time axis, broadcast to every row
-// that file holds (from window id or mtime).
+// lokiTSColumn is the ingest-time column on every Loki log row (nanoseconds).
+// Parsers must not emit event timestamps; storage stamps ingest time at land/merge
+// so charts stay honest after compaction. Prefer a per-row column already present
+// in the file; fall back to the segment filename window id for legacy files.
 const lokiTSColumn = "__prism_ts_ns"
 
 // lokiLineColumns are the columns that can carry the log line text, in the order

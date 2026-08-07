@@ -13,7 +13,12 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	// nxadm/tail starts a process-wide fsnotify/inotify tracker that outlives tests.
+	goleak.VerifyTestMain(m,
+		goleak.IgnoreAnyFunction("github.com/nxadm/tail/watch.(*InotifyTracker).run"),
+		goleak.IgnoreAnyFunction("github.com/fsnotify/fsnotify.(*kqueue).readEvents"),
+		goleak.IgnoreAnyFunction("github.com/fsnotify/fsnotify.(*kqueue).read"),
+	)
 }
 
 func TestModeTailSeekInfoUsesSeekEnd(t *testing.T) {

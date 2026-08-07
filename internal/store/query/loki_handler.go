@@ -300,6 +300,10 @@ func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimit
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
+	if err := annotateDuckLogIngestTS(ctx, conn, files); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
 	opts := logsCatalogOpts{
 		StartNs: startNs, EndNs: endNs, WithIngestTS: true, OmitMessage: omitMessage,
 	}

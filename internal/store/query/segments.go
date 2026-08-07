@@ -157,6 +157,17 @@ func attachLogsDuckDB(ctx context.Context, conn *sql.Conn, files []logFileMeta) 
 			return fmt.Errorf("attach logs %s: %w", f.Path, err)
 		}
 		files[i].duckAlias = alias
+		rel := segformat.LogsRelationForPath(f.Path)
+		//nolint:gosec // G201: alias/rel are server-assigned; path already tenant-validated.
+		desc := fmt.Sprintf(
+			`SELECT COUNT(*) > 0 FROM (DESCRIBE SELECT * FROM %s.%s) WHERE column_name = '%s'`,
+			alias, rel, lokiTSColumn,
+		)
+		var has bool
+		if err := conn.QueryRowContext(ctx, desc).Scan(&has); err != nil {
+			return fmt.Errorf("describe logs %s: %w", f.Path, err)
+		}
+		files[i].HasIngestTS = has
 	}
 	return nil
 }
@@ -180,29 +191,7 @@ func buildLogsRelationSQLMixed(files []logFileMeta, opts logsCatalogOpts) (strin
 
 	var parts []string
 	if len(parquet) > 0 {
-		quoted := make([]string, len(parquet))
-		for i, f := range parquet {
-			quoted[i] = "'" + escapeSQLLiteral(layout.ToSlash(f.Path)) + "'"
-		}
-		base := fmt.Sprintf("read_parquet([%s], union_by_name=true, filename=true)", strings.Join(quoted, ", "))
-		inner := "SELECT * FROM " + base
-		if opts.WithIngestTS {
-			values := make([]string, len(parquet))
-			for i, f := range parquet {
-				values[i] = fmt.Sprintf("('%s', %d::BIGINT)",
-					escapeSQLLiteral(layout.ToSlash(f.Path)), f.MinTsNs)
-			}
-			inner = fmt.Sprintf(
-				`SELECT l.* EXCLUDE (filename), v.ts AS %s FROM (%s) AS l JOIN (VALUES %s) AS v(path, ts) ON l.filename = v.path`,
-				lokiTSColumn, inner, strings.Join(values, ", "),
-			)
-		} else {
-			inner = fmt.Sprintf(`SELECT * EXCLUDE (filename) FROM (%s)`, inner)
-		}
-		if opts.OmitMessage {
-			inner = fmt.Sprintf(`SELECT * EXCLUDE (%s) FROM (%s)`, lokiMessageColumn, inner)
-		}
-		parts = append(parts, inner)
+		parts = append(parts, buildLogsRelationSQL(parquet, opts))
 	}
 	for _, f := range duck {
 		alias := f.duckAlias
@@ -212,10 +201,17 @@ func buildLogsRelationSQLMixed(files []logFileMeta, opts logsCatalogOpts) (strin
 		rel := segformat.LogsRelationForPath(f.Path)
 		sel := fmt.Sprintf("SELECT * FROM %s.%s", alias, rel)
 		if opts.WithIngestTS {
-			sel = fmt.Sprintf(
-				`SELECT *, %d::BIGINT AS %s FROM %s.%s`,
-				f.MinTsNs, lokiTSColumn, alias, rel,
-			)
+			if f.HasIngestTS {
+				sel = fmt.Sprintf(
+					`SELECT s.* EXCLUDE (%s), COALESCE(s.%s, %d::BIGINT) AS %s FROM %s.%s AS s`,
+					lokiTSColumn, lokiTSColumn, f.MinTsNs, lokiTSColumn, alias, rel,
+				)
+			} else {
+				sel = fmt.Sprintf(
+					`SELECT *, %d::BIGINT AS %s FROM %s.%s`,
+					f.MinTsNs, lokiTSColumn, alias, rel,
+				)
+			}
 		}
 		if opts.OmitMessage {
 			sel = fmt.Sprintf(`SELECT * EXCLUDE (%s) FROM (%s)`, lokiMessageColumn, sel)
