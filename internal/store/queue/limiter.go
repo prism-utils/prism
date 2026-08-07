@@ -8,12 +8,44 @@ import (
 
 const tooManyBody = "too many concurrent queries"
 
+// RejectReason names why a request was shed. The set is closed so a metric
+// label built from it stays bounded no matter how much load arrives.
+type RejectReason string
+
+const (
+	// RejectQueueFull is a shed that never waited: the wait queue was already at
+	// MaxQueue when the request arrived.
+	RejectQueueFull RejectReason = "queue_full"
+	// RejectWaitTimeout is a shed after waiting the configured Wait without a
+	// slot coming free.
+	RejectWaitTimeout RejectReason = "wait_timeout"
+	// RejectClientCanceled is a shed because the caller went away while queued;
+	// the slot was never held, so it is backpressure, not a server fault.
+	RejectClientCanceled RejectReason = "client_canceled"
+)
+
+// Observer receives one outcome per gated request: the time spent queueing for
+// a slot, plus the reason when the request was shed instead of admitted.
+// Implementations are called on the request path and must not block.
+type Observer interface {
+	ObserveAdmitted(wait time.Duration)
+	ObserveRejected(reason RejectReason, wait time.Duration)
+}
+
+// nopObserver keeps the admission path branch-free when nobody is watching.
+type nopObserver struct{}
+
+func (nopObserver) ObserveAdmitted(time.Duration)               {}
+func (nopObserver) ObserveRejected(RejectReason, time.Duration) {}
+
 // LimiterConfig holds in-flight queue parameters for POST /sql.
 type LimiterConfig struct {
 	Enabled     bool
 	MaxInFlight int
 	MaxQueue    int
 	Wait        time.Duration
+	// Observer, when set, receives every admission and shed outcome.
+	Observer Observer
 }
 
 // Limiter bounds concurrent /sql handler executions with a bounded wait queue.
@@ -23,6 +55,7 @@ type Limiter struct {
 	MaxQueue    int
 	Wait        time.Duration
 
+	obs           Observer
 	sem           chan struct{}
 	waiters       atomic.Int64
 	rejectedTotal atomic.Int64
@@ -64,13 +97,27 @@ func NewLimiter(cfg LimiterConfig) *Limiter {
 	if maxInFlight <= 0 {
 		maxInFlight = 1
 	}
+	obs := cfg.Observer
+	if obs == nil {
+		obs = nopObserver{}
+	}
 	return &Limiter{
 		Enabled:     cfg.Enabled,
 		MaxInFlight: maxInFlight,
 		MaxQueue:    cfg.MaxQueue,
 		Wait:        cfg.Wait,
+		obs:         obs,
 		sem:         make(chan struct{}, maxInFlight),
 	}
+}
+
+// observer returns the configured observer, tolerating a Limiter built as a
+// bare struct literal rather than through the constructor.
+func (l *Limiter) observer() Observer {
+	if l.obs == nil {
+		return nopObserver{}
+	}
+	return l.obs
 }
 
 // Middleware gates next when Enabled; otherwise it is a transparent passthrough.
@@ -79,8 +126,10 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		obs := l.observer()
 		select {
 		case l.sem <- struct{}{}:
+			obs.ObserveAdmitted(0)
 			defer func() { <-l.sem }()
 			next.ServeHTTP(w, r)
 			return
@@ -88,7 +137,7 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 		}
 
 		if !l.enterWaitQueue() {
-			l.rejectTooMany(w)
+			l.rejectTooMany(w, RejectQueueFull, 0)
 			return
 		}
 		// Guarantee the waiter count is decremented exactly once even if a later
@@ -96,17 +145,19 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 		releaseWaiter := releaseOnce(l)
 		defer releaseWaiter()
 
+		queuedAt := time.Now()
 		timer := time.NewTimer(l.Wait)
 		defer timer.Stop()
 
 		select {
 		case l.sem <- struct{}{}:
 			releaseWaiter()
+			obs.ObserveAdmitted(time.Since(queuedAt))
 			defer func() { <-l.sem }()
 			next.ServeHTTP(w, r)
 		case <-timer.C:
 			releaseWaiter()
-			l.rejectTooMany(w)
+			l.rejectTooMany(w, RejectWaitTimeout, time.Since(queuedAt))
 		case <-r.Context().Done():
 			releaseWaiter()
 			if !timer.Stop() {
@@ -115,7 +166,7 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 				default:
 				}
 			}
-			l.rejectTooMany(w)
+			l.rejectTooMany(w, RejectClientCanceled, time.Since(queuedAt))
 		}
 	})
 }
@@ -150,9 +201,11 @@ func releaseOnce(l *Limiter) func() {
 }
 
 // rejectTooMany sheds one request and counts it, so every shed path — full wait
-// queue, expired wait, cancelled client — is visible in a single total.
-func (l *Limiter) rejectTooMany(w http.ResponseWriter) {
+// queue, expired wait, cancelled client — is visible in a single total and,
+// separately, attributed to the reason it happened.
+func (l *Limiter) rejectTooMany(w http.ResponseWriter, reason RejectReason, waited time.Duration) {
 	l.rejectedTotal.Add(1)
+	l.observer().ObserveRejected(reason, waited)
 	w.Header().Set("Retry-After", "1")
 	http.Error(w, tooManyBody, http.StatusTooManyRequests)
 }

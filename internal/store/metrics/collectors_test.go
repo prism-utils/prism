@@ -19,8 +19,8 @@ type fakeEngine struct {
 	openCall int
 }
 
-func (f *fakeEngine) OpenTenants() int          { f.openCall++; return f.open }
-func (f *fakeEngine) MaxOpenTenants() int       { return f.max }
+func (f *fakeEngine) OpenTenants() int           { f.openCall++; return f.open }
+func (f *fakeEngine) MaxOpenTenants() int        { return f.max }
 func (f *fakeEngine) EvictedTenantsTotal() int64 { return f.evicted }
 
 func TestQueueGaugesReportLimiterCaps(t *testing.T) {
