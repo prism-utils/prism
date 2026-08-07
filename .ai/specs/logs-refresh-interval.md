@@ -93,10 +93,12 @@ the released image and verifies admin logging + Grafana.
 - [x] Count trigger (`SEGMENTS_PER_TIER`) still refreshes immediately when enough
       live files accumulate.
 - [x] Loki + `/sql` logs relation **omit landing**; only tier segments are scanned
-      (landing excluded by design). — the label index now describes the same
-      searchable set: it is built from tier entries only, a land contributes no
+      (landing excluded by design). — the label index no longer leaks the buffer
+      either: it is built from parquet tier entries only, a land contributes no
       values (it just carries the index stamp across its generation bump), and a
-      refresh folds its output in.
+      refresh folds its output in. Duckdb tier segments stay queryable but are
+      not indexed — a pre-existing gap, narrowed in STORE.md rather than fixed
+      here.
 - [x] `TickMerge` can apply multiple landing refreshes per artifact per tick
       (`LOGS_REFRESH_MAX_ACTIONS`, default 8).
 - [x] `TickFlush` calls `FlushLogCoalesce` when coalesce is configured.
@@ -109,7 +111,7 @@ the released image and verifies admin logging + Grafana.
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
 - [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
 - [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
 - [ ] Full docs/REVIEW.md checklist passes
@@ -164,8 +166,8 @@ are covered; chart values, statefulset env, and the golden fixture agree on
 
 ### Developer response — review 1
 
-Took the first option: the label index now describes the searchable set, so the
-STORE.md sentence stands as written.
+Took the first option: the label index no longer offers landing-buffer values,
+so the STORE.md sentence about landing stands as written.
 
 - `EnsureLabelIndex` indexes tier entries only, so a rebuild can no longer pick
   up a buffered window.
@@ -181,3 +183,93 @@ STORE.md sentence stands as written.
 - STORE.md now says outright that the index is built from tier segments only.
 
 The two non-blocking observations are left as-is.
+
+### Review 2 — CHANGES_REQUESTED
+
+Re-review scoped to the review-1 blocker plus a regression check on the refresh
+acceptance. **The landing leak is genuinely fixed.** One doc clause added by the
+fix is untrue in a supported config, which is the only thing still blocking; no
+code change is requested.
+
+**Verified green (re-run by the reviewer, `-count=1` again):** `make lint test`
+(`golangci-lint`: 0 issues; race unit suite: all packages ok, 60s) and
+`make full-tests GOFLAGS=-count=1` (lint + race unit + docker integration + e2e,
+168s, `full-tests: OK`).
+
+**TDD contract holds for the fix.** `test:` (5ccbb57) precedes `fix:` (0ea7e13),
+Conventional Commit subjects with the right scopes.
+
+**Focus 1 — landing-only values are gone from the label API: RESOLVED.** Checked
+out the pre-fix commit in a scratch worktree, copied the three new tests onto it,
+and all three fail there with exactly the leak review 1 described — `logmeta`
+returns `[buffered-format refreshed-format]`, the land path returns
+`[buffered-format]`, and the HTTP `label/format/values` returns
+`[buffered-format refreshed-format]`. All three pass at the fix commit. Also
+exercised the real path end to end (`LandLogWindow` → `TickMerge` with a parquet
+refresh): the label API offers nothing while the window is buffered and offers
+`buffered-format` once the refresh opens it. The landing/tier split the filter
+relies on is exact — the manifest records landing windows as bare file names and
+tier segments under a `tiers/L<n>/` prefix, and only the latter is indexed.
+
+Also probed the new carry guard directly: with the index deliberately left stale,
+a land does not stamp it current, and the next label query still rebuilds and
+picks up the tier value that was added while it was stale — the behavior its doc
+comment claims. Non-blocking: that branch has no test of its own, and it is the
+thing standing between a land and a permanently frozen stale index, so it is
+worth one (TESTING.md §5 wants a failure path per unit).
+
+**Focus 2 — STORE.md wording: BLOCKING (gate 3).** The delivered sentence says
+the index "is built from tier segments only, the same set `query_range` scans".
+The first half is true and the practical promise ("never offers a value that has
+not been refreshed yet") holds. The middle clause does not: under
+`MERGE_SEGMENT_FORMAT=duckdb` the refresh writes `tiers/L0/<id>.duckdb`, the
+manifest catalogs it as searchable, and both index feeds skip it — the fold
+fails soft on a non-parquet segment and the rebuild skips non-`.parquet`
+entries. Reproduced at the fix commit: the refreshed segment is in the
+searchable catalog while `label/<name>/values` yields `[]` for
+`format`/`template`/`stream`/`job`. That config is supported, has a
+format-matrix e2e, and this same branch is what taught the catalog to open those
+segments (29aa184), so the section contradicts itself: it tells the reader a
+duckdb refresh "is catalogued and searchable too" a few paragraphs above.
+
+To be clear about blame: **this behavior gap is pre-existing.** The identical
+probe run against the pre-fix commit gives the identical result, because a merge
+always bumps the generation and the rebuild has always been parquet-only. The
+fix neither caused nor worsened it. What is new is a doc claim that papers over
+it, and REVIEW.md is explicit that a PR which makes one of these docs wrong must
+change the doc in the same PR. Ask: narrow the clause (say the index covers
+parquet tier segments, not "the same set `query_range` scans") and note the
+duckdb limitation where the section already discusses duckdb refresh output. The
+annotation on acceptance item 3 carries the same over-claim and should be
+narrowed with it. One doc edit; the code stands.
+
+**Focus 3 — prior refresh acceptance still green.** Age trigger, count trigger,
+bounded drain, drain cap, coalesce flush on `TickFlush`, and the chart/env/golden
+fixtures all pass in both re-runs. Reviewed the two new commits for refresh
+impact: `finishLogLand` now reads the generation before the bump and carries the
+stamp instead of folding the landed file, so it no longer needs that path, and
+both callers (direct land and the coalesce seal) still route through it — the
+`.pending` seal behavior is unchanged. The logs merge loop gained one index fold
+after `Bump`/`SyncManifest`; it propagates its error the same way the two calls
+beside it do, so a failure abandons the rest of that tenant's actions for the
+tick, consistent with the loop's existing policy. No planner arm, action budget,
+or ordering changed. On the new stamp's races: a land that loses the race to a
+refresh sees a generation that no longer matches and no-ops, leaving the index
+stale for the next query to rebuild.
+
+**Carried forward:** review 1's two non-blocking observations
+(`LOGS_REFRESH_INTERVAL=0` letting landing age out unsearchable, and
+`envIntAllowZero` swallowing typos) are still open by choice, which is fine.
+
+### Developer response — review 2
+
+Docs only, no code touched. STORE.md now says the index is fed by **parquet**
+tier segments and states the duckdb consequence in the same paragraph: those
+segments stay queryable through `query_range` and `/sql`, which `ATTACH` them,
+but their label values can be missing from `label/<name>/values` until a
+duckdb-aware index path exists. The annotation on acceptance item 3 was narrowed
+the same way — it no longer claims the index and the relation cover the same
+set, and it records the duckdb gap as pre-existing.
+
+The non-blocking suggestion of a test for the stale-index carry branch is noted
+and left for a follow-up, since this round is docs-only.

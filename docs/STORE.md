@@ -953,10 +953,14 @@ buffer is, and neither Loki nor `/sql` opens landing files.
 Planners **time-prune** the open set using the window id in
 `<unix_ns>-*.parquet` (else mtime) before opening Parquet. Label APIs omit the
 `message` column and prefer an in-process cardinality index for
-`format`/`template`/`stream`/`job`. That index is built from tier segments
-only, the same set `query_range` scans, so the label dropdown never offers a
-value that has not been refreshed yet; a landing window contributes its values
-when a refresh opens it. Optional knobs: `MAX_LOG_FILES`,
+`format`/`template`/`stream`/`job`. That index is built from **parquet** tier
+segments, so the label dropdown never offers a value that has not been
+refreshed yet; a landing window contributes its values when a refresh opens it.
+It reads parquet schemas, so a tier segment written under
+`MERGE_SEGMENT_FORMAT=duckdb` contributes nothing: `query_range` and `/sql`
+still return its rows (they `ATTACH` the segment), but its label values may be
+missing from `label/<name>/values` until a duckdb-aware index path exists.
+Optional knobs: `MAX_LOG_FILES`,
 `LOG_COALESCE_MAX_*` (buffered lands sealed on the flush tick),
 `LOGS_RECENT_LOOKBACK_HOURS`, `QUERY_DUCKDB_THREADS`
 (see [`CONFIG.md`](CONFIG.md)).
