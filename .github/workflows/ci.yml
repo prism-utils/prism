@@ -57,6 +57,7 @@ jobs:
           helm template test deploy/charts/prism-store >/dev/null
           helm template test deploy/charts/prism-store --set networkPolicy.enabled=true >/dev/null
           helm template test deploy/charts/prism-store --set env.adminListenAddr=":9090" >/dev/null
+          helm template test deploy/charts/prism-store --set metrics.serviceMonitor.enabled=true >/dev/null
           helm template test deploy/charts/prism-alert >/dev/null
           helm template test deploy/charts/prism-alert --set networkPolicy.enabled=true >/dev/null
           helm template test deploy/charts/prism-alert --set secrets.existingSecret=alert-secrets --set secrets.storeTokenSecretKey=reader-jwt >/dev/null

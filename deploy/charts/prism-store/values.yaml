@@ -111,6 +111,38 @@ service:
   type: ClusterIP
   annotations: {}
 
+# Prometheus exporter. The scrape endpoint shares the public listener with the
+# health probes, so there is no dedicated metrics container port to name — a
+# ServiceMonitor targets the existing service port by name and overrides only
+# the path. Keep the endpoint reachable to your Prometheus and nobody else:
+# it is unauthenticated by design, and networkPolicy is the gate.
+#
+# Series budget: perTenant multiplies the query, error, and file families by the
+# number of active tenants (the store caps distinct tenant label values at 256
+# and folds the rest into one overflow series). Set it to "false" on a store
+# with many short-lived namespaces.
+metrics:
+  enabled: "true"
+  path: "/metrics"
+  perTenant: "true"
+  serviceMonitor:
+    # Requires the Prometheus Operator CRDs; off by default so the chart
+    # installs on a cluster that has none.
+    enabled: false
+    # Service port name to scrape. "http" is the public listener that also
+    # serves the health probes.
+    port: http
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels for the operator's serviceMonitorSelector.
+    additionalLabels: {}
+    # Appended to the generated endpoint (e.g. metricRelabelings-style drops).
+    relabelings: []
+    metricRelabelings: []
+
+# The scrape endpoint rides the public port, so whoever may reach that port may
+# read metrics. Narrowing the ingest selector below also locks Prometheus out —
+# widen it to include the monitoring namespace when you enable a ServiceMonitor.
 networkPolicy:
   enabled: false
   ingest:

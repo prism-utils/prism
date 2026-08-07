@@ -132,6 +132,12 @@ spec:
               value: "128"
             - name: SQL_API_QUEUE_TIMEOUT_MS
               value: "120000"
+            - name: METRICS_ENABLED
+              value: "true"
+            - name: METRICS_PATH
+              value: "/metrics"
+            - name: METRICS_PER_TENANT
+              value: "true"
           livenessProbe:
             httpGet:
               path: /healthz
