@@ -1,6 +1,6 @@
 # Spec: Logs merge packs toward MAX_SEGMENT_BYTES
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `fix/logs-merge-pack-max`
@@ -115,12 +115,13 @@ Concrete, verifiable deliverables for this task. Add as many as needed.
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
 - [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+  - `DefaultPlannerConfig` doc comment names `NewPlanner`; rewrite to describe local intent only (zero MaxMergeAtOnce → derive floor pieces under max bytes).
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+- Gate 4 only: atomic-comment fix on `DefaultPlannerConfig`; re-review after.

@@ -16,7 +16,7 @@ type PlannerConfig struct {
 
 // DefaultPlannerConfig returns production defaults with a 1 MiB floor for tests
 // when FloorBytes is unset by callers that pass zero. MaxMergeAtOnce 0 means
-// NewPlanner derives how many floor-sized pieces fit under MaxSegmentBytes.
+// derive how many floor-sized pieces fit under MaxSegmentBytes.
 func DefaultPlannerConfig() PlannerConfig {
 	return PlannerConfig{
 		SegmentsPerTier: 6,
