@@ -1,6 +1,6 @@
 # Spec: Preserve log ingest times through merge + ModeTail SeekEnd
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `fix/logs-ts-preserve-and-tail-seek`
@@ -81,18 +81,16 @@ Two production bugs. **(A)** After log tier merges, Grafana/Loki show every row 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-  - `internal/e2e/logging_test.go` uses `time.Sleep(200 * time.Millisecond)` to wait for the tailer before append — TESTING.md §2 / REVIEW red flag: replace with `require.Eventually` (or channel/ctx sync), no `time.Sleep`.
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
 - [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-  - `internal/store/query/log_ingest_ts.go` comment on `logSegmentHasIngestTS` names `annotateDuckLogIngestTS` — drop the cross-function pointer; describe the local constraint only (e.g. duckdb needs DESCRIBE after ATTACH).
-- [ ] Full docs/REVIEW.md checklist passes
-  - Blocked by Gate 2 (`time.Sleep`) and Gate 4 (non-atomic comment); also checklist “no time.Sleep; deterministic”.
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-- Re-ran locally: `make lint test` green (0 lint issues; all packages ok, including `internal/input/file`, `internal/store/merge`, `internal/store/query`). `make full-tests` green (integration + e2e OK).
+- Prior CHANGES_REQUESTED cleared in `61b5e7d`: e2e uses `require.Eventually` (no `time.Sleep`); `logSegmentHasIngestTS` comment is atomic (local DESCRIBE/ATTACH constraint only).
+- Re-ran locally (post-fix): `make lint test` green (0 issues); `make full-tests` green (integration + e2e OK).
 - Test-first history holds: `94201cf test:` → `cf5a61f test(store,input):` precede `e95bf5a fix(store,input):`.
-- Implementation matches READY decisions: merge stamps `__prism_ts_ns` + min MinTs filename; Loki column-prefer + legacy JOIN; metrics audit only; ModeTail SeekEnd; contract/docs clarified.
-- Fix only the unchecked items above; do not broaden scope.
+- Implementation matches READY decisions: merge `__prism_ts_ns` + min MinTs filename; Loki column-prefer + legacy JOIN; metrics audit only; ModeTail SeekEnd; contract/docs clarified.
+- Verdict: APPROVE / ALL_OK.
 
