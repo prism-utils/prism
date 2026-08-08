@@ -51,12 +51,19 @@ func collectMetricsSources(tenantRoot string, hotOnly bool) ([]metricsSource, er
 			}
 			return nil, err
 		}
+		// A segment held for its delete grace is on disk but no longer part of
+		// the view: its rows were rewritten into a parent, so reading both
+		// would double every sample it holds.
+		retired := layout.CompactedSet(entries)
 		for _, e := range entries {
 			if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 				continue
 			}
 			ext := filepath.Ext(e.Name())
 			if ext != ".parquet" && ext != ".duckdb" {
+				continue
+			}
+			if _, held := retired[e.Name()]; held {
 				continue
 			}
 			p := filepath.Join(dir, e.Name())

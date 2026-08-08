@@ -85,6 +85,8 @@ spec:
               value: {{ .Values.env.logsRefreshInterval | quote }}
             - name: LOGS_REFRESH_MAX_ACTIONS
               value: {{ .Values.env.logsRefreshMaxActions | quote }}
+            - name: LOGS_DELETE_GRACE_SECONDS
+              value: {{ .Values.env.logsDeleteGraceSeconds | quote }}
             - name: MAX_SEGMENT_BYTES
               value: {{ .Values.env.maxSegmentBytes | quote }}
             - name: RETENTION_DAYS

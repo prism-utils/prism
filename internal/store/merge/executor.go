@@ -22,6 +22,10 @@ type ExecutorConfig struct {
 	MemoryLimit          string
 	SegmentFormat        segformat.Format // parquet (default) or duckdb
 	DuckDBStorageVersion string
+	// DeleteGrace holds a merged-away source at its original path for this long
+	// instead of unlinking it, so a reader that resolved the path before the
+	// merge can still open it. Zero deletes as soon as the output is durable.
+	DeleteGrace time.Duration
 }
 
 // Executor runs planned merges via DuckDB COPY / ATTACH export.
@@ -121,10 +125,8 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 		_ = os.Remove(final)
 		return Segment{}, err
 	}
-	for _, s := range action.Sources {
-		if err := os.Remove(s.Path); err != nil && !os.IsNotExist(err) {
-			return Segment{}, fmt.Errorf("merge: delete %s: %w", s.Path, err)
-		}
+	if err := retireSources(action.Sources, now, x.cfg.DeleteGrace); err != nil {
+		return Segment{}, err
 	}
 	return seg, nil
 }
@@ -283,9 +285,13 @@ func ScanTier(dataDir, tenant string, tier int, caps DuckDBCaps) ([]Segment, err
 		}
 		return nil, err
 	}
+	retired := layout.CompactedSet(entries)
 	var out []Segment
 	for _, e := range entries {
 		if e.IsDir() || !isSegmentFile(e.Name()) {
+			continue
+		}
+		if _, held := retired[e.Name()]; held {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())

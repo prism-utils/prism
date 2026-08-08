@@ -76,6 +76,11 @@ env:
   logsRefreshInterval: "60"
   # Landing refreshes applied per artifact per merge tick.
   logsRefreshMaxActions: "8"
+  # How long a merged-away segment keeps its bytes at its original path before
+  # it is unlinked. A dashboard that globs the tier tree resolves paths before
+  # it opens them and cannot skip one that disappeared in between. "0" deletes
+  # immediately. Applies to log and metrics merge sources alike.
+  logsDeleteGraceSeconds: "120"
   maxSegmentBytes: "2147483648"
   retentionDays: "15"
   rollupSteps: "1m,5m,1h"

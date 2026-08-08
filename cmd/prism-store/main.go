@@ -88,14 +88,18 @@ const (
 	// defaultLogsRefreshMaxActions bounds refreshes per artifact per merge tick
 	// so a backlog drains without stampeding DuckDB.
 	defaultLogsRefreshMaxActions = 8
-	defaultMaxSegmentBytes       = 2147483648
-	defaultRetentionDays         = 15
-	defaultRollupSteps           = "1m,5m,1h"
-	defaultMaxTier               = 8
-	defaultHotSnapshotSec        = 15
-	defaultFlushTickSec          = 30
-	defaultMergeTickSec          = 60
-	defaultRetentionTickHour     = 1
+	// defaultDeleteGraceSec holds a merged-away segment at its original path
+	// long enough for a dashboard that resolved the path over a glob to finish
+	// opening it, since such a reader cannot skip a file that disappeared.
+	defaultDeleteGraceSec    = 120
+	defaultMaxSegmentBytes   = 2147483648
+	defaultRetentionDays     = 15
+	defaultRollupSteps       = "1m,5m,1h"
+	defaultMaxTier           = 8
+	defaultHotSnapshotSec    = 15
+	defaultFlushTickSec      = 30
+	defaultMergeTickSec      = 60
+	defaultRetentionTickHour = 1
 	// Each /sql sandbox honors DUCKDB_MEMORY_LIMIT independently, so peak read
 	// memory is MaxInFlight × that limit: shared writers OOM at higher
 	// concurrency, and a deep queue with a long wait absorbs dashboard fan-out
@@ -135,6 +139,7 @@ type serverConfig struct {
 	maxLogFiles          int
 	logsRefreshInterval  time.Duration
 	logsRefreshMaxActs   int
+	deleteGrace          time.Duration
 	logCoalesceMaxAge    time.Duration
 	logCoalesceMaxBytes  int64
 	logsRecentLookback   time.Duration
@@ -192,6 +197,7 @@ func loadConfig() serverConfig {
 		maxLogFiles:          envInt("MAX_LOG_FILES", 0),
 		logsRefreshInterval:  time.Duration(envIntAllowZero("LOGS_REFRESH_INTERVAL", defaultLogsRefreshSec)) * time.Second,
 		logsRefreshMaxActs:   envInt("LOGS_REFRESH_MAX_ACTIONS", defaultLogsRefreshMaxActions),
+		deleteGrace:          time.Duration(envIntAllowZero("LOGS_DELETE_GRACE_SECONDS", defaultDeleteGraceSec)) * time.Second,
 		logCoalesceMaxAge:    time.Duration(envInt("LOG_COALESCE_MAX_AGE_SECONDS", 0)) * time.Second,
 		logCoalesceMaxBytes:  envInt64("LOG_COALESCE_MAX_BYTES", 0),
 		logsRecentLookback:   time.Duration(envInt("LOGS_RECENT_LOOKBACK_HOURS", 0)) * time.Hour,
@@ -710,6 +716,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		MaxLogFiles:           cfg.maxLogFiles,
 		LogsRefreshInterval:   cfg.logsRefreshInterval,
 		LogsRefreshMaxActions: cfg.logsRefreshMaxActs,
+		DeleteGrace:           cfg.deleteGrace,
 		RollupSteps:           cfg.rollupSteps,
 		MaxTier:               cfg.maxTier,
 		Threads:               cfg.duckdbThreads,
@@ -767,6 +774,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 			"hot_window", cfg.hotWindow.String(),
 			"segments_per_tier", cfg.segmentsPerTier,
 			"logs_refresh_interval", cfg.logsRefreshInterval.String(),
+			"delete_grace", cfg.deleteGrace.String(),
 			"query_hot_only", cfg.queryHotOnly,
 			"run_jobs", cfg.runJobs,
 			"sql_api_queue_enabled", cfg.sqlAPIQueueEnabled,

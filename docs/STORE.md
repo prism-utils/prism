@@ -541,7 +541,10 @@ connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store conf
 - **Pack:** once triggered, the planner packs as many time-ordered unsealed candidates as fit under `MAX_SEGMENT_BYTES` (capped by a derived `MaxMergeAtOnce` ≈ `MAX_SEGMENT_BYTES / floor`, never below `SEGMENTS_PER_TIER`), then shrinks the set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`. Metrics tiers group by size level (floor-rounded log scale) and require a time-adjacent contiguous run (gap ≤ one segment span). Logs landing uses the same seal exclusion and fill-toward-max / shrink-to-fit rule without size-level grouping.
 - **One action per tick (metrics):** no cascade — at most one merge per tenant per merge tick, lowest tier first.
 - **Logs:** one tick may run up to `LOGS_REFRESH_MAX_ACTIONS` landing→L0 refreshes per artifact plus one cold-tier pack (time-ordered fill toward `MAX_SEGMENT_BYTES`, no Lucene adjacency — L0 files from merge ticks are often minutes apart). Refreshes are planned oldest-first and before the cold pack, so searchable lag stays bounded while tier catch-up still progresses.
-- **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are deleted only after the output is atomically renamed.
+- **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are released only after the output is atomically renamed.
+- **Delete grace:** releasing a source does not unlink it. For `LOGS_DELETE_GRACE_SECONDS` (default 120, `0` = unlink at once) its bytes stay at the exact path they were found at, marked by a `<segment>.compacted` sidecar holding the delete deadline; the merge tick unlinks segment and marker once that deadline passes. The window exists for readers that resolve a path and open it later — a Grafana `read_parquet('…/tiers/**/*.parquet')` glob is bound before execution and DuckDB cannot skip a file that vanished, so it fails the whole panel. A held segment is not live: log landing/tier scans, metrics tier scans, the manifest, the logs catalog, and the metrics view all skip it, so it is never a merge input twice and prism's own queries never double-count its rows. A client reading the tree by glob has no such marker to consult and can see those rows twice until the purge, which is the accepted cost of the window.
+
+  Two properties do the work, and neither makes the unlink invisible. First, a path stays valid for at least the whole window after it stops being live, so a reader that resolved it while it was live has that long to open it — which is what a long scan over a wide glob needs. Second, the purge is one batched pass per tenant at the top of the merge tick rather than one unlink per completed merge, so a tick exposes a single brief instant at which a file leaves the tree instead of one per merge action. A reader that binds during that instant can still lose the race; the durable fix for a client that cannot skip a missing file is to read the manifest instead of globbing.
 
 Path helpers live in `internal/store/layout` (`TierDir`, `RollupDir`, `ToSlash`).
 
@@ -925,6 +928,7 @@ Landed windows live under `<tenant>/logs/<artifact>/*.parquet`. Background jobs
 |---|---|
 | `logs/<artifact>/*.parquet` | Landing buffer (agent seals) — **not searchable** |
 | `logs/<artifact>/tiers/L{n}/*.parquet` | Refreshed / compacted segments — the searchable set |
+| `logs/<artifact>/**/*.compacted` | Delete deadline of a merged-away segment held for readers |
 | `logs/<artifact>/_manifest.json` | Atomic file catalog for planners |
 | `logs/.meta_generation` | Cache invalidation stamp |
 
@@ -949,6 +953,14 @@ multiple agents are filling.
 
 Because only tiers are searchable, query cost no longer tracks how deep the
 buffer is, and neither Loki nor `/sql` opens landing files.
+
+A refresh publishes its output before it releases the windows it packed, and
+those windows keep their bytes at their original paths for
+`LOGS_DELETE_GRACE_SECONDS` (default 120) so a dashboard that already resolved
+one over a glob can still open it. They stop being searchable the moment the
+output lands, so the extra files never reach a prism query — a client that
+reads the tree by glob is the one that sees both copies until the window
+closes.
 
 Planners **time-prune** the open set using the window id in
 `<unix_ns>-*.parquet` (else mtime) before opening Parquet. Label APIs omit the
