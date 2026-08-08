@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -139,7 +140,8 @@ func TestTickMergePurgesExpiredHoldWithoutPlanningAMerge(t *testing.T) {
 	if err := os.WriteFile(held, []byte("segment"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(layout.CompactedMarker(held), []byte("1786140844\n"), 0o600); err != nil {
+	expired := strconv.FormatInt(now.Add(-time.Minute).Unix(), 10) + "\n"
+	if err := os.WriteFile(layout.CompactedMarker(held), []byte(expired), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

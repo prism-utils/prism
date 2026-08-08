@@ -98,6 +98,8 @@ spec:
               value: "60"
             - name: LOGS_REFRESH_MAX_ACTIONS
               value: "8"
+            - name: LOGS_DELETE_GRACE_SECONDS
+              value: "120"
             - name: MAX_SEGMENT_BYTES
               value: "2147483648"
             - name: RETENTION_DAYS

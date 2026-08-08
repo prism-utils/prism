@@ -235,6 +235,10 @@ func listParquetInDir(absTenantRoot, dir, artifact string) ([]logFileMeta, error
 		}
 		return nil, err
 	}
+	// A segment held for its delete grace is on disk but no longer searchable:
+	// its rows were rewritten into a parent, so opening both would return every
+	// line twice.
+	retired := layout.CompactedSet(entries)
 	var out []logFileMeta
 	for _, e := range entries {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
@@ -242,6 +246,9 @@ func listParquetInDir(absTenantRoot, dir, artifact string) ([]logFileMeta, error
 		}
 		ext := filepath.Ext(e.Name())
 		if ext != ".parquet" && ext != ".duckdb" {
+			continue
+		}
+		if _, held := retired[e.Name()]; held {
 			continue
 		}
 		match := filepath.Join(dir, e.Name())

@@ -62,6 +62,11 @@ type Config struct {
 	LogsRefreshInterval time.Duration
 	// LogsRefreshMaxActions caps landing refreshes per artifact per merge tick.
 	LogsRefreshMaxActions int
+	// DeleteGrace holds a merged-away source at its original path for this long
+	// before it is unlinked, so a reader that resolved the path while it was
+	// still live can finish opening it. Zero deletes as soon as the merge
+	// output is durable.
+	DeleteGrace time.Duration
 	// Logger records per-tenant / per-file errors; nil uses slog.Default.
 	Logger *slog.Logger
 	// Recorder receives tick outcomes and file counts; nil discards them.
@@ -150,7 +155,14 @@ func (r *Runner) tickMerge() error {
 		LogsRefreshInterval:   r.cfg.LogsRefreshInterval,
 		LogsRefreshMaxActions: r.cfg.LogsRefreshMaxActions,
 	})
+	now := r.clock()
 	for _, tenant := range tenants {
+		// Reclaiming expired holds shares the merge cadence because that is what
+		// creates them: on a slower janitor the retained bytes would outlive the
+		// window an operator configured.
+		if _, err := merge.PurgeCompacted(r.cfg.DataDir, tenant, r.cfg.MaxTier, now); err != nil {
+			r.log.Error("purge compacted sources", "tenant", tenant, "err", err)
+		}
 		if err := r.mergeTenant(tenant, planner); err != nil {
 			r.log.Error("merge tenant", "tenant", tenant, "err", err)
 		}
@@ -180,6 +192,7 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 		MemoryLimit:          r.cfg.MemoryLimit,
 		SegmentFormat:        r.cfg.MergeSegmentFormat,
 		DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
+		DeleteGrace:          r.cfg.DeleteGrace,
 	})
 	if err != nil {
 		return err
@@ -238,6 +251,7 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 				MemoryLimit:          r.cfg.MemoryLimit,
 				SegmentFormat:        r.cfg.MergeSegmentFormat,
 				DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
+				DeleteGrace:          r.cfg.DeleteGrace,
 			})
 			if err != nil {
 				return err

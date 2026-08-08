@@ -100,8 +100,15 @@ func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest
 			}
 			return err
 		}
+		// A segment held for its delete grace is on disk but no longer
+		// searchable: its rows were rewritten into a parent, so cataloguing it
+		// would double every line it holds.
+		retired := layout.CompactedSet(entries)
 		for _, e := range entries {
 			if e.IsDir() || !isSegmentName(e.Name()) || e.Name()[0] == '.' {
+				continue
+			}
+			if _, held := retired[e.Name()]; held {
 				continue
 			}
 			abs := filepath.Join(root, e.Name())

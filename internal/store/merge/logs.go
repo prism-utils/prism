@@ -61,9 +61,13 @@ func ScanLogLanding(dataDir, tenant, artifact string) ([]Segment, error) {
 		}
 		return nil, err
 	}
+	retired := layout.CompactedSet(entries)
 	var out []Segment
 	for _, e := range entries {
 		if e.IsDir() || !isSegmentFile(e.Name()) {
+			continue
+		}
+		if _, held := retired[e.Name()]; held {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -86,9 +90,13 @@ func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) 
 		}
 		return nil, err
 	}
+	retired := layout.CompactedSet(entries)
 	var out []Segment
 	for _, e := range entries {
 		if e.IsDir() || !isSegmentFile(e.Name()) {
+			continue
+		}
+		if _, held := retired[e.Name()]; held {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -300,10 +308,8 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 		MinTs: minTs,
 		MaxTs: maxTs,
 	}
-	for _, s := range action.Sources {
-		if err := os.Remove(s.Path); err != nil && !os.IsNotExist(err) {
-			return Segment{}, fmt.Errorf("log merge: delete %s: %w", s.Path, err)
-		}
+	if err := retireSources(action.Sources, now, x.cfg.DeleteGrace); err != nil {
+		return Segment{}, err
 	}
 	return seg, nil
 }
