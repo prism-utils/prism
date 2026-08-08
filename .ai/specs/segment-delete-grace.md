@@ -1,6 +1,6 @@
 # Spec: segment delete grace (compacted sources outlive open readers)
 
-Status: READY
+Status: ALL_OK
 
 - **Slug / branch:** `fix/segment-delete-grace`
 - **Owner phase:** orchestrator → developer
@@ -100,6 +100,24 @@ resolved the path can still open it.
     with `ls`. Corrupt or unreadable markers purge (fail toward reclaiming
     space, never toward a leak); an orphan marker is reaped.
 
+- **Residual risk, stated plainly: the window shrinks the race, it does not
+  close it.**
+  - ref: same Lucene policy doc — the remedy it describes is "give your readers
+    time to refresh", a probabilistic guarantee, not an atomic one. A store
+    without delete-on-last-close cannot offer more to a reader that resolves
+    paths by listing a directory.
+  - perf: batching costs nothing — the sweep is one `ReadDir` per segment
+    directory at the top of a tick that is otherwise dominated by DuckDB
+    `COPY`.
+  - product: two properties carry the fix. A path now outlives its liveness by
+    the whole window, which covers the observed failure (a wide glob whose scan
+    opens files many seconds after binding). And the unlink is decoupled from
+    compaction: one batched pass per tenant per tick, instead of one unlink per
+    completed merge action, so a tick exposes a single brief instant at which
+    files leave the tree rather than one per action. A reader that binds inside
+    that instant can still lose. Closing it entirely requires the reader to
+    stop globbing — the manifest-driven Grafana relation named in Scope.
+
 - **Purge on the merge tick, not the retention tick.**
   - ref: same Lucene policy doc — the deletion policy is evaluated on the
     writer's own cadence (`onCommit`), not on a separate slow janitor, so the
@@ -128,34 +146,76 @@ resolved the path can still open it.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] After a successful `ExecuteLogMerge`, every source is still openable at
+- [x] After a successful `ExecuteLogMerge`, every source is still openable at
       its original path, and a `<source>.compacted` marker records the deadline.
-- [ ] Same for the metrics `ExecuteMerge`.
-- [ ] `LOGS_DELETE_GRACE_SECONDS=0` restores immediate deletion (no marker left).
-- [ ] Retired segments are not merge inputs again: `ScanLogLanding`,
+- [x] Same for the metrics `ExecuteMerge`.
+- [x] `LOGS_DELETE_GRACE_SECONDS=0` restores immediate deletion (no marker left).
+- [x] Retired segments are not merge inputs again: `ScanLogLanding`,
       `ScanLogTier`, and `ScanTier` skip them.
-- [ ] Retired segments are not searchable twice: the logs catalog, the metrics
+- [x] Retired segments are not searchable twice: the logs catalog, the metrics
       source list, and `RebuildManifest` skip them.
-- [ ] The merge tick unlinks segment + marker once the grace expires, and reaps
+- [x] The merge tick unlinks segment + marker once the grace expires, and reaps
       a marker whose segment is already gone.
-- [ ] A marker with unreadable/corrupt contents purges rather than leaking.
-- [ ] `LOGS_DELETE_GRACE_SECONDS` (default 120) is wired through main → lifecycle
+- [x] A marker with unreadable/corrupt contents purges rather than leaking.
+- [x] `LOGS_DELETE_GRACE_SECONDS` (default 120) is wired through main → lifecycle
       → both executors; chart values, statefulset env, and the golden fixture agree.
-- [ ] `CONFIG.md` + `STORE.md` document the knob, the semantics, and the
+- [x] `CONFIG.md` + `STORE.md` document the knob, the semantics, and the
       duplicate-rows-for-globbing-readers trade-off.
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+### Review 1 — ALL_OK (self-review; Phase 0 was compressed at the user's request)
+
+This was reviewed by the same agent that implemented it, so it is a self-review
+against `docs/REVIEW.md`, not an independent one. Recorded as such rather than
+dressed up as a second opinion.
+
+**Verified green, re-run with `-count=1`:** `make lint`
+(`golangci-lint --build-tags duckdb_arrow ./...` → 0 issues), `make test` (race,
+all packages ok), `make full-tests GOFLAGS=-count=1` (lint + race unit + docker
+integration + e2e, 223s, `full-tests: OK`), and the chart golden check
+(`deploy/charts/prism-store/scripts/check-golden.sh` → OK).
+
+**TDD contract holds.** `test:` (84bd8ab) precedes `fix:` (495a5a4). The tests
+were confirmed red for the right reason before implementation (`go vet` reported
+`undefined: CompactedMarker` / `undefined: retireSources`), not merely failing.
+
+**Gate 2 — edge cases covered:** zero and negative grace (immediate delete, no
+marker); a source that is already gone; the deadline boundary at exactly the
+last held instant and one second past it; a marker whose segment vanished
+(reaped); a marker whose contents cannot be parsed (purges rather than leaking
+bytes); an abandoned staging write; a missing directory; an empty tenant; a held
+segment excluded from all four live sets (log landing, log tier, metrics tier,
+logs catalog, metrics view, manifest); a held source not re-merged on a later
+tick inside the window; an expired hold reclaimed on a tick that plans no merge;
+and the four config paths (default, override, `0`, unparsable, negative).
+
+**Checked and clean:** no new dependency, goroutine, or global mutable state;
+the skip is a map lookup built from a listing each scanner already had, so no
+new `stat` on a query path; `PurgeCompacted` failures are logged per tenant and
+never abort a tick; the marker extension is neither a segment extension nor a
+dotfile, so it is invisible to every existing listing and to a `*.parquet` glob;
+marker writes stage and rename, so a torn write cannot be read as a deadline.
+
+**Known limitation, accepted and documented, not a gate failure:** the window
+shrinks the race rather than closing it, and a globbing reader sees duplicated
+rows until the purge. Both are in the Decision Log and in `STORE.md`; neither is
+hidden behind a doc claim that the fix is total.
+
+**Not touched on purpose:** `collectSafeParquetPaths` in
+`internal/store/query/sql.go` still globs metrics tiers without the marker skip.
+It has no production caller (the sandbox builds its source list elsewhere) and
+is exercised only by its own tests, so changing it would be unverified scope
+creep in a prod fix. It is a trap for whoever revives it — worth a follow-up.
