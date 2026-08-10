@@ -1,6 +1,6 @@
 # Spec: query-plane RED metrics (prism#113)
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/store-query-red-metrics`
@@ -114,11 +114,11 @@ that assert scrape text moves as expected on success and 4xx/5xx.
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
@@ -126,4 +126,8 @@ Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here
      Status: ALL_OK only when every box above is checked; otherwise
      Status: CHANGES_REQUESTED. -->
 
-_(empty until first review)_
+**2026-08-10 — ALL_OK.** Test-first history confirmed (`275ca69` test → `224bb9a` feat).
+`make lint test` and `make full-tests` green (cmd wiring touched). Query RED
+middleware outermost on promql/loki/sql; scrape assertions cover success/4xx/5xx
+(incl. authz), per-tenant off, inflight, disabled/nil. STORE.md + CONFIG.md +
+package doc match delivered series; comments describe local intent only.
