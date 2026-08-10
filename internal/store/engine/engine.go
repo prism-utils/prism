@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,20 @@ import (
 // ErrIncompatibleDuckDBStorage is returned when an ingest .duckdb body reports
 // a STORAGE_VERSION the bundled DuckDB cannot read.
 var ErrIncompatibleDuckDBStorage = errors.New("incompatible duckdb storage version")
+
+// ErrClientAbort is returned when the ingest body reader fails because the
+// client closed the connection mid-upload (unexpected EOF / canceled).
+var ErrClientAbort = errors.New("client abort")
+
+func mapBodyCopyErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) {
+		return fmt.Errorf("%w: %w", ErrClientAbort, err)
+	}
+	return err
+}
 
 const (
 	hotCurrentTable = "hot_current"
@@ -63,6 +78,10 @@ type Engine struct {
 
 	coalesceMu sync.Mutex
 	coalesce   map[logCoalesceKey]*logCoalesceBuf
+
+	// landLocks serializes finishLogLand per tenant so concurrent lands do not
+	// thrash generation/manifest/label-index updates.
+	landLocks sync.Map // tenant → *sync.Mutex
 
 	// exportGroup collapses overlapping hot snapshot exports for one tenant into
 	// a single run, keyed by tenant name.
@@ -245,7 +264,7 @@ func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, 
 	closeErr := tmp.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmpPath)
-		return 0, copyErr
+		return 0, mapBodyCopyErr(copyErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmpPath)
@@ -601,7 +620,7 @@ func writeTempFile(body io.Reader, pattern string) (path string, n int64, err er
 	closeErr := f.Close()
 	if copyErr != nil {
 		_ = os.Remove(path)
-		return "", 0, copyErr
+		return "", 0, mapBodyCopyErr(copyErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(path)

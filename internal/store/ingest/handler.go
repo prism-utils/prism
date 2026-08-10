@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,10 @@ import (
 	"github.com/elk-utilities/prism/internal/store/engine"
 	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
 )
+
+// statusClientClosed is the nginx/Cloudflare convention for "client closed
+// the connection before the server finished" (not an RFC status).
+const statusClientClosed = 499
 
 // IngestRoutePattern returns the ServeMux pattern for the ingest POST route.
 func IngestRoutePattern(prefix string) string {
@@ -61,13 +66,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
 		isDuckDB, stream, err := classifyMetricsBody(r.Header.Get("Content-Type"), body)
 		if err != nil {
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			logger.Error("ingest read failed", "ns", ns, "artifact", artifact, "err", err)
-			http.Error(w, "ingest failed", http.StatusInternalServerError)
+			writeIngestError(w, logger, ns, artifact, "ingest read failed", err)
 			return
 		}
 
@@ -80,17 +79,7 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 			n, err = eng.Ingest(ns, stream)
 		}
 		if err != nil {
-			if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			logger.Error("ingest failed", "ns", ns, "artifact", artifact, "err", err)
-			http.Error(w, "ingest failed", http.StatusInternalServerError)
+			writeIngestError(w, logger, ns, artifact, "ingest failed", err)
 			return
 		}
 		if n == 0 {
@@ -141,17 +130,7 @@ func landLogWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *eng
 	body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
 	n, err := eng.LandLogWindow(ns, artifact, body)
 	if err != nil {
-		if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		logger.Error("log ingest failed", "ns", ns, "artifact", artifact, "err", err)
-		http.Error(w, "ingest failed", http.StatusInternalServerError)
+		writeIngestError(w, logger, ns, artifact, "log ingest failed", err)
 		return
 	}
 	if n == 0 {
@@ -160,4 +139,36 @@ func landLogWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *eng
 	}
 	logger.Debug("landed log window", "ns", ns, "artifact", artifact, "bytes", n)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeIngestError(w http.ResponseWriter, logger *slog.Logger, ns, artifact, msg string, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		http.Error(w, "window too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if isClientAbort(err) {
+		logger.Warn(msg, "ns", ns, "artifact", artifact, "err", err, "status", statusClientClosed)
+		http.Error(w, "client closed", statusClientClosed)
+		return
+	}
+	logger.Error(msg, "ns", ns, "artifact", artifact, "err", err)
+	http.Error(w, "ingest failed", http.StatusInternalServerError)
+}
+
+func isClientAbort(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, engine.ErrClientAbort) {
+		return true
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	return false
 }

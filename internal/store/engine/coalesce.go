@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/elk-utilities/prism/internal/store/layout"
@@ -136,10 +137,19 @@ func (e *Engine) sealLogCoalesce(tenant, artifact string) error {
 	return e.finishLogLand(tenant, artifact)
 }
 
+func (e *Engine) tenantLandLock(tenant string) *sync.Mutex {
+	v, _ := e.landLocks.LoadOrStore(tenant, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 // finishLogLand re-stamps the log catalog after a window reaches the landing
 // buffer. The window is not searchable yet, so it contributes no label values;
 // the index is only carried across the bump it would otherwise be stranded by.
 func (e *Engine) finishLogLand(tenant, artifact string) error {
+	mu := e.tenantLandLock(tenant)
+	mu.Lock()
+	defer mu.Unlock()
+
 	prevGen, err := logmeta.Read(e.cfg.DataDir, tenant)
 	if err != nil {
 		return err

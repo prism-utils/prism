@@ -2,6 +2,7 @@ package ingest_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -77,20 +78,13 @@ func TestLogsIngestUnknownArtifact(t *testing.T) {
 	}
 }
 
-// errReader fails on the first Read with the wrapped error (simulates a client
-// hanging up mid-body).
-type errReader struct{ err error }
-
-func (e errReader) Read([]byte) (int, error) { return 0, e.err }
-
 func TestLogsIngestClientAbortReturns499(t *testing.T) {
 	_, srv := newLogsIngestServer(t)
-	url := srv.URL + "/" + testTenant + "/ingest/logs-summary"
-	req := newIngestReq(t, url, errReader{err: io.ErrUnexpectedEOF})
-	resp := doIngestReq(t, req)
-	defer closeResp(t, resp)
-	if resp.StatusCode != 499 {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 499 client closed; body=%s", resp.StatusCode, b)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/"+testTenant+"/ingest/logs-summary", errReader{err: io.ErrUnexpectedEOF})
+	req.Header.Set("Content-Type", "application/octet-stream")
+	rec := httptest.NewRecorder()
+	srv.Config.Handler.ServeHTTP(rec, req)
+	if rec.Code != 499 {
+		t.Fatalf("status = %d, want 499 client closed; body=%s", rec.Code, rec.Body.String())
 	}
 }
