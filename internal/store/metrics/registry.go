@@ -21,6 +21,10 @@ type Registry struct {
 	queries      *prometheus.CounterVec
 	queryErrors  *prometheus.CounterVec
 
+	queryRequests *prometheus.CounterVec
+	queryDuration *prometheus.HistogramVec
+	queryInflight *prometheus.GaugeVec
+
 	queueRejected *prometheus.CounterVec
 	queueWait     prometheus.Histogram
 
@@ -51,6 +55,7 @@ func New(cfg Config) *Registry {
 		tenants: newTenantLabeller(MaxTenantLabelValues),
 	}
 	r.buildHTTP()
+	r.buildQuery()
 	r.buildQueue()
 	r.buildLifecycle()
 
@@ -61,6 +66,7 @@ func New(cfg Config) *Registry {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		r.httpRequests, r.httpDuration, r.queries, r.queryErrors,
+		r.queryRequests, r.queryDuration, r.queryInflight,
 		r.queueRejected, r.queueWait,
 		r.ticks, r.tickErrors, r.tickDuration, r.tickSuccess,
 		r.tierSegments, r.landingFiles, r.landingLimit, r.compactionCPU,

@@ -16,9 +16,11 @@ type Config struct {
 	// Path is the scrape path. Anything that is not an absolute path falls back
 	// to the default, because a relative pattern cannot be mounted on a mux.
 	Path string
-	// PerTenant adds the tenant dimension to query, error, and lifecycle file
-	// series. It multiplies those families by the number of active tenants, so
-	// it is a deliberate cardinality choice rather than a free switch.
+	// PerTenant adds the tenant dimension to query, error, lifecycle file, and
+	// query-plane RED series. It multiplies those families by the number of
+	// active tenants, so it is a deliberate cardinality choice rather than a
+	// free switch. When false, query RED series stay registered but drop the
+	// tenant label rather than emitting an empty one.
 	PerTenant bool
 }
 
