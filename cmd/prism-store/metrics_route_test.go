@@ -193,3 +193,70 @@ func TestMetricsConfigReadsEnvOverrides(t *testing.T) {
 		t.Fatalf("METRICS_PATH = %q, want /internal/metrics", cfg.metrics.Path)
 	}
 }
+
+// TestQueryREDMetricsCountAuthzRejects proves InstrumentQuery sits outermost on
+// the SQL/PromQL/Loki chains: a bearer reject never reaches the handler yet
+// still increments the query RED counter under the matching api label.
+func TestQueryREDMetricsCountAuthzRejects(t *testing.T) {
+	cfg, eng, logger := metricsFixture(t, defaultMetricsConfig())
+	cfg.adminToken = "admin-tok"
+	cfg.sqlAPIEnabled = true
+	cfg.promqlAPIEnabled = true
+	cfg.lokiAPIEnabled = true
+	lim := queue.NewLimiter(queue.LimiterConfig{Enabled: true, MaxInFlight: 2, MaxQueue: 8, Wait: time.Minute})
+
+	mux := newServeMux(cfg, eng, logger, planeCombined, nil, nil, lim)
+	const tenant = "user-6f3a9c2b-apps"
+	for _, path := range []string{
+		"/" + tenant + "/sql",
+		"/" + tenant + "/api/v1/query?query=up",
+		"/" + tenant + "/loki/api/v1/labels",
+	} {
+		method := http.MethodGet
+		if strings.HasSuffix(path, "/sql") {
+			method = http.MethodPost
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s = %d, want 401", path, rec.Code)
+		}
+	}
+
+	_, body := getBody(t, mux, "/metrics")
+	for _, want := range []string{
+		`prism_store_query_requests_total{api="sql",code="401",tenant="` + tenant + `"} 1`,
+		`prism_store_query_requests_total{api="promql",code="401",tenant="` + tenant + `"} 1`,
+		`prism_store_query_requests_total{api="loki",code="401",tenant="` + tenant + `"} 1`,
+		`prism_store_query_duration_seconds_count{api="sql",tenant="` + tenant + `"} 1`,
+		`prism_store_query_duration_seconds_count{api="promql",tenant="` + tenant + `"} 1`,
+		`prism_store_query_duration_seconds_count{api="loki",tenant="` + tenant + `"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("exposition missing %q\n%s", want, body)
+		}
+	}
+}
+
+// TestQueryREDMetricsAbsentWhenDisabled pins that turning the exporter off
+// leaves query RED series out of the scrape surface entirely.
+func TestQueryREDMetricsAbsentWhenDisabled(t *testing.T) {
+	cfg, eng, logger := metricsFixture(t, metrics.Config{Enabled: false})
+	cfg.sqlAPIEnabled = true
+	lim := queue.NewLimiter(queue.LimiterConfig{Enabled: false})
+	mux := newServeMux(cfg, eng, logger, planeCombined, nil, nil, lim)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/user-6f3a9c2b-apps/sql", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("SQL route missing on combined mux")
+	}
+
+	code, body := getBody(t, mux, "/metrics")
+	if code != http.StatusNotFound {
+		t.Fatalf("/metrics = %d, want 404", code)
+	}
+	if strings.Contains(body, "prism_store_query_requests_total") {
+		t.Fatalf("disabled scrape leaked query RED series: %s", body)
+	}
+}
