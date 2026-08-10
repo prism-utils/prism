@@ -479,8 +479,9 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			if ownedTenants != nil {
 				h = cluster.OwnedTenantGuard(ownedTenants, h)
 			}
-			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), reg.Instrument(metrics.RouteSQL,
-				protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, h)))
+			mux.Handle(query.SQLRoutePattern(cfg.routePrefix), reg.InstrumentQuery(metrics.APISQL,
+				reg.Instrument(metrics.RouteSQL,
+					protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapSQL, h))))
 		}
 
 		if cfg.promqlAPIEnabled {
@@ -495,7 +496,8 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			if ownedTenants != nil {
 				ph = cluster.OwnedTenantGuard(ownedTenants, ph)
 			}
-			wrapped := reg.Instrument(metrics.RoutePromQL, protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, ph))
+			wrapped := reg.InstrumentQuery(metrics.APIPromQL,
+				reg.Instrument(metrics.RoutePromQL, protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, ph)))
 			for _, pattern := range query.PromQLRoutePatterns(cfg.routePrefix) {
 				mux.Handle(pattern, wrapped)
 			}
@@ -519,7 +521,8 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			if ownedTenants != nil {
 				lh = cluster.OwnedTenantGuard(ownedTenants, lh)
 			}
-			wrapped := reg.Instrument(metrics.RouteLoki, protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, lh))
+			wrapped := reg.InstrumentQuery(metrics.APILoki,
+				reg.Instrument(metrics.RouteLoki, protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapQuery, lh)))
 			for _, pattern := range query.LokiRoutePatterns(cfg.routePrefix) {
 				mux.Handle(pattern, wrapped)
 			}

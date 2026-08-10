@@ -351,6 +351,9 @@ Runtime and process series come from the standard collectors (`go_*`,
 | `prism_store_http_request_duration_seconds` | histogram | `route` | Latency per surface |
 | `prism_store_queries_total` | counter | `tenant`, `route` | Read load per tenant; ALL is `sum without (tenant)` |
 | `prism_store_query_errors_total` | counter | `tenant`, `route`, `code_class` | Errors per tenant, bucketed `4xx` / `5xx` |
+| `prism_store_query_requests_total` | counter | `api`, `code`, `tenant?` | Query-plane RED rate/errors; `api` ∈ `promql` \| `loki` \| `sql` |
+| `prism_store_query_duration_seconds` | histogram | `api`, `tenant?` | Query-plane end-to-end latency (includes queue wait) |
+| `prism_store_query_inflight` | gauge | `api` | Query-plane requests inside the handler (includes queued waits) |
 | `prism_store_queue_enabled` | gauge | — | Whether heavy reads are gated at all |
 | `prism_store_queue_in_flight` | gauge | — | **Utilization** against `max_in_flight` |
 | `prism_store_queue_waiting` | gauge | — | **Saturation**: reads parked for a slot |
@@ -385,17 +388,23 @@ Two rules keep the series count bounded:
 - **Route labels are a closed set** chosen by the wiring (`healthz`, `readyz`,
   `metrics`, `ingest`, `query`, `sql`, `promql`, `loki`, `stats`,
   `admin_queue`, `admin_ensure`) and are **never** derived from a request path.
-  A tenant id can never appear in a route label.
+  A tenant id can never appear in a route label. Query-plane RED uses a separate
+  closed `api` label (`promql` \| `loki` \| `sql`) with the same rule.
 - **Tenant labels are opt-in and capped.** `METRICS_PER_TENANT=true` (default)
-  adds `tenant` to the query, error, and file families. The store admits at
-  most **256** distinct tenant label values; every namespace past that folds
-  into `tenant="__over_limit__"`, a value no real namespace can take.
+  adds `tenant` to the query, error, file, and query-plane RED request/duration
+  families (`query_inflight` stays `api`-only). The store admits at most
+  **256** distinct tenant label values; every namespace past that folds into
+  `tenant="__over_limit__"`, a value no real namespace can take. With
+  `METRICS_PER_TENANT=false`, the older per-tenant USE families are absent and
+  query RED series remain but **drop** the `tenant` label (they do not emit an
+  empty one).
 
 Series budget with per-tenant on: roughly `T × (routes + code classes +
-artifacts + 2)` where `T` is the active tenant count capped at 256 — on the
+artifacts + query APIs + 2)` where `T` is the active tenant count capped at 256 — on the
 order of a few thousand series for a busy multi-tenant writer. Set
 `METRICS_PER_TENANT=false` on a store with many short-lived namespaces; the
-route-level HTTP, queue, engine, and lifecycle-job series stay on.
+route-level HTTP, query RED (without tenant), queue, engine, and lifecycle-job
+series stay on.
 
 ### Scraping in Kubernetes
 

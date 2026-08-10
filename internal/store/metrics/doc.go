@@ -6,12 +6,14 @@
 // runtime and process collectors it publishes a USE-shaped view of the store:
 // utilization and saturation as gauges (queue occupancy, resident tenant
 // handles, landing-file depth), errors and work as counters, and latency as
-// histograms.
+// histograms — plus a query-plane RED family (requests, duration, inflight)
+// under a closed api label set (promql | loki | sql).
 //
-// Two rules govern every label produced here. HTTP route labels come from a
-// closed set supplied by the caller and are never derived from a request path,
-// and tenant labels are opt-in and capped, so neither an unusual URL nor a
-// burst of unknown namespaces can grow the series count without bound.
+// Two rules govern every label produced here. HTTP route labels and query api
+// labels come from a closed set supplied by the caller and are never derived
+// from a request path, and tenant labels are opt-in and capped, so neither an
+// unusual URL nor a burst of unknown namespaces can grow the series count
+// without bound.
 //
 // Nothing in this package reads the data directory. File counts arrive from
 // lifecycle ticks that already scanned those directories for their own work,
