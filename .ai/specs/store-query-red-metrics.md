@@ -1,6 +1,6 @@
 # Spec: query-plane RED metrics (prism#113)
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `feat/store-query-red-metrics`
@@ -94,21 +94,21 @@ that assert scrape text moves as expected on success and 4xx/5xx.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `prism_store_query_requests_total{api,code,tenant?}` increments on
+- [x] `prism_store_query_requests_total{api,code,tenant?}` increments on
       promql/loki/sql success and on 4xx/5xx (incl. authz/guard/queue rejects)
-- [ ] `prism_store_query_duration_seconds{api,tenant?}` observes end-to-end
+- [x] `prism_store_query_duration_seconds{api,tenant?}` observes end-to-end
       handler time for those APIs
-- [ ] `prism_store_query_inflight{api}` rises while a request is in flight
+- [x] `prism_store_query_inflight{api}` rises while a request is in flight
       (including while queued) and returns to baseline after
-- [ ] `GET /metrics` scrape (already mounted) includes the new series when
+- [x] `GET /metrics` scrape (already mounted) includes the new series when
       metrics enabled; series absent/inert when disabled
-- [ ] Docs in `docs/STORE.md` list the three metric names + labels (`api`
+- [x] Docs in `docs/STORE.md` list the three metric names + labels (`api`
       enum, tenant cardinality note)
-- [ ] **Tests assert reported metrics:** unit/integration coverage scrapes the
+- [x] **Tests assert reported metrics:** unit/integration coverage scrapes the
       registry/handler and asserts expected sample lines/values for success,
       4xx, and 5xx (not merely “handler returns status”)
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
