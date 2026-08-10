@@ -173,6 +173,23 @@ func TestConsume_DoesNotRetry4xx(t *testing.T) {
 	}
 }
 
+func TestConsume_DoesNotRetry499(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(499) // client closed — must not stampede retries
+	}))
+	defer srv.Close()
+
+	out := newOutput(t, fastRetry(srv.URL))
+	if err := out.Consume(context.Background(), data.EncodedBlock{Bytes: []byte("x")}); err == nil {
+		t.Fatal("499 should be a permanent error")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("attempts = %d, want 1 (499 must not retry)", got)
+	}
+}
+
 func TestConsume_EmptyBlockIsNoOp(t *testing.T) {
 	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -2,6 +2,7 @@ package ingest_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -74,5 +75,16 @@ func TestLogsIngestUnknownArtifact(t *testing.T) {
 	defer closeResp(t, resp)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 unknown artifact", resp.StatusCode)
+	}
+}
+
+func TestLogsIngestClientAbortReturns499(t *testing.T) {
+	_, srv := newLogsIngestServer(t)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/"+testTenant+"/ingest/logs-summary", errReader{err: io.ErrUnexpectedEOF})
+	req.Header.Set("Content-Type", "application/octet-stream")
+	rec := httptest.NewRecorder()
+	srv.Config.Handler.ServeHTTP(rec, req)
+	if rec.Code != 499 {
+		t.Fatalf("status = %d, want 499 client closed; body=%s", rec.Code, rec.Body.String())
 	}
 }

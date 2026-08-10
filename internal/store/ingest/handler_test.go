@@ -131,6 +131,22 @@ func TestIngestEmptyBody204(t *testing.T) {
 	}
 }
 
+// errReader fails on the first Read (simulates a client hanging up mid-body).
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+func TestIngestClientAbortReturns499(t *testing.T) {
+	h, _ := testHandler(t, testConfig("", ingest.AuthNone))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/"+testTenant+"/ingest/metrics-raw", errReader{err: io.ErrUnexpectedEOF})
+	req.Header.Set("Content-Type", "application/vnd.apache.parquet")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 499 {
+		t.Fatalf("want 499, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestIngestUnknownTenant404(t *testing.T) {
 	h, _ := testHandler(t, testConfig("", ingest.AuthNone))
 	srv := httptest.NewServer(h)

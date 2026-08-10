@@ -292,7 +292,14 @@ HTTP ingest under RBAC uses JWT; Flight keeps the operator `AUTH_MODE` unchanged
 2. Unknown/malformed tenant → `404 unknown tenant`
 3. Unknown/malformed artifact → `404 unknown artifact type`
 4. HTTP body over `MAX_BODY_BYTES` → `413 window too large`
-5. Success → `204 No Content` (rows in `hot_current`)
+5. Client closed mid-body (`unexpected EOF` / canceled) → `499 client closed`
+   (nginx-style; not a server fault — agents must not retry-storm on it)
+6. Success → `204 No Content` (rows in `hot_current` or log window landed)
+
+`logs/.meta_generation` bump is concurrency-safe (unique tmp + per-tenant
+mutex) so parallel land/merge/retention cannot 500 on rename ENOENT.
+
+True internal land failures (disk, catalog) still return `500 ingest failed`.
 
 ### Auth modes (`AUTH_MODE`)
 

@@ -2,11 +2,17 @@ package engine
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/elk-utilities/prism/internal/store/logmeta"
 )
 
 func newLogEngine(t *testing.T) (string, *Engine) {
@@ -79,5 +85,61 @@ func TestLandLogWindowInvalidTenant(t *testing.T) {
 	_, e := newLogEngine(t)
 	if _, err := e.LandLogWindow("BAD TENANT", "logs-summary", strings.NewReader("x")); err == nil {
 		t.Fatal("invalid tenant: want error, got nil")
+	}
+}
+
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+func TestLandLogWindowClientAbort(t *testing.T) {
+	_, e := newLogEngine(t)
+	_, err := e.LandLogWindow("team-a", "logs-summary", errReader{err: io.ErrUnexpectedEOF})
+	if !errors.Is(err, ErrClientAbort) {
+		t.Fatalf("err = %v, want ErrClientAbort", err)
+	}
+}
+
+// Concurrent lands for one tenant/artifact drive finishLogLand's generation
+// bump + manifest sync + label-index carry from multiple goroutines at once.
+// Without a per-tenant serialize around that sequence, SyncManifest's shared
+// ".tmp" write races the same way the original Bump bug did (ENOENT on
+// rename); this proves every land finishes without error and the generation
+// stamp accounts for every one of them exactly once.
+func TestLandLogWindowSerializesFinalizePerTenant(t *testing.T) {
+	dir, e := newLogEngine(t)
+	const tenant = "team-concurrent-land"
+	const n = 24
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			payload := []byte(fmt.Sprintf("PAR1-window-%02d", i))
+			if _, err := e.LandLogWindow(tenant, "logs-summary", bytes.NewReader(payload)); err != nil {
+				errCh <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("concurrent LandLogWindow: %v", err)
+	}
+
+	gen, err := logmeta.Read(dir, tenant)
+	if err != nil {
+		t.Fatalf("Read generation: %v", err)
+	}
+	if gen != uint64(n) {
+		t.Fatalf("generation = %d, want %d (each concurrent land must finalize exactly once)", gen, n)
+	}
+
+	glob := filepath.Join(dir, tenant, "logs", "logs-summary", "*.parquet")
+	m, _ := filepath.Glob(glob)
+	if len(m) != n {
+		t.Fatalf("landed files = %d, want %d", len(m), n)
 	}
 }
