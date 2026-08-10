@@ -76,3 +76,21 @@ func TestLogsIngestUnknownArtifact(t *testing.T) {
 		t.Fatalf("status = %d, want 404 unknown artifact", resp.StatusCode)
 	}
 }
+
+// errReader fails on the first Read with the wrapped error (simulates a client
+// hanging up mid-body).
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+func TestLogsIngestClientAbortReturns499(t *testing.T) {
+	_, srv := newLogsIngestServer(t)
+	url := srv.URL + "/" + testTenant + "/ingest/logs-summary"
+	req := newIngestReq(t, url, errReader{err: io.ErrUnexpectedEOF})
+	resp := doIngestReq(t, req)
+	defer closeResp(t, resp)
+	if resp.StatusCode != 499 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 499 client closed; body=%s", resp.StatusCode, b)
+	}
+}

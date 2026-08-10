@@ -2,6 +2,8 @@ package engine
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,5 +81,17 @@ func TestLandLogWindowInvalidTenant(t *testing.T) {
 	_, e := newLogEngine(t)
 	if _, err := e.LandLogWindow("BAD TENANT", "logs-summary", strings.NewReader("x")); err == nil {
 		t.Fatal("invalid tenant: want error, got nil")
+	}
+}
+
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+func TestLandLogWindowClientAbort(t *testing.T) {
+	_, e := newLogEngine(t)
+	_, err := e.LandLogWindow("team-a", "logs-summary", errReader{err: io.ErrUnexpectedEOF})
+	if !errors.Is(err, ErrClientAbort) {
+		t.Fatalf("err = %v, want ErrClientAbort", err)
 	}
 }
