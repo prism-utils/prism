@@ -4,13 +4,54 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
 
 jobs:
-  # Fast gate on every PR: lint + unit/golden tests with the race detector.
+  # Maintainer-only CI: untrusted / fork PRs do not run builds unless labeled ci:run.
+  authorize:
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ASSOC: ${{ github.event.pull_request.author_association }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "push" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          SAME=false
+          if [ "${HEAD_REPO}" = "${BASE_REPO}" ]; then
+            SAME=true
+          fi
+          LABELED=false
+          case ",${LABELS}," in
+            *,ci:run,*) LABELED=true ;;
+          esac
+          if [ "${LABELED}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${SAME}" = "true" ] && { [ "${ASSOC}" = "OWNER" ] || [ "${ASSOC}" = "MEMBER" ] || [ "${ASSOC}" = "COLLABORATOR" ]; }; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "CI skipped: waiting for a maintainer to add the ci:run label (or same-repo maintainer association)."
+          echo "run=false" >> "$GITHUB_OUTPUT"
+
+  # Fast gate: lint + unit/golden tests with the race detector.
   fast:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +70,9 @@ jobs:
 
   # Store DuckDB path: ingest → flush → query → stats through real engine I/O.
   store:
+    needs: [authorize, fast]
+    if: needs.authorize.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    needs: fast
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -42,6 +84,8 @@ jobs:
 
   # Helm chart: lint, template variants, and golden manifest stability.
   chart:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -68,8 +112,9 @@ jobs:
 
   # Merge-blocking gate: brings up docker-compose deps and runs integration+e2e.
   full:
+    needs: [authorize, fast]
+    if: needs.authorize.outputs.run == 'true'
     runs-on: ubuntu-24.04
-    needs: fast
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
