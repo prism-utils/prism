@@ -93,19 +93,15 @@ See [`docs/STORE.md`](docs/STORE.md) and [`docs/DESIGN.md`](docs/DESIGN.md) §15
 
 ---
 
-## Public launch track (docs first — repo still private)
+## Public launch track (repo still private)
 
-Gate document: [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md). Spec:
+Plan: [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md). Spec:
 [`.ai/specs/public-launch.md`](.ai/specs/public-launch.md).
 
-- [x] **public-launch checklist + SECURITY/CoC** — `docs/PUBLIC_LAUNCH.md`,
-      root `SECURITY.md`, `CODE_OF_CONDUCT.md`, README/TASKS pointers.
-- [ ] **LICENSE** — owner-confirmed SPDX (recommended Apache-2.0); blocked on
-      open question in the spec.
-- [ ] **secure-by-default auth** — fail-closed serve (or equivalent) so
-      `AUTH_MODE=none` without RBAC is not the public default.
-- [ ] **contributor templates** — issue/PR templates; optional CODEOWNERS;
-      `govulncheck` in CI.
+- [x] **opening plan + README + SECURITY/CoC** — decisions locked; BSL review recorded.
+- [ ] **BSL 1.1 `LICENSE` + CLA** — blocked on licensor / Additional Use Grant / Change Date / Change License / CLA bot answers.
+- [ ] **rename `elk-utilities` → `prism-utils`** everywhere (module, GHCR, cosign, docs).
+- [ ] **move homelab docs** to private `prism-implementation`; strip from this tree.
 - [ ] **history scrub + credential rotation attestation**
-- [ ] **standalone public quickstart** (compose/Helm with auth on; no homelab)
-- [ ] **visibility flip** — only after PUBLIC_LAUNCH exit criteria are green.
+- [ ] **issue/PR templates** + standalone quickstart + auth do-not-expose NOTES
+- [ ] **tag `v1.0.0`** then **agent flips visibility** when exit criteria are green.

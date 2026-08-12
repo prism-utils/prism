@@ -1,89 +1,84 @@
-# Spec: Public launch readiness (checklist + security docs)
+# Spec: Public launch readiness (opening plan)
 
 Status: DRAFT
 
-- **Slug / branch:** `cursor/public-launch-checklist-8a90` (docs track; follow-up impl branches use `feat/public-launch-*`)
+- **Slug / branch:** `cursor/public-launch-checklist-8a90`
 - **Owner phase:** orchestrator
-- **PLAN phase(s):** packaging / release hygiene (post store track); not a PLAN.md build phase
+- **PLAN phase(s):** public launch / packaging hygiene
 
 ## 1. Task
 
-Prepare `prism` to be opened to the public safely: capture a concrete launch
-checklist, ship baseline `SECURITY.md` + Code of Conduct, and leave explicit
-open questions (license, org/module path, auth default hardening) for owners
-before visibility is flipped. This docs PR does **not** flip the repo public
-and does **not** add a `LICENSE` until owners confirm SPDX.
+Lock owner decisions for opening `prism-utils/prism` to the public, record the
+BSL 1.1 + CLA compatibility review, publish the executable opening plan
+([`docs/PUBLIC_LAUNCH.md`](../../docs/PUBLIC_LAUNCH.md)), and ship a concise
+tech README with the stated motivation. Implementation workstreams (LICENSE,
+rename, scrub, doc move, CLA, `v1.0.0`, visibility flip) follow once remaining
+BSL parameters are answered.
 
 ## 2. Scope
 
-- **In scope:**
-  - `docs/PUBLIC_LAUNCH.md` — ordered hard/soft gates for public beta and `v1.0.0`
-  - Root `SECURITY.md` (reporting + threat-model summary)
-  - Root `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)
-  - README + `TASKS.md` pointers to the launch track
-  - Spec open questions + recommended decisions (Decision Protocol)
-- **Out of scope (follow-up PRs after questions resolve):**
-  - Adding `LICENSE` / `NOTICE`
-  - Changing `AUTH_MODE` default or adding `ALLOW_INSECURE`
-  - History scrub / credential rotation execution
-  - Issue/PR templates, CODEOWNERS, `govulncheck` CI job
-  - Flipping GitHub `visibility: public`
-  - Module-path / org rename
+- **In scope (this PR slice):** opening plan, README rewrite, decision log,
+  BSL compatibility notes, remaining BSL parameter questions.
+- **Out of scope until BSL params land:** adding `LICENSE`, module rename,
+  CLA bot, history scrub execution, creating `prism-implementation`, visibility
+  flip, tagging `v1.0.0`.
 
-## 3. Open questions  (must be empty/answered before `Status: READY`)
+## 3. Open questions
 
-- [ ] Q: SPDX license? — A: **PENDING — ask owners.** Recommendation: **Apache-2.0** (OTel Collector / Arrow peer norm; patent grant). Do not add `LICENSE` until confirmed.
-- [ ] Q: Finish Go module cutover to `github.com/prism-utils/prism` before public? — A: **PENDING — ask owners.** GitHub already redirects to `prism-utils/prism`; `go.mod` still imports `elk-utilities/prism`. Recommendation: **yes, rename module before first public tag.**
-- [ ] Q: Auth default for public binary — fail-closed (`ALLOW_INSECURE`) vs chart-only bearer default? — A: **PENDING — ask owners.** Recommendation: **fail-closed serve** unless `ALLOW_INSECURE=true` (OTel-style secure defaults; see PUBLIC_LAUNCH §2.2 option A).
-- [ ] Q: First public tag shape? — A: **Recommended default (owners may override):** `v0.x` / `v1.0.0-beta.N` until auth defaults land; then `v1.0.0`.
-- [ ] Q: Keep provisional name `prism` through beta? — A: **Recommended default: yes**; freeze before `v1.0.0`.
+### Resolved (2026-08-12)
 
-## 4. Decision log  (Decision Protocol)
+- [x] Q: MVP finished enough to open? — A: **Yes — public on current ship (option A).**
+- [x] Q: License? — A: **BSL 1.1 + CLA on every external PR.**
+- [x] Q: Module path? — A: **Rename all `elk-utilities` → `prism-utils`.**
+- [x] Q: Auth defaults? — A: **Keep `AUTH_MODE=none`; document do-not-expose (C).**
+- [x] Q: First public tag? — A: **`v1.0.0` when exit criteria green (B).**
+- [x] Q: Name? — A: **Keep `prism` (A).**
+- [x] Q: Upstream vs homelab? — A: **Agent/store/alert/Helm only upstream (A).**
+- [x] Q: Homelab docs? — A: **Strip from public; move to private `prism-implementation` (C).**
+- [x] Q: Secrets scrub? — A: **Full-history + rotate (A).**
+- [x] Q: Contributor surface? — A: **Issue/PR templates + CoC + SECURITY (A).**
+- [x] Q: Who flips visibility? — A: **Agent may flip when exit criteria green (B).**
 
-- Launch docs first, code hardening second:
-  - ref: https://opentelemetry.io/docs/security/config-best-practices/ — public projects document threat model + secure config before strangers deploy.
-  - perf: zero runtime cost for docs; unblocks parallel owner decisions.
-  - product: prevents a “public but license-less / auth-none default” footgun.
-- Recommend Apache-2.0 (not applied in this PR):
-  - ref: https://github.com/open-telemetry/opentelemetry-collector (Apache-2.0) — closest mental-model peer called out in DESIGN.md.
+### Still blocking `LICENSE` text
+
+- [ ] Q: Licensor legal name? — A: PENDING
+- [ ] Q: Additional Use Grant style (A competing-hosted ban / B numeric cap / C None)? — A: PENDING — recommend **A**
+- [ ] Q: Change Date offset (3y / 4y)? — A: PENDING — recommend **4y**
+- [ ] Q: Change License (Apache-2.0 / other GPL-compatible)? — A: PENDING — recommend **Apache-2.0**
+- [ ] Q: CLA mechanism (CLA assistant bot / other)? — A: PENDING
+
+## 4. Decision log
+
+- BSL 1.1 over Apache-2.0: owner choice for source-available + conversion path.
+  - ref: https://mariadb.com/bsl-faq-adopting/ — BSL is not OSI OSS; Change License must be GPL-compatible; production limited unless Additional Use Grant.
+  - ref: https://blog.sentry.io/relicensing-sentry/ ; Cockroach BSL — production OK except competing SaaS/DBaaS; Change License Apache-2.0.
   - perf: N/A (legal).
-  - product: easiest downstream adoption in CNCF-adjacent stacks; matches goreleaser `LICENSE*` packaging already configured.
-- Recommend fail-closed auth for public serve (follow-up PR):
-  - ref: https://opentelemetry.io/blog/2024/hardening-the-collector-one/ — Collector moved defaults toward localhost / safer binds after audit; insecure convenience is opt-in.
-  - perf: one startup check; no per-request cost.
-  - product: strangers cloning the README cannot accidentally expose unauthenticated ingest/query on `:8080`.
-- Threat-model summary lives in `SECURITY.md` (short), detail stays in `STORE.md`:
-  - ref: GitHub docs on SECURITY.md + private vulnerability reporting.
-  - perf: N/A.
-  - product: reporters know the channel; operators know what is guaranteed.
+  - product: protects against competing hosted offerings while allowing self-host; must not call the project “open source.”
+- CLA on external PRs: required for BSL relicensing control.
+  - ref: MariaDB FAQ contribution path (BSD *or* CLA); owner chose CLA.
+  - product: clear inbound IP for commercial license + Change License conversion.
+- Dependency compatibility: permissive Apache/MIT/BSD deps OK; GPL/AGPL before Change Date not OK.
+  - ref: MariaDB FAQ “Is the BSL compatible with GPL (prior to the Change Date)? — No.”
+  - product: add pre-`v1.0.0` license report gate.
+- Auth default unchanged (`none`): owner acceptance of trusted-network default with docs warnings.
+  - product: faster launch; risk owned via CONFIG/NOTES language.
+- Homelab docs → private `prism-implementation`: keeps public tree clean of Traefik/site-main/prism-proxy cutover.
 
-## 5. Acceptance checklist  (developer checks these off)
+## 5. Acceptance checklist
 
-- [x] `docs/PUBLIC_LAUNCH.md` exists with hard blockers, soft items, and exit criteria
-- [x] Root `SECURITY.md` with reporting channel + threat-model summary
-- [x] Root `CODE_OF_CONDUCT.md`
-- [x] README links the public-launch checklist
-- [x] `TASKS.md` lists the public-launch track
-- [x] Spec records open questions; no `LICENSE` added without owner confirmation
-- [x] Tests written first — N/A (docs-only; no code under test)
-- [x] `make lint test` — N/A for docs-only; not required to claim this docs slice done
+- [x] `docs/PUBLIC_LAUNCH.md` rewritten as opening plan with locked decisions + BSL review + exit criteria
+- [x] README rewritten: concise, tech audience, motivation included, benches linked out
+- [x] Spec records resolved answers + remaining BSL parameter questions
+- [x] Tests / `make lint test` — N/A (docs-only)
 
-## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
+## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md) — docs-only; no guideline violations
-- [ ] **Gate 2 — Tests cover edge cases** — N/A (docs-only); reviewer confirms no code change slipped in
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — N/A (no code comments)
-- [ ] Full docs/REVIEW.md checklist passes (docs slice)
+- [ ] **Gate 1 — Follows the guidelines**
+- [ ] **Gate 2 — Tests cover edge cases** — N/A docs-only
+- [ ] **Gate 3 — Docs match the task**
+- [ ] **Gate 4 — Comments atomic** — N/A
+- [ ] Full docs/REVIEW.md checklist (docs slice)
 
 ## 7. Reviewer notes
 
 _(empty until first review)_
-
-## Follow-ups after owners answer §3
-
-1. `feat/public-launch-license` — add `LICENSE` (+ `NOTICE` if needed).
-2. `feat/public-launch-auth-defaults` — implement §2.2 fail-closed policy + chart NOTES.
-3. `chore/public-launch-templates` — issue/PR templates, optional CODEOWNERS, `govulncheck` CI.
-4. `chore/public-launch-scrub` — gitleaks full-history + rotation attestation in the checklist.
-5. Owner action: flip GitHub visibility when PUBLIC_LAUNCH exit criteria are green.
