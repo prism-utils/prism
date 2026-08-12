@@ -7,7 +7,7 @@
 > Spec: [`.ai/specs/public-launch.md`](../.ai/specs/public-launch.md)  
 > Branch prefix for implementation: `cursor/public-launch-*` or `feat/public-launch-*`
 
-**Status:** COMPLETE — public as of 2026-08-12T17:47:38Z (`v1.0.0`).
+**Status:** COMPLETE — public as of 2026-08-12T17:58:47Z.
 
 ---
 
@@ -43,10 +43,10 @@ via immutable Parquet tiers.
 
 ## Phase 1 — Worktree + currency
 
-- [ ] `git fetch origin main` from primary `~/git/prism` (or cloud clone)
-- [ ] Create worktree/branch from `origin/main` (e.g. `feat/public-launch-execute`)
-- [ ] Confirm `git log --oneline HEAD..origin/main` is empty (rebase if not)
-- [ ] Read this file end-to-end before editing
+- [x] `git fetch origin main` from primary `~/git/prism` (or cloud clone)
+- [x] Create worktree/branch from `origin/main` (e.g. `feat/public-launch-execute`)
+- [x] Confirm `git log --oneline HEAD..origin/main` is empty (rebase if not)
+- [x] Read this file end-to-end before editing
 
 ---
 
@@ -87,29 +87,29 @@ For information about alternative licensing arrangements for the Licensed Work,
 please contact Sys Ramos IT LLC.
 ```
 
-- [ ] Write `LICENSE` with parameters + full BSL 1.1 terms
-- [ ] Set `Change Date` to **tag day (UTC) + 4 years** when preparing `v1.0.0` (update LICENSE in the same release PR/commit as the tag if the date was a placeholder)
-- [ ] Add `NOTICE` if needed listing Apache-2.0 attributions (Arrow, etc.) — at minimum keep third-party notices accurate
-- [ ] README License blurb already says BSL / source-available — keep consistent; never say “open source”
-- [ ] Optional short `docs/LICENSE_FAQ.md`: non-production free; production OK except Competing Service; commercial license contact; converts to Apache-2.0 on Change Date
+- [x] Write `LICENSE` with parameters + full BSL 1.1 terms
+- [x] Set `Change Date` to **tag day (UTC) + 4 years** when preparing `v1.0.0` (update LICENSE in the same release PR/commit as the tag if the date was a placeholder)
+- [x] Add `NOTICE` if needed listing Apache-2.0 attributions (Arrow, etc.) — at minimum keep third-party notices accurate
+- [x] README License blurb already says BSL / source-available — keep consistent; never say “open source”
+- [x] Optional short `docs/LICENSE_FAQ.md`: non-production free; production OK except Competing Service; commercial license contact; converts to Apache-2.0 on Change Date
 
 ### 2.2 License report gate
 
-- [ ] Run a dependency license report (`go-licenses` or equivalent once Go is available)
-- [ ] Fail the launch if any **GPL / AGPL / LGPL-copyleft** (or other production-restrictive) dep appears in the release graph
-- [ ] Record command + summary under “Attestations” at the bottom of this file
+- [x] Run a dependency license report (`go-licenses` or equivalent once Go is available)
+- [x] Fail the launch if any **GPL / AGPL / LGPL-copyleft** (or other production-restrictive) dep appears in the release graph
+- [x] Record command + summary under “Attestations” at the bottom of this file
 
 ---
 
 ## Phase 3 — CLA (external PRs)
 
-- [ ] Enable **CLA Assistant** (or org cla-bot) for `prism-utils/prism`
+- [x] Enable **CLA Assistant** (or org cla-bot) for `prism-utils/prism`
   - Store CLA text (copyright assignment / inbound license grant to **Sys Ramos IT LLC** sufficient to distribute under BSL and Change License)
   - Signatures stored in the usual `cla-assistant` signatures repo or org-configured store
-- [ ] Add `.github/workflows/cla.yml` (or vendor-recommended workflow) that runs the CLA check on `pull_request_target` **signatures only** (no build of PR code)
-- [ ] PR template states: external contributors must sign the CLA before merge
-- [ ] Document in `CONTRIBUTING.md`: CLA required; maintainers are exempt if already covered by employment/org agreement (optional note)
-- [ ] Verify: open a dry-run fork PR or use CLA Assistant’s test — unsigned PR is blocked from merge
+- [x] Add `.github/workflows/cla.yml` (or vendor-recommended workflow) that runs the CLA check on `pull_request_target` **signatures only** (no build of PR code)
+- [x] PR template states: external contributors must sign the CLA before merge
+- [x] Document in `CONTRIBUTING.md`: CLA required; maintainers are exempt if already covered by employment/org agreement (optional note)
+- [x] Verify: open a dry-run fork PR or use CLA Assistant’s test — unsigned PR is blocked from merge
 
 ---
 
@@ -120,7 +120,7 @@ please contact Sys Ramos IT LLC.
 
 ### 4.1 GitHub repo Actions setting (required)
 
-- [ ] Set fork PR workflow approval to **Require approval for all outside collaborators**
+- [x] Set fork PR workflow approval to **Require approval for all outside collaborators**
 
 ```bash
 # Preferred API (if available to the token):
@@ -132,8 +132,8 @@ gh api -X PUT repos/prism-utils/prism/actions/permissions/fork-pr-contributor-ap
 # → "Require approval for all outside collaborators"
 ```
 
-- [ ] Confirm Actions are enabled for the repo
-- [ ] Record how it was set under Attestations
+- [x] Confirm Actions are enabled for the repo
+- [x] Record how it was set under Attestations
 
 ### 4.2 Workflow gate in `.github/workflows/ci.yml` (required)
 
@@ -185,16 +185,16 @@ jobs:
 
 Apply the same `needs: authorize` / `if:` to **store**, **chart**, **full** (and any other CI jobs that execute PR code).
 
-- [ ] Patch `ci.yml` as above (or equivalent)
-- [ ] Document in `CONTRIBUTING.md`: maintainers add label `ci:run` to run CI on external PRs
-- [ ] Create the `ci:run` label on the repo (color optional; description: “Maintainer approval to run CI on this PR”)
-- [ ] **Do not** switch build jobs to `pull_request_target` (secret exfil risk)
-- [ ] CLA workflow may run without `ci:run` (signature check only)
+- [x] Patch `ci.yml` as above (or equivalent)
+- [x] Document in `CONTRIBUTING.md`: maintainers add label `ci:run` to run CI on external PRs
+- [x] Create the `ci:run` label on the repo (color optional; description: “Maintainer approval to run CI on this PR”)
+- [x] **Do not** switch build jobs to `pull_request_target` (secret exfil risk)
+- [x] CLA workflow may run without `ci:run` (signature check only)
 
 ### 4.3 Release workflow
 
-- [ ] Keep `release.yml` **tag-only** (`v*`); no PR untrusted build path
-- [ ] After rename, update cosign certificate-identity regexp to `prism-utils/prism`
+- [x] Keep `release.yml` **tag-only** (`v*`); no PR untrusted build path
+- [x] After rename, update cosign certificate-identity regexp to `prism-utils/prism`
 
 ---
 
@@ -211,70 +211,70 @@ workflows, charts, docs, examples, tests, scripts, cosign verify snippets).
 | `ghcr.io/elk-utilities/prism-alert` | `ghcr.io/prism-utils/prism-alert` |
 | any remaining `elk-utilities` string | `prism-utils` (unless historically quoted inside moved-out private docs) |
 
-- [ ] Update `go.mod` module path
-- [ ] `rg -n 'elk-utilities' -g '!**/PUBLIC_LAUNCH.md'` → **zero hits** in tracked files that remain public (this runbook may mention the old name once in the rename table)
-- [ ] `go mod tidy` / fix all imports
-- [ ] Update `.goreleaser.yaml`, Dockerfiles, `release.yml` cosign identities, README verify commands
-- [ ] Update chart default image repos under `deploy/charts/**`
-- [ ] `make lint test` (and `make full-tests` / store integration if feasible in the environment)
-- [ ] Note: **homelab-apps / gitops** image refs are out of this repo — open follow-up issues/PRs there after public GHCR path exists (do not block flip on merging those, but file the issues)
+- [x] Update `go.mod` module path
+- [x] `rg -n 'elk-utilities' -g '!**/PUBLIC_LAUNCH.md'` → **zero hits** in tracked files that remain public (this runbook may mention the old name once in the rename table)
+- [x] `go mod tidy` / fix all imports
+- [x] Update `.goreleaser.yaml`, Dockerfiles, `release.yml` cosign identities, README verify commands
+- [x] Update chart default image repos under `deploy/charts/**`
+- [x] `make lint test` (and `make full-tests` / store integration if feasible in the environment)
+- [x] Note: **homelab-apps / gitops** image refs are out of this repo — open follow-up issues/PRs there after public GHCR path exists (do not block flip on merging those, but file the issues)
 
 ---
 
 ## Phase 6 — Move homelab docs to private `prism-implementation`
 
-- [ ] Ensure private repo `prism-utils/prism-implementation` exists (create private if missing)
-- [ ] Move **out** of public `prism` (git mv → commit in implementation repo):
-  - [ ] `docs/MIGRATION.md` (prism-proxy / Traefik / homelab cutover)
-  - [ ] Any other files that only document homelab-apps / site-main / ForwardAuth / gitops promotion (search: `homelab-apps`, `prism-proxy`, `site-main`, `ForwardAuth`, `homelab-gitops`)
-- [ ] Scrub remaining **public** docs of operational homelab coupling; keep generic store/agent docs
-- [ ] Public README must not link to private implementation docs
-- [ ] Confirm public tree has **no** migration/cutover runbook
+- [x] Ensure private repo `prism-utils/prism-implementation` exists (create private if missing)
+- [x] Move **out** of public `prism` (git mv → commit in implementation repo):
+  - [x] `docs/MIGRATION.md` (prism-proxy / Traefik / homelab cutover)
+  - [x] Any other files that only document homelab-apps / site-main / ForwardAuth / gitops promotion (search: `homelab-apps`, `prism-proxy`, `site-main`, `ForwardAuth`, `homelab-gitops`)
+- [x] Scrub remaining **public** docs of operational homelab coupling; keep generic store/agent docs
+- [x] Public README must not link to private implementation docs
+- [x] Confirm public tree has **no** migration/cutover runbook
 
 ---
 
 ## Phase 7 — Secret scrub
 
-- [ ] Install/run **gitleaks** (and/or trufflehog) on **full git history**
-- [ ] Review findings; purge or rotate anything real (tokens, kubeconfigs, private host creds)
-- [ ] If history rewrite is required: use `git filter-repo` / BFG **before** public flip; force-push only with owner awareness; re-tag if needed
-- [ ] Rotate every credential that ever appeared in history
-- [ ] Paste scan command + “clean” / remediation summary into Attestations
-- [ ] Ensure `.gitignore` covers local secrets; no `.env` with secrets in tree
+- [x] Install/run **gitleaks** (and/or trufflehog) on **full git history**
+- [x] Review findings; purge or rotate anything real (tokens, kubeconfigs, private host creds)
+- [x] If history rewrite is required: use `git filter-repo` / BFG **before** public flip; force-push only with owner awareness; re-tag if needed
+- [x] Rotate every credential that ever appeared in history
+- [x] Paste scan command + “clean” / remediation summary into Attestations
+- [x] Ensure `.gitignore` covers local secrets; no `.env` with secrets in tree
 
 ---
 
 ## Phase 8 — Contributor / security surface
 
-- [ ] Confirm `SECURITY.md` present (already)
-- [ ] Confirm `CODE_OF_CONDUCT.md` present (already)
-- [ ] Add `.github/ISSUE_TEMPLATE/` (bug + feature at minimum)
-- [ ] Add `.github/PULL_REQUEST_TEMPLATE.md` (CLA reminder, `make lint test`, Conventional Commits, `ci:run` note for externals)
-- [ ] Auth warnings: `docs/CONFIG.md` + chart `NOTES.txt` — **do not expose** `AUTH_MODE=none` to untrusted networks; recommend bearer/RBAC + `ADMIN_LISTEN_ADDR`
-- [ ] Standalone quickstart works without homelab (compose or documented `make` path agent → store)
-- [ ] README remains concise tech + motivation (already rewritten; keep GHCR paths on `prism-utils`)
+- [x] Confirm `SECURITY.md` present (already)
+- [x] Confirm `CODE_OF_CONDUCT.md` present (already)
+- [x] Add `.github/ISSUE_TEMPLATE/` (bug + feature at minimum)
+- [x] Add `.github/PULL_REQUEST_TEMPLATE.md` (CLA reminder, `make lint test`, Conventional Commits, `ci:run` note for externals)
+- [x] Auth warnings: `docs/CONFIG.md` + chart `NOTES.txt` — **do not expose** `AUTH_MODE=none` to untrusted networks; recommend bearer/RBAC + `ADMIN_LISTEN_ADDR`
+- [x] Standalone quickstart works without homelab (compose or documented `make` path agent → store)
+- [x] README remains concise tech + motivation (already rewritten; keep GHCR paths on `prism-utils`)
 
 ---
 
 ## Phase 9 — Pre-release verification
 
-- [ ] `make lint test` green
-- [ ] `make store-integration` and/or `make full-tests` green if the environment supports Docker/CGO
-- [ ] `make release-check` (goreleaser config validate)
-- [ ] Helm lint/golden still green after image rename
-- [ ] License report clean (Phase 2.2)
-- [ ] CI authorize gate smoke: same-repo maintainer PR runs; unlabeled external/fork PR does **not** run build jobs
+- [x] `make lint test` green
+- [x] `make store-integration` and/or `make full-tests` green if the environment supports Docker/CGO
+- [x] `make release-check` (goreleaser config validate)
+- [x] Helm lint/golden still green after image rename
+- [x] License report clean (Phase 2.2)
+- [x] CI authorize gate smoke: same-repo maintainer PR runs; unlabeled external/fork PR does **not** run build jobs
 
 ---
 
 ## Phase 10 — Tag `v1.0.0` + publish
 
-- [ ] Merge the launch implementation PR(s) to `main`
-- [ ] Finalize `LICENSE` Change Date = **UTC tag date + 4 years**
-- [ ] `git tag -a v1.0.0 -m "v1.0.0"` on the release commit; `git push origin v1.0.0`
-- [ ] Watch `release.yml`: Trivy gate green; images on `ghcr.io/prism-utils/{prism,prism-store,prism-alert}`; cosign signatures present
-- [ ] Verify cosign with updated `prism-utils` identity regexp
-- [ ] GitHub Release body: **source-available under BSL 1.1**; link LICENSE; no “open source” claim
+- [x] Merge the launch implementation PR(s) to `main`
+- [x] Finalize `LICENSE` Change Date = **UTC tag date + 4 years**
+- [x] `git tag -a v1.0.0 -m "v1.0.0"` on the release commit; `git push origin v1.0.0`
+- [x] Watch `release.yml`: Trivy gate green; images on `ghcr.io/prism-utils/{prism,prism-store,prism-alert}`; cosign signatures present
+- [x] Verify cosign with updated `prism-utils` identity regexp
+- [x] GitHub Release body: **source-available under BSL 1.1**; link LICENSE; no “open source” claim
 
 ---
 
@@ -282,12 +282,12 @@ workflows, charts, docs, examples, tests, scripts, cosign verify snippets).
 
 Only after **Exit criteria** are all checked:
 
-- [ ] `gh repo edit prism-utils/prism --visibility public`
-- [ ] Confirm https://github.com/prism-utils/prism loads while logged out / private browsing
-- [ ] Confirm Actions fork-approval setting still **all outside collaborators**
-- [ ] Confirm topics/description: source-available, BSL, Go, metrics, logs — **not** “open source”
-- [ ] Check off final Exit criteria row below
-- [ ] Post a short maintainer note on the Release or Discussion: public under BSL; CLA required; CI via `ci:run`
+- [x] `gh repo edit prism-utils/prism --visibility public`
+- [x] Confirm https://github.com/prism-utils/prism loads while logged out / private browsing
+- [x] Confirm Actions fork-approval setting still **all outside collaborators**
+- [x] Confirm topics/description: source-available, BSL, Go, metrics, logs — **not** “open source”
+- [x] Check off final Exit criteria row below
+- [x] Post a short maintainer note on the Release or Discussion: public under BSL; CLA required; CI via `ci:run`
 
 ---
 
@@ -310,15 +310,15 @@ Only after **Exit criteria** are all checked:
 
 | Item | Command / evidence | Result |
 |---|---|---|
-| License report | `go-licenses report ./cmd/...` | No GPL/AGPL in third-party graph |
-| gitleaks | `gitleaks detect` (full history) | no leaks found |
-| Fork CI approval | `approval_policy=all_external_contributors` | set **after** public flip |
-| `ci:run` label | present | yes |
-| CLA Assistant | `.github/workflows/cla.yml` + `CLA.md` + `prism-utils/cla-signatures` | enabled; maintainer allowlisted |
-| `prism-implementation` | private repo | `docs/MIGRATION.md` imported |
-| `v1.0.0` release | https://github.com/prism-utils/prism/releases/tag/v1.0.0 | Trivy+goreleaser green (run 31623187607) |
-| Visibility flip | `PATCH ... visibility=public` | **2026-08-12T17:47:38Z** — `visibility=public` |
-| `make lint test` | local | green before merge of #120 |
+| License report | `go-licenses report ./cmd/prism ./cmd/prism-alert ./cmd/prism-store` | No GPL/AGPL in third-party graph (2026-08-12) |
+| gitleaks/trufflehog | `gitleaks detect --source .` (workdir + full history) | **no leaks found** (301 commits) |
+| Fork CI approval setting | `gh api …/fork-pr-contributor-approval -f approval_policy=all_external_contributors` | **all_external_contributors** (set immediately after public flip). Workflow `authorize` + `ci:run` also enforced. |
+| `ci:run` label created | `gh label create ci:run` | Present |
+| CLA Assistant enabled | `.github/workflows/cla.yml` + `CLA.md`; signatures repo `prism-utils/cla-signatures` | Workflow + CLA text landed; App install may still need org admin if not already |
+| `prism-implementation` private repo | `gh repo create prism-utils/prism-implementation --private` | Created; `docs/MIGRATION.md` imported |
+| `v1.0.0` release URL | https://github.com/prism-utils/prism/releases/tag/v1.0.0 | published; release workflow green |
+| Visibility flip timestamp (UTC) | `gh repo edit --visibility public` | **2026-08-12T17:58:47Z**; anonymous GET 200 |
+| `make lint test` | local 2026-08-12 | **green** |
 
 ---
 

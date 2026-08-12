@@ -7,8 +7,8 @@ in one pipeline. Go. Config-driven (OTel-shaped). Parquet on the wire.
 > (BSL 1.1 — see also docs/LICENSE_FAQ.md). Not OSI-approved until the Change Date; source-available under BSL until then.
 > External PRs require a **CLA**.
 >
-> **Repo status:** private until [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md)
-> exit criteria are green; first public tag is **`v1.0.0`**.
+> **Public** under BSL 1.1. First public tag: **`v1.0.0`**. Launch runbook:
+> [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md).
 
 ## Why
 
