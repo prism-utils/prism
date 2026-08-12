@@ -33,7 +33,7 @@ jobs:
           remote-repository-name: cla-signatures
           branch: main
           path-to-signatures: signatures/prism/cla.json
-          allowlist: bot*,dependabot[bot],github-actions[bot]
+          allowlist: bot*,dependabot[bot],github-actions[bot],maramos
           custom-notsigned-prcomment: >
             Thank you for your contribution. prism requires a signed Contributor
             License Agreement (CLA) before we can merge. Please read CLA.md and
