@@ -19,33 +19,29 @@ jobs:
       - id: decide
         env:
           EVENT_NAME: ${{ github.event_name }}
-          ASSOC: ${{ github.event.pull_request.author_association }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPO: ${{ github.repository }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           set -euo pipefail
+          # Always run on push to main.
           if [ "${EVENT_NAME}" = "push" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          SAME=false
+          # Same-repo PRs are from branches that required push access — run CI.
           if [ "${HEAD_REPO}" = "${BASE_REPO}" ]; then
-            SAME=true
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          LABELED=false
+          # Fork / external PRs: require maintainer label ci:run (no untrusted builds).
           case ",${LABELS}," in
-            *,ci:run,*) LABELED=true ;;
+            *,ci:run,*)
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
           esac
-          if [ "${LABELED}" = "true" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "${SAME}" = "true" ] && { [ "${ASSOC}" = "OWNER" ] || [ "${ASSOC}" = "MEMBER" ] || [ "${ASSOC}" = "COLLABORATOR" ]; }; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "CI skipped: waiting for a maintainer to add the ci:run label (or same-repo maintainer association)."
+          echo "CI skipped: fork/external PR — a maintainer must add the ci:run label after reviewing the diff."
           echo "run=false" >> "$GITHUB_OUTPUT"
 
   # Fast gate: lint + unit/golden tests with the race detector.
