@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/bench/internal/monitor"
+	"github.com/prism-utils/prism/bench/internal/monitor"
 	"github.com/stretchr/testify/require"
 )
 

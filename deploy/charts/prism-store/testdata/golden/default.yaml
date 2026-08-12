@@ -64,7 +64,7 @@ spec:
         fsGroup: 472
       containers:
         - name: prism-store
-          image: "ghcr.io/elk-utilities/prism-store:dev"
+          image: "ghcr.io/prism-utils/prism-store:dev"
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsNonRoot: true

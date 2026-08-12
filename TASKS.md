@@ -90,3 +90,21 @@ Dependency-ordered sub-issues on branch `feat/store-skeleton` and follow-ups:
 - [ ] **store-release (#29)** — Helm chart, GHCR image, goreleaser ldflags.
 
 See [`docs/STORE.md`](docs/STORE.md) and [`docs/DESIGN.md`](docs/DESIGN.md) §15.
+
+---
+
+## Public launch track
+
+**Runbook (execute this):** [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md)  
+Spec: [`.ai/specs/public-launch.md`](.ai/specs/public-launch.md) — `Status: READY`
+
+- [x] **Plan locked** — decisions D1–D12 + L1–L5; maintainer-only CI recipe; exit criteria.
+- [ ] **Phase 2** — BSL 1.1 `LICENSE` (Sys Ramos IT LLC; Competing Service grant; Apache-2.0 @ +4y)
+- [ ] **Phase 3** — CLA Assistant on external PRs
+- [ ] **Phase 4** — Maintainer-only CI (fork approval + `ci.yml` authorize / `ci:run`)
+- [ ] **Phase 5** — Rename all `prism-utils` → `prism-utils`
+- [ ] **Phase 6** — Move homelab docs to private `prism-implementation`
+- [ ] **Phase 7** — Full-history scrub + rotate
+- [ ] **Phase 8** — Issue/PR templates + auth warnings + standalone quickstart
+- [ ] **Phase 9–10** — Verify + tag **`v1.0.0`**
+- [ ] **Phase 11** — Agent flips repo visibility to public

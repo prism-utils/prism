@@ -16,9 +16,9 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
-	"github.com/elk-utilities/prism/internal/encoder/bloom"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
+	"github.com/prism-utils/prism/internal/encoder/bloom"
 )
 
 // Type is the config identifier for this encoder.

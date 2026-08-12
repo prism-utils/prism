@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/flight"
-	"github.com/elk-utilities/prism/internal/duckdbfile"
-	"github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/store/ingest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

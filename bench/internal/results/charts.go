@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/elk-utilities/prism/bench/internal/monitor"
+	"github.com/prism-utils/prism/bench/internal/monitor"
 	"gonum.org/v1/plot"
 	"gonum.org/v1/plot/plotter"
 	"gonum.org/v1/plot/vg"

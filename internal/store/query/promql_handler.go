@@ -17,9 +17,9 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/store/engine"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 const promQLMaxBodyBytes = 1 << 20 // 1 MiB form body cap for POST queries.

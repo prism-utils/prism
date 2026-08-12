@@ -8,7 +8,7 @@
 
 [Unit]
 Description=prism edge collector
-Documentation=https://github.com/elk-utilities/prism
+Documentation=https://github.com/prism-utils/prism
 After=network-online.target
 Wants=network-online.target
 

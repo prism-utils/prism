@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/query"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const tenantLogs = "user-logs-9f2a"

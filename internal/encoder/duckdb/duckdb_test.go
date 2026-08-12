@@ -14,10 +14,10 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
-	"github.com/elk-utilities/prism/internal/duckdbfile"
-	encoderduckdb "github.com/elk-utilities/prism/internal/encoder/duckdb"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
+	"github.com/prism-utils/prism/internal/duckdbfile"
+	encoderduckdb "github.com/prism-utils/prism/internal/encoder/duckdb"
 )
 
 func sampleBatch(mem memory.Allocator) data.RecordBatch {

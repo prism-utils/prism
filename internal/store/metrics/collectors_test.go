@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/metrics"
-	"github.com/elk-utilities/prism/internal/store/queue"
+	"github.com/prism-utils/prism/internal/store/metrics"
+	"github.com/prism-utils/prism/internal/store/queue"
 )
 
 type fakeEngine struct {

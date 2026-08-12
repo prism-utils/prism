@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/query"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/query"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 const (

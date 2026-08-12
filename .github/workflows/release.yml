@@ -32,7 +32,7 @@ jobs:
           mkdir -p scanctx
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
             go build -trimpath \
-              -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
+              -ldflags "-s -w -X github.com/prism-utils/prism/internal/version.Version=${GITHUB_REF_NAME}" \
               -o scanctx/prism ./cmd/prism
       - name: build agent image for scanning
         run: docker build -f Dockerfile.release -t prism:scan scanctx
@@ -55,7 +55,7 @@ jobs:
           mkdir -p scanctx-store
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
             go build -trimpath -tags duckdb_arrow \
-              -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
+              -ldflags "-s -w -X github.com/prism-utils/prism/internal/version.Version=${GITHUB_REF_NAME}" \
               -o scanctx-store/prism-store ./cmd/prism-store
       - name: build store image for scanning
         run: docker build -f Dockerfile.store.release -t prism-store:scan scanctx-store
@@ -100,7 +100,7 @@ jobs:
           mkdir -p scanctx-alert
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
             go build -trimpath \
-              -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${GITHUB_REF_NAME}" \
+              -ldflags "-s -w -X github.com/prism-utils/prism/internal/version.Version=${GITHUB_REF_NAME}" \
               -o scanctx-alert/prism-alert ./cmd/prism-alert
       - name: build alert image for scanning
         run: docker build -f Dockerfile.alert.release -t prism-alert:scan scanctx-alert
@@ -170,5 +170,5 @@ jobs:
             sed -i "s/^version: .*/version: ${VERSION}/" "deploy/charts/${chart}/Chart.yaml"
             sed -i "s/^appVersion: .*/appVersion: ${GITHUB_REF_NAME}/" "deploy/charts/${chart}/Chart.yaml"
             helm package "deploy/charts/${chart}" --destination /tmp
-            helm push "/tmp/${chart}-${VERSION}.tgz" oci://ghcr.io/elk-utilities/charts
+            helm push "/tmp/${chart}-${VERSION}.tgz" oci://ghcr.io/prism-utils/charts
           done

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/layout"
 )
 
 // A segment whose rows were merged into a parent is held on disk for a delete

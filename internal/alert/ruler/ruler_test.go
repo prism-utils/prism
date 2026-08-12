@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/elk-utilities/prism/internal/alert/notify"
+	"github.com/prism-utils/prism/internal/alert/notify"
 )
 
 func TestMain(m *testing.M) {

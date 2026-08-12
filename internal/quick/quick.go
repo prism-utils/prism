@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/config"
+	"github.com/prism-utils/prism/internal/config"
 )
 
 const (

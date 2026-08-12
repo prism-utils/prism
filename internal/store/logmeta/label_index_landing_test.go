@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/logmeta"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const indexTenant = "user-label-9f31"

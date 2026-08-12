@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/query"
 )
 
 func TestSQLArrowStub406(t *testing.T) {

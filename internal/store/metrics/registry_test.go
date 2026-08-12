@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/metrics"
+	"github.com/prism-utils/prism/internal/store/metrics"
 )
 
 func enabledConfig() metrics.Config {

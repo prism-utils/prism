@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 const exposition = `# HELP up target up

@@ -62,16 +62,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/admin"
-	"github.com/elk-utilities/prism/internal/store/cluster"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/lifecycle"
-	"github.com/elk-utilities/prism/internal/store/metrics"
-	"github.com/elk-utilities/prism/internal/store/query"
-	"github.com/elk-utilities/prism/internal/store/queue"
-	"github.com/elk-utilities/prism/internal/store/segformat"
-	"github.com/elk-utilities/prism/internal/version"
+	"github.com/prism-utils/prism/internal/store/admin"
+	"github.com/prism-utils/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/engine"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/lifecycle"
+	"github.com/prism-utils/prism/internal/store/metrics"
+	"github.com/prism-utils/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/queue"
+	"github.com/prism-utils/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/version"
 )
 
 const (

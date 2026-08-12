@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/layout"
 )
 
 // retireSources releases the inputs of a completed merge. A positive grace

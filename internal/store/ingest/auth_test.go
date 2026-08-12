@@ -3,7 +3,7 @@ package ingest_test
 import (
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/ingest"
 )
 
 func TestBearerEquals(t *testing.T) {

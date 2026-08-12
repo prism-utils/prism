@@ -16,11 +16,11 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/segformat"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const formatTenant = "user-6f3a9c2b-apps"

@@ -71,7 +71,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: prism-alert
-          image: "ghcr.io/elk-utilities/prism-alert:dev"
+          image: "ghcr.io/prism-utils/prism-alert:dev"
           imagePullPolicy: IfNotPresent
           args:
             - serve

@@ -26,9 +26,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
-	outputdir "github.com/elk-utilities/prism/internal/output/dir"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
+	outputdir "github.com/prism-utils/prism/internal/output/dir"
 )
 
 // Server receives Flight DoPut streams and writes them to Parquet under Dir.

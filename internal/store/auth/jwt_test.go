@@ -12,8 +12,8 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	jwt "github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/elk-utilities/prism/internal/store/auth"
-	"github.com/elk-utilities/prism/internal/store/authtest"
+	"github.com/prism-utils/prism/internal/store/auth"
+	"github.com/prism-utils/prism/internal/store/authtest"
 )
 
 func TestJWTVerifierValidToken(t *testing.T) {

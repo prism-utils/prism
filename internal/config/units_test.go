@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/config"
+	"github.com/prism-utils/prism/internal/config"
 )
 
 func TestDuration_UnmarshalJSON(t *testing.T) {

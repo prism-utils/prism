@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/authtest"
-	"github.com/elk-utilities/prism/internal/store/authz"
+	"github.com/prism-utils/prism/internal/store/authtest"
+	"github.com/prism-utils/prism/internal/store/authz"
 )
 
 func testStack(t *testing.T, policy string) (*authz.Middleware, *authtest.JWTEnv) {

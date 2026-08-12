@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/layout"
 )
 
 // AtomicExportDuckDB materializes selectSQL into a checkpointed single-file

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/cluster"
 )
 
 func fakeUpstream(t *testing.T, label string, hits *atomic.Int32) *httptest.Server {

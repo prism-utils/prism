@@ -6,8 +6,8 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow/array"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 // parseOne runs the parser over one line and returns the single row as a map of

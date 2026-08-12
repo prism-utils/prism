@@ -177,7 +177,7 @@ ConfigMap (`rulesConfigMap:`), and `WEBHOOK_SECRET` (plus an optional reader JWT
 sourced from a pre-created Secret (`secrets.existingSecret`). The pod runs as
 non-root uid 65532 with a read-only root filesystem and all capabilities
 dropped. The image is a signed multi-arch distroless build
-(`ghcr.io/elk-utilities/prism-alert`).
+(`ghcr.io/prism-utils/prism-alert`).
 
 ## Testing
 

@@ -1,4 +1,4 @@
-module github.com/elk-utilities/prism
+module github.com/prism-utils/prism
 
 go 1.25.0
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elk-utilities/prism/bench/internal/monitor"
+	"github.com/prism-utils/prism/bench/internal/monitor"
 )
 
 // Environment captures host and dependency versions for reproducibility notes.

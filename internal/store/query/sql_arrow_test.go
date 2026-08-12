@@ -18,12 +18,12 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	"github.com/elk-utilities/prism/internal/store/authtest"
-	"github.com/elk-utilities/prism/internal/store/cluster"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/query"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/authtest"
+	"github.com/prism-utils/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/query"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const arrowStreamAccept = "application/vnd.apache.arrow.stream"

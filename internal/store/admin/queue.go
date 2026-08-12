@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/elk-utilities/prism/internal/store/queue"
+	"github.com/prism-utils/prism/internal/store/queue"
 )
 
 // QueueRoutePattern returns the ServeMux pattern for the live queue snapshot.

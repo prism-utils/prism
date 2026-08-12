@@ -11,12 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/authtest"
-	"github.com/elk-utilities/prism/internal/store/authz"
-	"github.com/elk-utilities/prism/internal/store/cluster"
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/query"
-	"github.com/elk-utilities/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/store/authtest"
+	"github.com/prism-utils/prism/internal/store/authz"
+	"github.com/prism-utils/prism/internal/store/cluster"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/tenant"
 )
 
 func TestUnknownTenantBodyByteIdenticalAcrossHandlers(t *testing.T) {

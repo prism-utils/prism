@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
+	"github.com/prism-utils/prism/internal/store/layout"
 )
 
 const labelIndexName = ".label_index.json"

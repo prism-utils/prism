@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 func TestCollectSafeParquetPathsHotOnlySkipsTiers(t *testing.T) {

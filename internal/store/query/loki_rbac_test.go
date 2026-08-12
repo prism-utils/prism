@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/authtest"
-	"github.com/elk-utilities/prism/internal/store/authz"
-	"github.com/elk-utilities/prism/internal/store/cluster"
-	"github.com/elk-utilities/prism/internal/store/query"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/authtest"
+	"github.com/prism-utils/prism/internal/store/authz"
+	"github.com/prism-utils/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 // lokiRBACFixture seeds logs for tenantSQLA and tenantSQLB and serves the Loki

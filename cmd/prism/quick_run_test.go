@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/components"
-	"github.com/elk-utilities/prism/internal/config"
-	"github.com/elk-utilities/prism/internal/obs"
-	"github.com/elk-utilities/prism/internal/pipeline"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/components"
+	"github.com/prism-utils/prism/internal/config"
+	"github.com/prism-utils/prism/internal/obs"
+	"github.com/prism-utils/prism/internal/pipeline"
 )
 
 // TestQuickPresetBuildsPipeline proves the logs preset resolves and wires

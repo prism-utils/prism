@@ -10,7 +10,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/elk-utilities/prism-alert
+  repository: ghcr.io/prism-utils/prism-alert
   # Empty tag defaults to Chart.appVersion at render time.
   tag: ""
   pullPolicy: IfNotPresent

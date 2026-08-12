@@ -32,8 +32,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/elk-utilities/prism/internal/alert/notify"
-	"github.com/elk-utilities/prism/internal/alert/ruler"
+	"github.com/prism-utils/prism/internal/alert/notify"
+	"github.com/prism-utils/prism/internal/alert/ruler"
 )
 
 // evalBase is the instant the ruler starts evaluating at. The loaded series

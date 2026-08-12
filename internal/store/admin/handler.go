@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/elk-utilities/prism/internal/store/authz"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/seed"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/store/authz"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/seed"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 // EnsureRoutePattern returns the ServeMux pattern for tenant ensure.

@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/elk-utilities/prism/internal/store/admin"
-	"github.com/elk-utilities/prism/internal/store/auth"
-	"github.com/elk-utilities/prism/internal/store/authz"
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/admin"
+	"github.com/prism-utils/prism/internal/store/auth"
+	"github.com/prism-utils/prism/internal/store/authz"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 )
 
 type rbacConfig struct {

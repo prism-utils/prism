@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a defect in prism / prism-store / prism-alert
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expect
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / tag
+      placeholder: v1.0.0
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction

@@ -44,6 +44,12 @@ it is testable, or write it up in the PR and get explicit reviewer sign-off.
 
 ---
 
+## CLA and CI for external contributors
+
+- External pull requests require a signed [CLA](CLA.md) (CLA Assistant on the PR).
+- CI does **not** run on **fork / external** PRs until a **maintainer** adds the label `ci:run` after reviewing the diff.
+- Same-repo PRs (branches pushed to `prism-utils/prism`) run CI automatically.
+
 ## 3. Data / code patterns (follow these exactly)
 
 These are the patterns DESIGN.md relies on. Deviating breaks extensibility.

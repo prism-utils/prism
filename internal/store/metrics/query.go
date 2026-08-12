@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

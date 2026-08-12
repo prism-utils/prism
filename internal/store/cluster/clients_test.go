@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/cluster"
 )
 
 const validTenantA = "user-6f3a9c2b-apps"

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 	"gopkg.in/yaml.v3"
 )
 

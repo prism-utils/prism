@@ -2,7 +2,7 @@
 
 > **Contract version: `v1`.** This document freezes the artifact taxonomy,
 > naming, Flight descriptor, and per-phase Parquet schemas that downstream
-> consumers (the homelab-apps proxy sidecar + DuckDB loader) build against. It
+> consumers (the downstream consumers (proxy sidecar + DuckDB loader)) build against. It
 > is a **compatibility surface**: additive changes bump the minor contract
 > version; a breaking change to any frozen field bumps the major version and is
 > called out here. If code and this doc disagree, that is a bug — reconcile.

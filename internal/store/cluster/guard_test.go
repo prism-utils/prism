@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/cluster"
-	"github.com/elk-utilities/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/query"
 )
 
 func TestOwnedTenantGuardAllowsOwnedTenant(t *testing.T) {

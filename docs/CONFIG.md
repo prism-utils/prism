@@ -875,6 +875,11 @@ Applied in order; the first failure wins:
 4. **Body size** — HTTP only, via `http.MaxBytesReader` (`413 window too large`)
 5. **Land** — `engine.Ingest`; empty body is a no-op (`204`)
 
+
+> **Security:** `AUTH_MODE` defaults to `none` for trusted networks only. Do **not**
+> expose ingest/query to untrusted networks without `bearer` / RBAC and preferably
+> `ADMIN_LISTEN_ADDR` split-plane. See [`STORE.md`](STORE.md#rbac) and [`LICENSE_FAQ.md`](LICENSE_FAQ.md).
+
 ### Auth modes
 
 | Mode | Identity source | Path tenant rule |

@@ -577,12 +577,12 @@ which durably lands those artifacts, maintains a per-tenant embedded OLAP
 catalog, and serves read-only queries. The store replaces the legacy
 **`prism-proxy`** name used in early deployments; behavior and on-disk layout
 carry forward under the new binary and image name
-(`ghcr.io/elk-utilities/prism-store`).
+(`ghcr.io/prism-utils/prism-store`).
 
 ### Decision
 
 - **One Go module, two binaries, one release.** Module
-  `github.com/elk-utilities/prism` hosts `cmd/prism` (agent) and
+  `github.com/prism-utils/prism` hosts `cmd/prism` (agent) and
   `cmd/prism-store` (store) beside each other, sharing `internal/` packages.
   Producer and consumer of `docs/OUTPUT_CONTRACT.md` compile and evolve
   together in one supply chain.
@@ -806,7 +806,7 @@ https://prometheus.io/docs/alerting/latest/configuration/#route .
 against the **real** `promql` engine over an in-memory `storage.Queryable`
 (no `teststorage`/`promqltest`, which would re-introduce the sigv4 SDKs),
 covering a firing→resolved transition end to end. Packaged as a signed
-multi-arch image (`ghcr.io/elk-utilities/prism-alert`) and the project-agnostic
+multi-arch image (`ghcr.io/prism-utils/prism-alert`) and the project-agnostic
 `deploy/charts/prism-alert` Helm chart.
 
 ### Read queue on by default + live snapshot route (2026-08)
@@ -833,7 +833,6 @@ operator env; explicit env still wins, and `SQL_API_QUEUE_ENABLED=false` restore
 unbounded reads. The frozen `/stats` billing JSON is untouched. A `MODE=cluster`
 coordinator holds no limiter, so it does not register the route (`404`) rather
 than publish zeros an operator would misread. See [`MEMORY.md`](MEMORY.md),
-[`STORE.md`](STORE.md), and [`MIGRATION.md`](MIGRATION.md).
 
 ### Prometheus USE exporter on the store (2026-08)
 

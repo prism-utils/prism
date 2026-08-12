@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
+	"github.com/prism-utils/prism/internal/store/layout"
 )
 
 // ConvertDuckDBToParquet rewrites one checkpointed .duckdb segment to .parquet

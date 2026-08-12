@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/elk-utilities/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/duckdbfile"
 )
 
 // Format is the on-disk encoding for hot snapshots and merge segments.

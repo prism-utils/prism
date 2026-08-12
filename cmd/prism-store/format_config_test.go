@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 func TestLoadConfigSegmentFormatsDefaultParquet(t *testing.T) {

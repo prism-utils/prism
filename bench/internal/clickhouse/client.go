@@ -11,7 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/elk-utilities/prism/bench/internal/gen"
+	"github.com/prism-utils/prism/bench/internal/gen"
 )
 
 const (

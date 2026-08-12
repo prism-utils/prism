@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/authtest"
-	"github.com/elk-utilities/prism/internal/store/authz"
-	"github.com/elk-utilities/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/authtest"
+	"github.com/prism-utils/prism/internal/store/authz"
+	"github.com/prism-utils/prism/internal/store/cluster"
 )
 
 func rbacQueryGuard(t *testing.T, policyPath string, env *authtest.JWTEnv) func(http.Handler) http.Handler {

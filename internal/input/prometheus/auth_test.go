@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/component"
+	"github.com/prism-utils/prism/internal/component"
 )
 
 // startAndFirstBatch starts the input and returns its first scraped batch,

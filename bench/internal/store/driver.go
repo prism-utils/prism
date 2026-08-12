@@ -6,8 +6,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/elk-utilities/prism/bench/internal/caps"
-	"github.com/elk-utilities/prism/bench/internal/gen"
+	"github.com/prism-utils/prism/bench/internal/caps"
+	"github.com/prism-utils/prism/bench/internal/gen"
 )
 
 // RBACConfig holds OIDC/RBAC env for the API benchmark profile.
