@@ -1,8 +1,9 @@
 # prism — Public launch checklist
 
-> Gate document for flipping `elk-utilities/prism` (or a successor org) from
-> **private** to **public**. This is not a feature roadmap; it is the bar that
-> must be green before strangers can clone, run, and file issues safely.
+> Gate document for flipping **`prism-utils/prism`** (GitHub home; formerly
+> `elk-utilities/prism`) from **private** to **public**. This is not a feature
+> roadmap; it is the bar that must be green before strangers can clone, run,
+> and file issues safely.
 >
 > Spec / loop state: [`.ai/specs/public-launch.md`](../.ai/specs/public-launch.md).
 > Architecture: [`DESIGN.md`](DESIGN.md). Store security: [`STORE.md`](STORE.md#rbac).
@@ -20,7 +21,7 @@ homelab via `homelab-apps` charts.
 |---|---|---|
 | **Visibility** | Public **beta** first (not “v1 production”) | Store is feature-rich but defaults and docs still assume a trusted network; beta sets expectation. |
 | **License** | **Apache-2.0** | Matches OTel Collector / Arrow ecosystem peers; permissive + patent grant. **Must be confirmed by repo owners before adding `LICENSE`.** |
-| **Module / org path** | Keep `github.com/elk-utilities/prism` **or** cut over to a public-facing org in one coordinated rename | Go module path is a breaking rename; do it *before* public, not after. |
+| **Module / org path** | Align Go module with **`github.com/prism-utils/prism`** (repo already redirected there; `go.mod` still says `elk-utilities`) | Module path is a breaking rename; finish it *before* public, not after. |
 | **Name** | Keep `prism` for beta; freeze rename decision before `v1.0.0` | README already marks the name provisional. |
 | **Homelab coupling** | Homelab charts stay in `homelab-apps`; upstream ships `deploy/charts/prism-*` + compose only | Public users must not need the three-repo stack. |
 

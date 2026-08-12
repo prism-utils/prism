@@ -33,7 +33,7 @@ and does **not** add a `LICENSE` until owners confirm SPDX.
 ## 3. Open questions  (must be empty/answered before `Status: READY`)
 
 - [ ] Q: SPDX license? — A: **PENDING — ask owners.** Recommendation: **Apache-2.0** (OTel Collector / Arrow peer norm; patent grant). Do not add `LICENSE` until confirmed.
-- [ ] Q: Public under `elk-utilities` or a rename/org cutover first? — A: **PENDING — ask owners.** Go module is `github.com/elk-utilities/prism`; rename before first public tag if desired.
+- [ ] Q: Finish Go module cutover to `github.com/prism-utils/prism` before public? — A: **PENDING — ask owners.** GitHub already redirects to `prism-utils/prism`; `go.mod` still imports `elk-utilities/prism`. Recommendation: **yes, rename module before first public tag.**
 - [ ] Q: Auth default for public binary — fail-closed (`ALLOW_INSECURE`) vs chart-only bearer default? — A: **PENDING — ask owners.** Recommendation: **fail-closed serve** unless `ALLOW_INSECURE=true` (OTel-style secure defaults; see PUBLIC_LAUNCH §2.2 option A).
 - [ ] Q: First public tag shape? — A: **Recommended default (owners may override):** `v0.x` / `v1.0.0-beta.N` until auth defaults land; then `v1.0.0`.
 - [ ] Q: Keep provisional name `prism` through beta? — A: **Recommended default: yes**; freeze before `v1.0.0`.
