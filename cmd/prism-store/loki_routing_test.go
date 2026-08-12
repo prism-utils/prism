@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/query"
 )
 
 const lokiRouteTenant = "user-6f3a9c2b-apps"

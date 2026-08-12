@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/admin"
-	"github.com/elk-utilities/prism/internal/store/authtest"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/queue"
+	"github.com/prism-utils/prism/internal/store/admin"
+	"github.com/prism-utils/prism/internal/store/authtest"
+	"github.com/prism-utils/prism/internal/store/engine"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/queue"
 )
 
 func TestValidateRBACFlightRejectAuthNone(t *testing.T) {

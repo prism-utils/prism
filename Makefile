@@ -4,7 +4,7 @@
 
 BINARY      := prism
 BIN_DIR     := bin
-PKG         := github.com/elk-utilities/prism
+PKG         := github.com/prism-utils/prism
 CMD         := ./cmd/prism
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS     := -s -w -X $(PKG)/internal/version.Version=$(VERSION)

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/store/segformat"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 

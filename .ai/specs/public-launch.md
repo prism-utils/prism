@@ -2,6 +2,8 @@
 
 Status: READY
 
+> Execution in progress on `cursor/public-launch-execute-8a90`.
+
 - **Slug / branch:** `cursor/public-launch-checklist-8a90` (plan docs); execute on `feat/public-launch-execute` (or `cursor/public-launch-execute-8a90`)
 - **Owner phase:** orchestrator → developer (execution)
 - **PLAN phase(s):** public launch runbook

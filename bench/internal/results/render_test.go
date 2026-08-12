@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/bench/internal/monitor"
-	"github.com/elk-utilities/prism/bench/internal/results"
+	"github.com/prism-utils/prism/bench/internal/monitor"
+	"github.com/prism-utils/prism/bench/internal/results"
 	"github.com/stretchr/testify/require"
 )
 

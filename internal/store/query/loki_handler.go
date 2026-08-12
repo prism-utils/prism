@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/logmeta"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/logmeta"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 // Synthetic stream label every log line carries. Grafana's Loki datasource wants

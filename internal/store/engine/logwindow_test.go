@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/logmeta"
 )
 
 func newLogEngine(t *testing.T) (string, *Engine) {

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/parquet/file"
-	"github.com/elk-utilities/prism/bench/internal/gen"
+	"github.com/prism-utils/prism/bench/internal/gen"
 	"github.com/stretchr/testify/require"
 )
 

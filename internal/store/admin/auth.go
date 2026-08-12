@@ -3,7 +3,7 @@ package admin
 import (
 	"net/http"
 
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 )
 
 // WithBearerAuth wraps a handler with optional static bearer auth.

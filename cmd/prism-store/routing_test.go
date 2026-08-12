@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/engine"
 )
 
 func TestServeMuxSplitPlanes(t *testing.T) {

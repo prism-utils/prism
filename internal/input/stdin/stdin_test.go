@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/data"
 	"go.uber.org/goleak"
 )
 

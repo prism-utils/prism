@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/bench/internal/authgen"
-	"github.com/elk-utilities/prism/bench/internal/gen"
-	benchstore "github.com/elk-utilities/prism/bench/internal/store"
+	"github.com/prism-utils/prism/bench/internal/authgen"
+	"github.com/prism-utils/prism/bench/internal/gen"
+	benchstore "github.com/prism-utils/prism/bench/internal/store"
 	"github.com/stretchr/testify/require"
 )
 

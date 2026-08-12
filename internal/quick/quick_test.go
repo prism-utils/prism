@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/quick"
+	"github.com/prism-utils/prism/internal/quick"
 )
 
 func TestBuildLogsLocalOnly(t *testing.T) {

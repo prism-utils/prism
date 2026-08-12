@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/lifecycle"
-	"github.com/elk-utilities/prism/internal/version"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/lifecycle"
+	"github.com/prism-utils/prism/internal/version"
 	"go.uber.org/goleak"
 )
 

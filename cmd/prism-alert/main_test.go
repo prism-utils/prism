@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/elk-utilities/prism/internal/alert/config"
+	"github.com/prism-utils/prism/internal/alert/config"
 )
 
 func TestVersionLine(t *testing.T) {

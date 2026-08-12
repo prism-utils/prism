@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/segformat"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/segformat"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 // ViewSQL emits CREATE OR REPLACE VIEW … AS a fixed-schema union of the tenant

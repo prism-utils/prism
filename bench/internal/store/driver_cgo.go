@@ -22,11 +22,11 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	"github.com/elk-utilities/prism/bench/internal/gen"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/lifecycle"
-	"github.com/elk-utilities/prism/internal/store/seed"
+	"github.com/prism-utils/prism/bench/internal/gen"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/lifecycle"
+	"github.com/prism-utils/prism/internal/store/seed"
 )
 
 type cgoDriver struct {

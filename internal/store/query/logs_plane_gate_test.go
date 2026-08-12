@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/logmeta"
-	"github.com/elk-utilities/prism/internal/store/merge"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/merge"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const gateTenant = "user-gate-77aa"

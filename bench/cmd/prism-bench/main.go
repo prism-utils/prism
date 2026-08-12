@@ -20,15 +20,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elk-utilities/prism/bench/internal/authgen"
-	"github.com/elk-utilities/prism/bench/internal/caps"
-	"github.com/elk-utilities/prism/bench/internal/clickhouse"
-	"github.com/elk-utilities/prism/bench/internal/env"
-	"github.com/elk-utilities/prism/bench/internal/gen"
-	"github.com/elk-utilities/prism/bench/internal/monitor"
-	"github.com/elk-utilities/prism/bench/internal/results"
-	benchstore "github.com/elk-utilities/prism/bench/internal/store"
-	"github.com/elk-utilities/prism/bench/internal/timing"
+	"github.com/prism-utils/prism/bench/internal/authgen"
+	"github.com/prism-utils/prism/bench/internal/caps"
+	"github.com/prism-utils/prism/bench/internal/clickhouse"
+	"github.com/prism-utils/prism/bench/internal/env"
+	"github.com/prism-utils/prism/bench/internal/gen"
+	"github.com/prism-utils/prism/bench/internal/monitor"
+	"github.com/prism-utils/prism/bench/internal/results"
+	benchstore "github.com/prism-utils/prism/bench/internal/store"
+	"github.com/prism-utils/prism/bench/internal/timing"
 )
 
 const (

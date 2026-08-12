@@ -32,7 +32,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/template"
 
-	"github.com/elk-utilities/prism/internal/alert/notify"
+	"github.com/prism-utils/prism/internal/alert/notify"
 )
 
 // errTemplateQueryDisabled is returned to the annotation template engine's

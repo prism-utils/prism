@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 func TestConsume_DuckDBExtension(t *testing.T) {

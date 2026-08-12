@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/query"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const lokiTenant = "user-loki-3c1d"

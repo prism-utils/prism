@@ -17,8 +17,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/ingest"
 )
 
 func startFlightReceiver(t *testing.T, cfg *ingest.Config) (addr string, eng *engine.Engine) {

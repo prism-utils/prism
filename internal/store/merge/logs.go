@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 const logLandingTier = -1

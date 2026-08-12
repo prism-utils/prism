@@ -22,3 +22,6 @@ NOTE: no rules configured. Set `rules` (inline rule YAML) or `rulesConfigMap`
 
 Check the loaded rule count in the startup log:
   kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "prism-alert.fullname" . }} | grep '"rule_files"'
+
+Security: prism-store AUTH_MODE defaults to "none" (trusted networks only).
+Do not expose ingest/query without bearer tokens or RBAC, and prefer ADMIN_LISTEN_ADDR split-plane.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/apache/arrow-go/v18/parquet/file"
-	"github.com/elk-utilities/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 // logSegmentHasIngestTS reports whether a parquet log segment already carries

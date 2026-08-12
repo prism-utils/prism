@@ -3,7 +3,7 @@ package results_test
 import (
 	"testing"
 
-	"github.com/elk-utilities/prism/bench/internal/results"
+	"github.com/prism-utils/prism/bench/internal/results"
 	"github.com/stretchr/testify/require"
 )
 

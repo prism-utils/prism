@@ -3,8 +3,8 @@ package flight
 import (
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/data"
-	"github.com/elk-utilities/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/data"
+	"github.com/prism-utils/prism/internal/duckdbfile"
 )
 
 func TestDescriptorPath_DuckDBFormatMeta(t *testing.T) {

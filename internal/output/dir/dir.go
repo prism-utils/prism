@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 // tsLayout is a compact, filesystem-safe, lexically-sortable UTC timestamp

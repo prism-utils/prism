@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/elk-utilities/prism/internal/store/auth"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/store/auth"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 type ctxKeyPrincipal struct{}

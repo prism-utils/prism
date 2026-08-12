@@ -24,10 +24,10 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
-	"github.com/elk-utilities/prism/internal/duckdbfile"
-	"github.com/elk-utilities/prism/internal/tlsconf"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
+	"github.com/prism-utils/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/tlsconf"
 )
 
 // Type is the config identifier for this output.

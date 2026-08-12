@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/query"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 // seedHotAndCold writes one `up` series into the hot snapshot (instance="hot")

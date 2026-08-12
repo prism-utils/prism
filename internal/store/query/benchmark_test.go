@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/lifecycle"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/lifecycle"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 func BenchmarkQueryAggregateCompactedTenant(b *testing.B) {

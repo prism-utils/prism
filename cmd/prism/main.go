@@ -20,14 +20,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/elk-utilities/prism/internal/collect"
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/components"
-	"github.com/elk-utilities/prism/internal/config"
-	"github.com/elk-utilities/prism/internal/obs"
-	"github.com/elk-utilities/prism/internal/pipeline"
-	"github.com/elk-utilities/prism/internal/quick"
-	"github.com/elk-utilities/prism/internal/version"
+	"github.com/prism-utils/prism/internal/collect"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/components"
+	"github.com/prism-utils/prism/internal/config"
+	"github.com/prism-utils/prism/internal/obs"
+	"github.com/prism-utils/prism/internal/pipeline"
+	"github.com/prism-utils/prism/internal/quick"
+	"github.com/prism-utils/prism/internal/version"
 )
 
 func writeVersion(w io.Writer) error {

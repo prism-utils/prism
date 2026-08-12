@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/cluster"
 )
 
 func TestParseOwnedTenantsValid(t *testing.T) {

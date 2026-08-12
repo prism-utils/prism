@@ -1,7 +1,7 @@
 package ingest
 
 import (
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 // ValidateTenant reports whether a tenant namespace is allowed.

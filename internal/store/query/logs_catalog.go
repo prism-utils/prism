@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/logmeta"
 )
 
 // logFileMeta is one landed or compacted log segment the planners may open.

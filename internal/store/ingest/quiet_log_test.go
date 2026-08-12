@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 func TestHTTPIngestSuccessLogsAtDebug(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/cluster"
 )
 
 // TestRouterForwardsLokiRoutes proves the coordinator mounts the Loki logs API

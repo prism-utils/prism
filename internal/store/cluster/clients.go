@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 )
 
 // ParseClients builds a tenant-to-base-URL map from CLUSTER_CLIENTS.

@@ -23,7 +23,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/elk-utilities/prism-store
+  repository: ghcr.io/prism-utils/prism-store
   # Empty tag defaults to Chart.appVersion at render time.
   tag: ""
   pullPolicy: IfNotPresent

@@ -17,10 +17,10 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 
-	"github.com/elk-utilities/prism/internal/duckdbfile"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/ingest"
-	"github.com/elk-utilities/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 func writeMetricsDuckDBWindow(t *testing.T, storageVersion string) []byte {

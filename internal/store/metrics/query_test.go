@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/metrics"
+	"github.com/prism-utils/prism/internal/store/metrics"
 )
 
 func TestInstrumentQueryCountsSuccessAsCode200(t *testing.T) {

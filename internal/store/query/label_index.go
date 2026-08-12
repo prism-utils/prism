@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/elk-utilities/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/logmeta"
 )
 
 // lastLabelValuesObservation records how label values were resolved (tests only).

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 // When a block carries pipeline/branch/window provenance, the file name encodes

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/admin"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/seed"
-	"github.com/elk-utilities/prism/internal/store/stats"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/admin"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/seed"
+	"github.com/prism-utils/prism/internal/store/stats"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const testTenant = "user-6f3a9c2b-apps"

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/ingest"
 )
 
 func TestFlightKeepsBearerAuthWhenHTTPUsesAuthNone(t *testing.T) {

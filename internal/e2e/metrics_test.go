@@ -18,11 +18,11 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/components"
-	"github.com/elk-utilities/prism/internal/config"
-	"github.com/elk-utilities/prism/internal/obs"
-	"github.com/elk-utilities/prism/internal/pipeline"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/components"
+	"github.com/prism-utils/prism/internal/config"
+	"github.com/prism-utils/prism/internal/obs"
+	"github.com/prism-utils/prism/internal/pipeline"
 )
 
 const metricsExposition = `# HELP http_requests_total total requests

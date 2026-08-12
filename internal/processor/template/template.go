@@ -19,8 +19,8 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 // Type is the config identifier for this processor.

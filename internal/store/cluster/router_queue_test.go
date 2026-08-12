@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/admin"
-	"github.com/elk-utilities/prism/internal/store/cluster"
+	"github.com/prism-utils/prism/internal/store/admin"
+	"github.com/prism-utils/prism/internal/store/cluster"
 )
 
 // TestRouterOmitsQueueSnapshotRoute pins the coordinator's answer for the live

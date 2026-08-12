@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/buffer"
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/config"
+	"github.com/prism-utils/prism/internal/buffer"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/config"
 )
 
 // policy is how a pipeline reacts to a malformed-data error from a parser or

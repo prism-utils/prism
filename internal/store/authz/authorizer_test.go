@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/store/authz"
+	"github.com/prism-utils/prism/internal/store/authz"
 )
 
 const tenantA = "user-6f3a9c2b-apps"

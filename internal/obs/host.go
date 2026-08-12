@@ -12,7 +12,7 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 
-	"github.com/elk-utilities/prism/internal/component"
+	"github.com/prism-utils/prism/internal/component"
 )
 
 // NewLogger returns a structured text logger writing to w at the given level.

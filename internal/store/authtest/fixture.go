@@ -14,7 +14,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	jwt "github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/elk-utilities/prism/internal/store/auth"
+	"github.com/prism-utils/prism/internal/store/auth"
 )
 
 // JWTEnv hosts a JWKS endpoint and signs test tokens.

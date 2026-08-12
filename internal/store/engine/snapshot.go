@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/segformat"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/store/segformat"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 const (

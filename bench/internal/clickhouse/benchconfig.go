@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/elk-utilities/prism/bench/internal/caps"
+	"github.com/prism-utils/prism/bench/internal/caps"
 )
 
 // WriteBenchConfig emits ClickHouse config.d/users.d snippets capped to budget.

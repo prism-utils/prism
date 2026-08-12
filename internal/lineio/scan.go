@@ -8,7 +8,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 // MaxLineBytes caps a single scanned line, protecting memory on pathological

@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/version"
+	"github.com/prism-utils/prism/internal/version"
 )
 
 func TestVersionOutput(t *testing.T) {

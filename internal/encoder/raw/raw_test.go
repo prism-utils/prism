@@ -6,7 +6,7 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 
-	"github.com/elk-utilities/prism/internal/data"
+	"github.com/prism-utils/prism/internal/data"
 )
 
 func TestEncode_NewlineDelimits(t *testing.T) {

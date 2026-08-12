@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/logmeta"
-	"github.com/elk-utilities/prism/internal/store/merge"
-	"github.com/elk-utilities/prism/internal/store/rollup"
-	"github.com/elk-utilities/prism/internal/store/segformat"
-	"github.com/elk-utilities/prism/internal/store/stats"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/merge"
+	"github.com/prism-utils/prism/internal/store/rollup"
+	"github.com/prism-utils/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/store/stats"
 )
 
 // Job names the maintenance pass an observation belongs to. The set is closed

@@ -3,8 +3,8 @@ package cluster
 import (
 	"net/http"
 
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 // OwnedTenantGuard rejects query requests whose tenant is not in the owned set.

@@ -12,10 +12,10 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 
-	"github.com/elk-utilities/prism/internal/buffer"
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
-	"github.com/elk-utilities/prism/internal/obs"
+	"github.com/prism-utils/prism/internal/buffer"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
+	"github.com/prism-utils/prism/internal/obs"
 )
 
 // --- fakes -----------------------------------------------------------------

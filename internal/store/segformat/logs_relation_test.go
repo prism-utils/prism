@@ -3,8 +3,8 @@ package segformat_test
 import (
 	"testing"
 
-	"github.com/elk-utilities/prism/internal/duckdbfile"
-	"github.com/elk-utilities/prism/internal/store/segformat"
+	"github.com/prism-utils/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 func TestLogsRelationForPath(t *testing.T) {

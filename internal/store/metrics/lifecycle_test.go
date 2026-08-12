@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/metrics"
+	"github.com/prism-utils/prism/internal/store/metrics"
 )
 
 func TestTickObservationsCountRunsAndErrors(t *testing.T) {

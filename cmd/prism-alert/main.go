@@ -28,10 +28,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/alert/config"
-	"github.com/elk-utilities/prism/internal/alert/notify"
-	"github.com/elk-utilities/prism/internal/alert/ruler"
-	"github.com/elk-utilities/prism/internal/version"
+	"github.com/prism-utils/prism/internal/alert/config"
+	"github.com/prism-utils/prism/internal/alert/notify"
+	"github.com/prism-utils/prism/internal/alert/ruler"
+	"github.com/prism-utils/prism/internal/version"
 )
 
 const (

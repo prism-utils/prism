@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/query"
-	"github.com/elk-utilities/prism/internal/store/testparquet"
+	"github.com/prism-utils/prism/internal/store/query"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 func mustJSON(t *testing.T, raw json.RawMessage, dst any) {

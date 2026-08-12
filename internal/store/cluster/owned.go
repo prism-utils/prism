@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	storeingest "github.com/elk-utilities/prism/internal/store/ingest"
+	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 )
 
 // ParseOwnedTenants builds the owned-tenant set from CLIENT_TENANTS (comma-separated).

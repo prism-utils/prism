@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/layout"
-	"github.com/elk-utilities/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/logmeta"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 

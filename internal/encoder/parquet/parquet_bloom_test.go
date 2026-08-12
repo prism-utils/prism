@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
-	"github.com/elk-utilities/prism/internal/encoder/bloom"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
+	"github.com/prism-utils/prism/internal/encoder/bloom"
 )
 
 func messageBatch(tb testing.TB, mem memory.Allocator, messages ...string) data.RecordBatch {

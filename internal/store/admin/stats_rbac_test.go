@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/admin"
-	"github.com/elk-utilities/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/admin"
+	"github.com/prism-utils/prism/internal/store/engine"
 )
 
 func TestStatsHandlerRBACFailClosedWithoutScope(t *testing.T) {

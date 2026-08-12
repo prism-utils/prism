@@ -29,7 +29,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/elk-utilities/prism/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/prism-utils/prism/internal/version.Version={{ .Version }}
     overrides:
       - goos: linux
         goarch: amd64
@@ -57,7 +57,7 @@ builds:
     tags:
       - duckdb_arrow
     ldflags:
-      - -s -w -X github.com/elk-utilities/prism/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/prism-utils/prism/internal/version.Version={{ .Version }}
     overrides:
       - goos: linux
         goarch: amd64
@@ -83,7 +83,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/elk-utilities/prism/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/prism-utils/prism/internal/version.Version={{ .Version }}
 
 archives:
   - id: prism
@@ -144,12 +144,12 @@ dockers:
     use: buildx
     dockerfile: Dockerfile.release
     image_templates:
-      - "ghcr.io/elk-utilities/prism:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/prism-utils/prism:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism:sha-{{ .ShortCommit }}-amd64"
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title=prism"
-      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.source=https://github.com/prism-utils/prism"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -161,12 +161,12 @@ dockers:
     use: buildx
     dockerfile: Dockerfile.release
     image_templates:
-      - "ghcr.io/elk-utilities/prism:{{ .Version }}-arm64"
-      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-arm64"
+      - "ghcr.io/prism-utils/prism:{{ .Version }}-arm64"
+      - "ghcr.io/prism-utils/prism:sha-{{ .ShortCommit }}-arm64"
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title=prism"
-      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.source=https://github.com/prism-utils/prism"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -178,12 +178,12 @@ dockers:
     use: buildx
     dockerfile: Dockerfile.store.release
     image_templates:
-      - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism-store:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/prism-utils/prism-store:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism-store:sha-{{ .ShortCommit }}-amd64"
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title=prism-store"
-      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.source=https://github.com/prism-utils/prism"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -195,12 +195,12 @@ dockers:
     use: buildx
     dockerfile: Dockerfile.store.release
     image_templates:
-      - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-arm64"
-      - "ghcr.io/elk-utilities/prism-store:sha-{{ .ShortCommit }}-arm64"
+      - "ghcr.io/prism-utils/prism-store:{{ .Version }}-arm64"
+      - "ghcr.io/prism-utils/prism-store:sha-{{ .ShortCommit }}-arm64"
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title=prism-store"
-      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.source=https://github.com/prism-utils/prism"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -212,12 +212,12 @@ dockers:
     use: buildx
     dockerfile: Dockerfile.alert.release
     image_templates:
-      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/prism-utils/prism-alert:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism-alert:sha-{{ .ShortCommit }}-amd64"
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title=prism-alert"
-      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.source=https://github.com/prism-utils/prism"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -229,53 +229,53 @@ dockers:
     use: buildx
     dockerfile: Dockerfile.alert.release
     image_templates:
-      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-arm64"
-      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-arm64"
+      - "ghcr.io/prism-utils/prism-alert:{{ .Version }}-arm64"
+      - "ghcr.io/prism-utils/prism-alert:sha-{{ .ShortCommit }}-arm64"
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title=prism-alert"
-      - "--label=org.opencontainers.image.source=https://github.com/elk-utilities/prism"
+      - "--label=org.opencontainers.image.source=https://github.com/prism-utils/prism"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
 
 docker_manifests:
-  - name_template: "ghcr.io/elk-utilities/prism:{{ .Version }}"
+  - name_template: "ghcr.io/prism-utils/prism:{{ .Version }}"
     image_templates:
-      - "ghcr.io/elk-utilities/prism:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}"
+      - "ghcr.io/prism-utils/prism:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism:sha-{{ .ShortCommit }}"
     image_templates:
-      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-amd64"
-      - "ghcr.io/elk-utilities/prism:sha-{{ .ShortCommit }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism:latest"
+      - "ghcr.io/prism-utils/prism:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/prism-utils/prism:sha-{{ .ShortCommit }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism:latest"
     image_templates:
-      - "ghcr.io/elk-utilities/prism:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism-store:{{ .Version }}"
+      - "ghcr.io/prism-utils/prism:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism-store:{{ .Version }}"
     image_templates:
-      - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism-store:sha-{{ .ShortCommit }}"
+      - "ghcr.io/prism-utils/prism-store:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism-store:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism-store:sha-{{ .ShortCommit }}"
     image_templates:
-      - "ghcr.io/elk-utilities/prism-store:sha-{{ .ShortCommit }}-amd64"
-      - "ghcr.io/elk-utilities/prism-store:sha-{{ .ShortCommit }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism-store:latest"
+      - "ghcr.io/prism-utils/prism-store:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/prism-utils/prism-store:sha-{{ .ShortCommit }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism-store:latest"
     image_templates:
-      - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism-store:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism-alert:{{ .Version }}"
+      - "ghcr.io/prism-utils/prism-store:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism-store:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism-alert:{{ .Version }}"
     image_templates:
-      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}"
+      - "ghcr.io/prism-utils/prism-alert:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism-alert:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism-alert:sha-{{ .ShortCommit }}"
     image_templates:
-      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-amd64"
-      - "ghcr.io/elk-utilities/prism-alert:sha-{{ .ShortCommit }}-arm64"
-  - name_template: "ghcr.io/elk-utilities/prism-alert:latest"
+      - "ghcr.io/prism-utils/prism-alert:sha-{{ .ShortCommit }}-amd64"
+      - "ghcr.io/prism-utils/prism-alert:sha-{{ .ShortCommit }}-arm64"
+  - name_template: "ghcr.io/prism-utils/prism-alert:latest"
     image_templates:
-      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-amd64"
-      - "ghcr.io/elk-utilities/prism-alert:{{ .Version }}-arm64"
+      - "ghcr.io/prism-utils/prism-alert:{{ .Version }}-amd64"
+      - "ghcr.io/prism-utils/prism-alert:{{ .Version }}-arm64"
 
 docker_signs:
   - id: manifest-keyless
@@ -289,6 +289,6 @@ docker_signs:
 
 release:
   github:
-    owner: elk-utilities
+    owner: prism-utils
     name: prism
   prerelease: auto

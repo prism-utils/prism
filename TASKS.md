@@ -102,7 +102,7 @@ Spec: [`.ai/specs/public-launch.md`](.ai/specs/public-launch.md) — `Status: RE
 - [ ] **Phase 2** — BSL 1.1 `LICENSE` (Sys Ramos IT LLC; Competing Service grant; Apache-2.0 @ +4y)
 - [ ] **Phase 3** — CLA Assistant on external PRs
 - [ ] **Phase 4** — Maintainer-only CI (fork approval + `ci.yml` authorize / `ci:run`)
-- [ ] **Phase 5** — Rename all `elk-utilities` → `prism-utils`
+- [ ] **Phase 5** — Rename all `prism-utils` → `prism-utils`
 - [ ] **Phase 6** — Move homelab docs to private `prism-implementation`
 - [ ] **Phase 7** — Full-history scrub + rotate
 - [ ] **Phase 8** — Issue/PR templates + auth warnings + standalone quickstart

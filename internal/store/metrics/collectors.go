@@ -3,7 +3,7 @@ package metrics
 import (
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/queue"
+	"github.com/prism-utils/prism/internal/store/queue"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

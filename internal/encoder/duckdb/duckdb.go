@@ -16,9 +16,9 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 
-	"github.com/elk-utilities/prism/internal/component"
-	"github.com/elk-utilities/prism/internal/data"
-	"github.com/elk-utilities/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/component"
+	"github.com/prism-utils/prism/internal/data"
+	"github.com/prism-utils/prism/internal/duckdbfile"
 )
 
 // Type is the config identifier for this encoder.

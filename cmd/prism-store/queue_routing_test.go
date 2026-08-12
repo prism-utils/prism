@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/admin"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/queue"
+	"github.com/prism-utils/prism/internal/store/admin"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/queue"
 )
 
 func queueRouteFixture(t *testing.T) (*serverConfig, *engine.Engine, *slog.Logger) {

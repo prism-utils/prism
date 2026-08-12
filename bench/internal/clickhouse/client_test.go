@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/bench/internal/clickhouse"
-	"github.com/elk-utilities/prism/bench/internal/gen"
+	"github.com/prism-utils/prism/bench/internal/clickhouse"
+	"github.com/prism-utils/prism/bench/internal/gen"
 	"github.com/stretchr/testify/require"
 )
 

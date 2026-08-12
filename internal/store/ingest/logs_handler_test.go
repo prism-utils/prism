@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/ingest"
 )
 
 func newLogsIngestServer(t *testing.T) (string, *httptest.Server) {

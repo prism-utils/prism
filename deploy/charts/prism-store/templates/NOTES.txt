@@ -24,3 +24,6 @@ Admin routes share the public listener (combined plane). Set env.adminListenAddr
 {{- end }}
 
 Data volume: {{ .Values.env.dataDir }} ({{ .Values.persistence.size }} when persistence.enabled).
+
+Security: prism-store AUTH_MODE defaults to "none" (trusted networks only).
+Do not expose ingest/query without bearer tokens or RBAC, and prefer ADMIN_LISTEN_ADDR split-plane.

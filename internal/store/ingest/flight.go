@@ -24,9 +24,9 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/elk-utilities/prism/internal/duckdbfile"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	"github.com/elk-utilities/prism/internal/tlsconf"
+	"github.com/prism-utils/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/tlsconf"
 )
 
 // FlightServer receives DoPut streams and lands Parquet or DuckDB windows via the engine.

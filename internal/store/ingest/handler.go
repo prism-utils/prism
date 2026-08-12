@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/elk-utilities/prism/internal/duckdbfile"
-	"github.com/elk-utilities/prism/internal/store/engine"
-	storetenant "github.com/elk-utilities/prism/internal/store/tenant"
+	"github.com/prism-utils/prism/internal/duckdbfile"
+	"github.com/prism-utils/prism/internal/store/engine"
+	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
 // statusClientClosed is the nginx/Cloudflare convention for "client closed

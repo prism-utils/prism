@@ -11,7 +11,7 @@ COPY . .
 ARG VERSION=e2e
 ENV CGO_ENABLED=1
 RUN go build -tags duckdb_arrow -trimpath \
-    -ldflags "-s -w -X github.com/elk-utilities/prism/internal/version.Version=${VERSION}" \
+    -ldflags "-s -w -X github.com/prism-utils/prism/internal/version.Version=${VERSION}" \
     -o /out/prism-store ./cmd/prism-store
 
 # Runtime shares the builder's glibc (bookworm, 2.36) and adds libstdc++ for
