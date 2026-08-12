@@ -7,7 +7,7 @@
 > Spec: [`.ai/specs/public-launch.md`](../.ai/specs/public-launch.md)  
 > Branch prefix for implementation: `cursor/public-launch-*` or `feat/public-launch-*`
 
-**Status:** READY TO EXECUTE (all owner decisions locked 2026-08-12).
+**Status:** EXECUTED — awaiting merge / `v1.0.0` / visibility flip (2026-08-12).
 
 ---
 
@@ -310,14 +310,15 @@ Only after **Exit criteria** are all checked:
 
 | Item | Command / evidence | Result |
 |---|---|---|
-| License report | | |
-| gitleaks/trufflehog | | |
-| Fork CI approval setting | | |
-| `ci:run` label created | | |
-| CLA Assistant enabled | | |
-| `prism-implementation` private repo | | |
-| `v1.0.0` release URL | | |
-| Visibility flip timestamp (UTC) | | |
+| License report | `go-licenses report ./cmd/prism ./cmd/prism-alert ./cmd/prism-store` | No GPL/AGPL in third-party graph (2026-08-12) |
+| gitleaks/trufflehog | `gitleaks detect --source .` (workdir + full history) | **no leaks found** (301 commits) |
+| Fork CI approval setting | API while private | **Deferred until after visibility flip** (GitHub: not allowed on private repos). Set `all_external_contributors` immediately post-public. Workflow `authorize` + `ci:run` already enforced. |
+| `ci:run` label created | `gh label create ci:run` | Present |
+| CLA Assistant enabled | `.github/workflows/cla.yml` + `CLA.md`; signatures repo `prism-utils/cla-signatures` | Workflow + CLA text landed; App install may still need org admin if not already |
+| `prism-implementation` private repo | `gh repo create prism-utils/prism-implementation --private` | Created; `docs/MIGRATION.md` imported |
+| `v1.0.0` release URL | | pending tag after merge |
+| Visibility flip timestamp (UTC) | | pending |
+| `make lint test` | local 2026-08-12 | **green** |
 
 ---
 

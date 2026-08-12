@@ -4,7 +4,7 @@
 in one pipeline. Go. Config-driven (OTel-shaped). Parquet on the wire.
 
 > **License:** Business Source License 1.1 (BSL) — see [`LICENSE`](LICENSE)
-> (landing with the public cut). Not OSI-approved until the Change Date; source-available under BSL until then.
+> (BSL 1.1 — see also docs/LICENSE_FAQ.md). Not OSI-approved until the Change Date; source-available under BSL until then.
 > External PRs require a **CLA**.
 >
 > **Repo status:** private until [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md)
