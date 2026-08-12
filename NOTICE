@@ -1,0 +1,18 @@
+prism
+Copyright 2026 Sys Ramos IT LLC
+
+This product is licensed under the Business Source License 1.1.
+See the LICENSE file for the full license text and parameters.
+
+This distribution includes third-party software. Notable Apache License
+Version 2.0 components include (non-exhaustive; see go.mod / module licenses):
+
+  - github.com/apache/arrow-go
+  - github.com/prometheus/client_golang
+  - github.com/prometheus/common
+  - github.com/prometheus/prometheus
+  - google.golang.org/grpc
+  - github.com/coreos/go-oidc
+
+DuckDB (via github.com/marcboeker/go-duckdb) and other MIT/BSD dependencies
+retain their original licenses.
