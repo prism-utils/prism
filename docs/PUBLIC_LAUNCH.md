@@ -38,7 +38,7 @@ Do **not** flip the GitHub visibility switch until §1–§5 below are checked.
 - [ ] Scrub git history + working tree for secrets, private hostnames, customer tokens, kubeconfigs (`gitleaks` / `trufflehog` on full history).
 - [ ] Rotate any credential that ever lived in this private clone.
 - [ ] Confirm GitHub org, topics, description, homepage; remove stale private-only references from README status blurb.
-- [ ] Decide module-path / org rename **before** first public tag.
+- [ ] Decide module-path cutover to `github.com/prism-utils/prism` **before** first public tag (`go.mod` still uses `elk-utilities`).
 
 ---
 
