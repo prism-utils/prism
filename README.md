@@ -1,10 +1,16 @@
 # prism
 
-> **Status:** foundation complete for the edge agent; the **store** track (#21)
-> is in progress. See [`docs/PLAN.md`](docs/PLAN.md) and [`TASKS.md`](TASKS.md).
+> **Status:** foundation complete for the edge agent; the **store** track is
+> feature-rich and used in production-shaped homelab deploys. See
+> [`docs/PLAN.md`](docs/PLAN.md) and [`TASKS.md`](TASKS.md).
 >
 > **Name is provisional.** `prism` = one input stream refracted through an
 > ordered pipeline into one or more encoded outputs. Easy to rename now.
+>
+> **Public launch:** the repo is still private. The bar before flipping
+> visibility is [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md) (license,
+> secure-by-default auth, scrub, standalone quickstart). Security reporting:
+> [`SECURITY.md`](SECURITY.md).
 
 `prism` is a small, memory-efficient, **config-driven edge collector** written
 in Go. It follows the OpenTelemetry Collector mental model —

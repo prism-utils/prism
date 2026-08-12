@@ -90,3 +90,22 @@ Dependency-ordered sub-issues on branch `feat/store-skeleton` and follow-ups:
 - [ ] **store-release (#29)** — Helm chart, GHCR image, goreleaser ldflags.
 
 See [`docs/STORE.md`](docs/STORE.md) and [`docs/DESIGN.md`](docs/DESIGN.md) §15.
+
+---
+
+## Public launch track (docs first — repo still private)
+
+Gate document: [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md). Spec:
+[`.ai/specs/public-launch.md`](.ai/specs/public-launch.md).
+
+- [x] **public-launch checklist + SECURITY/CoC** — `docs/PUBLIC_LAUNCH.md`,
+      root `SECURITY.md`, `CODE_OF_CONDUCT.md`, README/TASKS pointers.
+- [ ] **LICENSE** — owner-confirmed SPDX (recommended Apache-2.0); blocked on
+      open question in the spec.
+- [ ] **secure-by-default auth** — fail-closed serve (or equivalent) so
+      `AUTH_MODE=none` without RBAC is not the public default.
+- [ ] **contributor templates** — issue/PR templates; optional CODEOWNERS;
+      `govulncheck` in CI.
+- [ ] **history scrub + credential rotation attestation**
+- [ ] **standalone public quickstart** (compose/Helm with auth on; no homelab)
+- [ ] **visibility flip** — only after PUBLIC_LAUNCH exit criteria are green.
