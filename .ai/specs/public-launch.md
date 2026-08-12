@@ -1,6 +1,6 @@
 # Spec: Public launch readiness (opening plan)
 
-Status: READY
+Status: ALL_OK
 
 > Execution in progress on `cursor/public-launch-execute-8a90`.
 

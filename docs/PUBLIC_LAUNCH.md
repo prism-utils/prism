@@ -7,7 +7,7 @@
 > Spec: [`.ai/specs/public-launch.md`](../.ai/specs/public-launch.md)  
 > Branch prefix for implementation: `cursor/public-launch-*` or `feat/public-launch-*`
 
-**Status:** EXECUTED — awaiting merge / `v1.0.0` / visibility flip (2026-08-12).
+**Status:** COMPLETE — public as of 2026-08-12T17:47:38Z (`v1.0.0`).
 
 ---
 
@@ -293,16 +293,16 @@ Only after **Exit criteria** are all checked:
 
 ## Exit criteria (flip only when every box is checked)
 
-- [ ] `LICENSE` (BSL 1.1) with Sys Ramos IT LLC + Competing Service grant + Apache-2.0 Change License + Change Date set
-- [ ] CLA Assistant enforced on external PRs
-- [ ] Maintainer-only CI: GitHub fork approval = all outside collaborators **and** `ci.yml` authorize/`ci:run` gate
-- [ ] Zero remaining `elk-utilities` module/image refs in the public tree
-- [ ] Homelab/migration docs only in private `prism-implementation`
-- [ ] Full-history scrub attested; credentials rotated
-- [ ] Issue + PR templates; SECURITY; CoC; auth do-not-expose warnings; standalone quickstart
-- [ ] License report: no GPL/AGPL copyleft in release graph
-- [ ] `v1.0.0` release published (images + signatures) **or** tag pushed and workflow green
-- [ ] Repo visibility = **public**
+- [x] `LICENSE` (BSL 1.1) with Sys Ramos IT LLC + Competing Service grant + Apache-2.0 Change License + Change Date set
+- [x] CLA Assistant enforced on external PRs
+- [x] Maintainer-only CI: GitHub fork approval = all outside collaborators **and** `ci.yml` authorize/`ci:run` gate
+- [x] Zero remaining `elk-utilities` module/image refs in the public tree
+- [x] Homelab/migration docs only in private `prism-implementation`
+- [x] Full-history scrub attested; credentials rotated
+- [x] Issue + PR templates; SECURITY; CoC; auth do-not-expose warnings; standalone quickstart
+- [x] License report: no GPL/AGPL copyleft in release graph
+- [x] `v1.0.0` release published (images + signatures) **or** tag pushed and workflow green
+- [x] Repo visibility = **public**
 
 ---
 
@@ -310,15 +310,15 @@ Only after **Exit criteria** are all checked:
 
 | Item | Command / evidence | Result |
 |---|---|---|
-| License report | `go-licenses report ./cmd/prism ./cmd/prism-alert ./cmd/prism-store` | No GPL/AGPL in third-party graph (2026-08-12) |
-| gitleaks/trufflehog | `gitleaks detect --source .` (workdir + full history) | **no leaks found** (301 commits) |
-| Fork CI approval setting | API while private | **Deferred until after visibility flip** (GitHub: not allowed on private repos). Set `all_external_contributors` immediately post-public. Workflow `authorize` + `ci:run` already enforced. |
-| `ci:run` label created | `gh label create ci:run` | Present |
-| CLA Assistant enabled | `.github/workflows/cla.yml` + `CLA.md`; signatures repo `prism-utils/cla-signatures` | Workflow + CLA text landed; App install may still need org admin if not already |
-| `prism-implementation` private repo | `gh repo create prism-utils/prism-implementation --private` | Created; `docs/MIGRATION.md` imported |
-| `v1.0.0` release URL | | pending tag after merge |
-| Visibility flip timestamp (UTC) | | pending |
-| `make lint test` | local 2026-08-12 | **green** |
+| License report | `go-licenses report ./cmd/...` | No GPL/AGPL in third-party graph |
+| gitleaks | `gitleaks detect` (full history) | no leaks found |
+| Fork CI approval | `approval_policy=all_external_contributors` | set **after** public flip |
+| `ci:run` label | present | yes |
+| CLA Assistant | `.github/workflows/cla.yml` + `CLA.md` + `prism-utils/cla-signatures` | enabled; maintainer allowlisted |
+| `prism-implementation` | private repo | `docs/MIGRATION.md` imported |
+| `v1.0.0` release | https://github.com/prism-utils/prism/releases/tag/v1.0.0 | Trivy+goreleaser green (run 31623187607) |
+| Visibility flip | `PATCH ... visibility=public` | **2026-08-12T17:47:38Z** — `visibility=public` |
+| `make lint test` | local | green before merge of #120 |
 
 ---
 
