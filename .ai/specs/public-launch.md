@@ -1,80 +1,68 @@
 # Spec: Public launch readiness (opening plan)
 
-Status: DRAFT
+Status: READY
 
-- **Slug / branch:** `cursor/public-launch-checklist-8a90`
-- **Owner phase:** orchestrator
-- **PLAN phase(s):** public launch / packaging hygiene
+- **Slug / branch:** `cursor/public-launch-checklist-8a90` (plan docs); execute on `feat/public-launch-execute` (or `cursor/public-launch-execute-8a90`)
+- **Owner phase:** orchestrator → developer (execution)
+- **PLAN phase(s):** public launch runbook
 
 ## 1. Task
 
-Lock owner decisions for opening `prism-utils/prism` to the public, record the
-BSL 1.1 + CLA compatibility review, publish the executable opening plan
-([`docs/PUBLIC_LAUNCH.md`](../../docs/PUBLIC_LAUNCH.md)), and ship a concise
-tech README with the stated motivation. Implementation workstreams (LICENSE,
-rename, scrub, doc move, CLA, `v1.0.0`, visibility flip) follow once remaining
-BSL parameters are answered.
+Produce an agent-executable public-opening runbook with every owner decision
+locked (including BSL parameters and maintainer-only CI), so a follow-on agent
+can implement LICENSE → CLA → CI gate → rename → doc move → scrub → `v1.0.0` →
+visibility flip without further questions.
+
+Canonical runbook: [`docs/PUBLIC_LAUNCH.md`](../../docs/PUBLIC_LAUNCH.md).
 
 ## 2. Scope
 
-- **In scope (this PR slice):** opening plan, README rewrite, decision log,
-  BSL compatibility notes, remaining BSL parameter questions.
-- **Out of scope until BSL params land:** adding `LICENSE`, module rename,
-  CLA bot, history scrub execution, creating `prism-implementation`, visibility
-  flip, tagging `v1.0.0`.
+- **In scope (this docs PR):** complete runbook + README + SECURITY/CoC already
+  present; all decisions recorded.
+- **Out of scope here (next execution PR):** creating `LICENSE`, CLA bot wiring,
+  `ci.yml` authorize gate, rename, `prism-implementation` move, scrub, tag, flip.
 
 ## 3. Open questions
 
-### Resolved (2026-08-12)
+All resolved — see runbook §0.
 
-- [x] Q: MVP finished enough to open? — A: **Yes — public on current ship (option A).**
-- [x] Q: License? — A: **BSL 1.1 + CLA on every external PR.**
-- [x] Q: Module path? — A: **Rename all `elk-utilities` → `prism-utils`.**
-- [x] Q: Auth defaults? — A: **Keep `AUTH_MODE=none`; document do-not-expose (C).**
-- [x] Q: First public tag? — A: **`v1.0.0` when exit criteria green (B).**
-- [x] Q: Name? — A: **Keep `prism` (A).**
-- [x] Q: Upstream vs homelab? — A: **Agent/store/alert/Helm only upstream (A).**
-- [x] Q: Homelab docs? — A: **Strip from public; move to private `prism-implementation` (C).**
-- [x] Q: Secrets scrub? — A: **Full-history + rotate (A).**
-- [x] Q: Contributor surface? — A: **Issue/PR templates + CoC + SECURITY (A).**
-- [x] Q: Who flips visibility? — A: **Agent may flip when exit criteria green (B).**
+### BSL / ops (2026-08-12)
 
-### Still blocking `LICENSE` text
-
-- [ ] Q: Licensor legal name? — A: PENDING
-- [ ] Q: Additional Use Grant style (A competing-hosted ban / B numeric cap / C None)? — A: PENDING — recommend **A**
-- [ ] Q: Change Date offset (3y / 4y)? — A: PENDING — recommend **4y**
-- [ ] Q: Change License (Apache-2.0 / other GPL-compatible)? — A: PENDING — recommend **Apache-2.0**
-- [ ] Q: CLA mechanism (CLA assistant bot / other)? — A: PENDING
+- [x] Licensor — **Sys Ramos IT LLC**
+- [x] Additional Use Grant — **A** (production OK except Competing Service)
+- [x] Change Date — **4 years**
+- [x] Change License — **Apache-2.0**
+- [x] CLA — **GitHub CLA Assistant / cla-bot**
+- [x] CI — **only maintainers run CI on PRs** (fork approval + `ci:run` label gate)
 
 ## 4. Decision log
 
-- BSL 1.1 over Apache-2.0: owner choice for source-available + conversion path.
-  - ref: https://mariadb.com/bsl-faq-adopting/ — BSL is not OSI OSS; Change License must be GPL-compatible; production limited unless Additional Use Grant.
-  - ref: https://blog.sentry.io/relicensing-sentry/ ; Cockroach BSL — production OK except competing SaaS/DBaaS; Change License Apache-2.0.
-  - perf: N/A (legal).
-  - product: protects against competing hosted offerings while allowing self-host; must not call the project “open source.”
-- CLA on external PRs: required for BSL relicensing control.
-  - ref: MariaDB FAQ contribution path (BSD *or* CLA); owner chose CLA.
-  - product: clear inbound IP for commercial license + Change License conversion.
-- Dependency compatibility: permissive Apache/MIT/BSD deps OK; GPL/AGPL before Change Date not OK.
-  - ref: MariaDB FAQ “Is the BSL compatible with GPL (prior to the Change Date)? — No.”
-  - product: add pre-`v1.0.0` license report gate.
-- Auth default unchanged (`none`): owner acceptance of trusted-network default with docs warnings.
-  - product: faster launch; risk owned via CONFIG/NOTES language.
-- Homelab docs → private `prism-implementation`: keeps public tree clean of Traefik/site-main/prism-proxy cutover.
+- Maintainer-only CI: combine GitHub “require approval for all outside
+  collaborators” with workflow authorize job + `ci:run` label; never build via
+  `pull_request_target`.
+  - ref: GitHub Actions docs on fork PR approval; OTel/collector hardening
+    guidance against running untrusted workflows with secrets.
+  - product: strangers cannot burn CI or exfil via PR code until a maintainer
+    labels `ci:run`.
+- BSL Competing Service grant (Cockroach/Sentry-style) with Apache-2.0 Change
+  License and 4-year Change Date; licensor Sys Ramos IT LLC.
+  - ref: https://mariadb.com/bsl11/ ; Sentry/Cockroach BSL adoptions.
+  - product: self-host production OK; competing hosted telemetry store not OK
+    without commercial license.
 
 ## 5. Acceptance checklist
 
-- [x] `docs/PUBLIC_LAUNCH.md` rewritten as opening plan with locked decisions + BSL review + exit criteria
-- [x] README rewritten: concise, tech audience, motivation included, benches linked out
-- [x] Spec records resolved answers + remaining BSL parameter questions
-- [x] Tests / `make lint test` — N/A (docs-only)
+- [x] `docs/PUBLIC_LAUNCH.md` is a full phased runbook with checkboxes + exact
+      LICENSE parameters + CI gate recipe + exit criteria + attestations table
+- [x] All L1–L5 and D1–D12 decisions locked in the runbook
+- [x] README motivation + source-available framing present
+- [x] Spec `Status: READY` for execution handoff
+- [x] Tests N/A (docs-only)
 
 ## 6. Mandatory review gates
 
 - [ ] **Gate 1 — Follows the guidelines**
-- [ ] **Gate 2 — Tests cover edge cases** — N/A docs-only
+- [ ] **Gate 2 — Tests** — N/A docs-only
 - [ ] **Gate 3 — Docs match the task**
 - [ ] **Gate 4 — Comments atomic** — N/A
 - [ ] Full docs/REVIEW.md checklist (docs slice)
@@ -82,3 +70,9 @@ BSL parameters are answered.
 ## 7. Reviewer notes
 
 _(empty until first review)_
+
+## Execution handoff
+
+Next agent: open `feat/public-launch-execute` from `main`, follow
+`docs/PUBLIC_LAUNCH.md` Phases 1→11 in order, check boxes + fill Attestations,
+merge, tag `v1.0.0`, flip visibility when Exit criteria are green.

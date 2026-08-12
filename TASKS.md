@@ -93,15 +93,18 @@ See [`docs/STORE.md`](docs/STORE.md) and [`docs/DESIGN.md`](docs/DESIGN.md) §15
 
 ---
 
-## Public launch track (repo still private)
+## Public launch track
 
-Plan: [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md). Spec:
-[`.ai/specs/public-launch.md`](.ai/specs/public-launch.md).
+**Runbook (execute this):** [`docs/PUBLIC_LAUNCH.md`](docs/PUBLIC_LAUNCH.md)  
+Spec: [`.ai/specs/public-launch.md`](.ai/specs/public-launch.md) — `Status: READY`
 
-- [x] **opening plan + README + SECURITY/CoC** — decisions locked; BSL review recorded.
-- [ ] **BSL 1.1 `LICENSE` + CLA** — blocked on licensor / Additional Use Grant / Change Date / Change License / CLA bot answers.
-- [ ] **rename `elk-utilities` → `prism-utils`** everywhere (module, GHCR, cosign, docs).
-- [ ] **move homelab docs** to private `prism-implementation`; strip from this tree.
-- [ ] **history scrub + credential rotation attestation**
-- [ ] **issue/PR templates** + standalone quickstart + auth do-not-expose NOTES
-- [ ] **tag `v1.0.0`** then **agent flips visibility** when exit criteria are green.
+- [x] **Plan locked** — decisions D1–D12 + L1–L5; maintainer-only CI recipe; exit criteria.
+- [ ] **Phase 2** — BSL 1.1 `LICENSE` (Sys Ramos IT LLC; Competing Service grant; Apache-2.0 @ +4y)
+- [ ] **Phase 3** — CLA Assistant on external PRs
+- [ ] **Phase 4** — Maintainer-only CI (fork approval + `ci.yml` authorize / `ci:run`)
+- [ ] **Phase 5** — Rename all `elk-utilities` → `prism-utils`
+- [ ] **Phase 6** — Move homelab docs to private `prism-implementation`
+- [ ] **Phase 7** — Full-history scrub + rotate
+- [ ] **Phase 8** — Issue/PR templates + auth warnings + standalone quickstart
+- [ ] **Phase 9–10** — Verify + tag **`v1.0.0`**
+- [ ] **Phase 11** — Agent flips repo visibility to public
