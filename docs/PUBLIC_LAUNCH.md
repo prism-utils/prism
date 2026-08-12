@@ -1,128 +1,330 @@
-# prism — Opening plan (decisions locked)
+# prism — Public opening runbook (agent-executable)
 
-> Executable plan to flip [`prism-utils/prism`](https://github.com/prism-utils/prism)
-> from private → public. Spec: [`.ai/specs/public-launch.md`](../.ai/specs/public-launch.md).
+> **Audience:** an autonomous agent. Execute phases **in order**. Check every box
+> when done. Do **not** flip visibility until **Exit criteria** are all checked.
 >
-> This supersedes the earlier draft checklist preferences where they conflict.
+> Repo: [`prism-utils/prism`](https://github.com/prism-utils/prism)  
+> Spec: [`.ai/specs/public-launch.md`](../.ai/specs/public-launch.md)  
+> Branch prefix for implementation: `cursor/public-launch-*` or `feat/public-launch-*`
 
-## Locked decisions (2026-08-12)
+**Status:** READY TO EXECUTE (all owner decisions locked 2026-08-12).
 
-| # | Topic | Decision |
+---
+
+## 0. Locked decisions (do not re-ask)
+
+| ID | Decision |
+|---|---|
+| D1 | Open on current shipped MVP (no extra feature gate). |
+| D2 | License = **BSL 1.1** + **CLA on every external PR**. |
+| D3 | Rename **all** `elk-utilities` → **`prism-utils`**. |
+| D4 | Keep `AUTH_MODE=none`; document do-not-expose (no fail-closed code change). |
+| D5 | First public tag = **`v1.0.0`**. |
+| D6 | Keep product name **`prism`**. |
+| D7 | Public tree = agent + store + alert + in-repo Helm/compose only. |
+| D8 | Homelab docs → **private** `prism-implementation` (create if missing); strip from this repo. |
+| D9 | Full-history secret scrub + rotate (**hard gate**). |
+| D10 | Contributor surface = issue/PR templates + CoC + SECURITY (+ CLA). |
+| D11 | **Agent flips visibility** when Exit criteria are green. |
+| D12 | **Only maintainers can run CI on PRs** (see Phase 4). |
+| L1 | Licensor = **Sys Ramos IT LLC** |
+| L2 | Additional Use Grant = **A** (production OK except Competing Service / hosted SaaS). |
+| L3 | Change Date = **4 years** from first public distribution of that version. |
+| L4 | Change License = **Apache License, Version 2.0** |
+| L5 | CLA = **GitHub CLA Assistant / cla-bot** on the org/repo. |
+
+### Motivation (must stay in README)
+
+Unify logging + metrics in one agent and one purpose-built store to use far less
+resources; process on the agent to offload the server; decouple storage from CPU
+via immutable Parquet tiers.
+
+---
+
+## Phase 1 — Worktree + currency
+
+- [ ] `git fetch origin main` from primary `~/git/prism` (or cloud clone)
+- [ ] Create worktree/branch from `origin/main` (e.g. `feat/public-launch-execute`)
+- [ ] Confirm `git log --oneline HEAD..origin/main` is empty (rebase if not)
+- [ ] Read this file end-to-end before editing
+
+---
+
+## Phase 2 — LICENSE (BSL 1.1)
+
+Create root **`LICENSE`** with parameters below, then the standard MariaDB BSL 1.1
+body (Covenants + Notice). Use the official text from
+https://mariadb.com/bsl11/ (do not invent alternate BSL wording).
+
+### 2.1 Parameters block (exact intent)
+
+```
+Business Source License 1.1
+
+Parameters
+
+Licensor:             Sys Ramos IT LLC
+Licensed Work:        prism
+                      The Licensed Work is (c) 2026 Sys Ramos IT LLC
+
+Additional Use Grant: You may make production use of the Licensed Work, provided
+                      that you do not use the Licensed Work to offer a Competing
+                      Service.
+
+                      A “Competing Service” is a commercial offering that allows
+                      third parties (other than your employees and contractors)
+                      to access the Licensed Work as a hosted SaaS, managed
+                      service, or multi-tenant observability / telemetry store
+                      service that significantly overlaps with offerings of
+                      Sys Ramos IT LLC.
+
+Change Date:          <UTC_DATE_OF_FIRST_PUBLIC_V1_0_0 plus 4 years, YYYY-MM-DD>
+                      Example: if v1.0.0 is first published 2026-08-15, use 2030-08-15.
+
+Change License:       Apache License, Version 2.0
+
+For information about alternative licensing arrangements for the Licensed Work,
+please contact Sys Ramos IT LLC.
+```
+
+- [ ] Write `LICENSE` with parameters + full BSL 1.1 terms
+- [ ] Set `Change Date` to **tag day (UTC) + 4 years** when preparing `v1.0.0` (update LICENSE in the same release PR/commit as the tag if the date was a placeholder)
+- [ ] Add `NOTICE` if needed listing Apache-2.0 attributions (Arrow, etc.) — at minimum keep third-party notices accurate
+- [ ] README License blurb already says BSL / source-available — keep consistent; never say “open source”
+- [ ] Optional short `docs/LICENSE_FAQ.md`: non-production free; production OK except Competing Service; commercial license contact; converts to Apache-2.0 on Change Date
+
+### 2.2 License report gate
+
+- [ ] Run a dependency license report (`go-licenses` or equivalent once Go is available)
+- [ ] Fail the launch if any **GPL / AGPL / LGPL-copyleft** (or other production-restrictive) dep appears in the release graph
+- [ ] Record command + summary under “Attestations” at the bottom of this file
+
+---
+
+## Phase 3 — CLA (external PRs)
+
+- [ ] Enable **CLA Assistant** (or org cla-bot) for `prism-utils/prism`
+  - Store CLA text (copyright assignment / inbound license grant to **Sys Ramos IT LLC** sufficient to distribute under BSL and Change License)
+  - Signatures stored in the usual `cla-assistant` signatures repo or org-configured store
+- [ ] Add `.github/workflows/cla.yml` (or vendor-recommended workflow) that runs the CLA check on `pull_request_target` **signatures only** (no build of PR code)
+- [ ] PR template states: external contributors must sign the CLA before merge
+- [ ] Document in `CONTRIBUTING.md`: CLA required; maintainers are exempt if already covered by employment/org agreement (optional note)
+- [ ] Verify: open a dry-run fork PR or use CLA Assistant’s test — unsigned PR is blocked from merge
+
+---
+
+## Phase 4 — Maintainer-only CI on PRs
+
+**Goal:** untrusted PR code must not run `make test` / Docker / etc. until a
+**maintainer** explicitly allows it.
+
+### 4.1 GitHub repo Actions setting (required)
+
+- [ ] Set fork PR workflow approval to **Require approval for all outside collaborators**
+
+```bash
+# Preferred API (if available to the token):
+gh api -X PUT repos/prism-utils/prism/actions/permissions/fork-pr-contributor-approval \
+  -f approval_policy=all_external_contributors
+
+# If that endpoint is unavailable, set in UI:
+# Settings → Actions → General → Fork pull request workflows from outside collaborators
+# → "Require approval for all outside collaborators"
+```
+
+- [ ] Confirm Actions are enabled for the repo
+- [ ] Record how it was set under Attestations
+
+### 4.2 Workflow gate in `.github/workflows/ci.yml` (required)
+
+Implement **both** of the following:
+
+1. **Auto-run CI** only when:
+   - `push` to `main`, or
+   - `pull_request` from the **same repo** AND `author_association` ∈ `{OWNER, MEMBER, COLLABORATOR}`
+2. **Otherwise** (forks / first-timers / outside contributors): CI jobs **skip** unless the PR has label **`ci:run`** (maintainer applies after reviewing the diff).
+
+Suggested pattern:
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  # Shared gate — every expensive job needs: needs: authorize
+  authorize:
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          ASSOC="${{ github.event.pull_request.author_association }}"
+          SAME="${{ github.event.pull_request.head.repo.full_name == github.repository }}"
+          LABELED="${{ contains(github.event.pull_request.labels.*.name, 'ci:run') }}"
+          if [ "$LABELED" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$SAME" = "true" ] && { [ "$ASSOC" = "OWNER" ] || [ "$ASSOC" = "MEMBER" ] || [ "$ASSOC" = "COLLABORATOR" ]; }; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "run=false" >> "$GITHUB_OUTPUT"
+
+  fast:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    # ... existing steps ...
+```
+
+Apply the same `needs: authorize` / `if:` to **store**, **chart**, **full** (and any other CI jobs that execute PR code).
+
+- [ ] Patch `ci.yml` as above (or equivalent)
+- [ ] Document in `CONTRIBUTING.md`: maintainers add label `ci:run` to run CI on external PRs
+- [ ] Create the `ci:run` label on the repo (color optional; description: “Maintainer approval to run CI on this PR”)
+- [ ] **Do not** switch build jobs to `pull_request_target` (secret exfil risk)
+- [ ] CLA workflow may run without `ci:run` (signature check only)
+
+### 4.3 Release workflow
+
+- [ ] Keep `release.yml` **tag-only** (`v*`); no PR untrusted build path
+- [ ] After rename, update cosign certificate-identity regexp to `prism-utils/prism`
+
+---
+
+## Phase 5 — Rename `elk-utilities` → `prism-utils`
+
+Replace **every** occurrence in this repo (code, go.mod, Dockerfiles, goreleaser,
+workflows, charts, docs, examples, tests, scripts, cosign verify snippets).
+
+| From | To |
+|---|---|
+| `github.com/elk-utilities/prism` | `github.com/prism-utils/prism` |
+| `ghcr.io/elk-utilities/prism` | `ghcr.io/prism-utils/prism` |
+| `ghcr.io/elk-utilities/prism-store` | `ghcr.io/prism-utils/prism-store` |
+| `ghcr.io/elk-utilities/prism-alert` | `ghcr.io/prism-utils/prism-alert` |
+| any remaining `elk-utilities` string | `prism-utils` (unless historically quoted inside moved-out private docs) |
+
+- [ ] Update `go.mod` module path
+- [ ] `rg -n 'elk-utilities' -g '!**/PUBLIC_LAUNCH.md'` → **zero hits** in tracked files that remain public (this runbook may mention the old name once in the rename table)
+- [ ] `go mod tidy` / fix all imports
+- [ ] Update `.goreleaser.yaml`, Dockerfiles, `release.yml` cosign identities, README verify commands
+- [ ] Update chart default image repos under `deploy/charts/**`
+- [ ] `make lint test` (and `make full-tests` / store integration if feasible in the environment)
+- [ ] Note: **homelab-apps / gitops** image refs are out of this repo — open follow-up issues/PRs there after public GHCR path exists (do not block flip on merging those, but file the issues)
+
+---
+
+## Phase 6 — Move homelab docs to private `prism-implementation`
+
+- [ ] Ensure private repo `prism-utils/prism-implementation` exists (create private if missing)
+- [ ] Move **out** of public `prism` (git mv → commit in implementation repo):
+  - [ ] `docs/MIGRATION.md` (prism-proxy / Traefik / homelab cutover)
+  - [ ] Any other files that only document homelab-apps / site-main / ForwardAuth / gitops promotion (search: `homelab-apps`, `prism-proxy`, `site-main`, `ForwardAuth`, `homelab-gitops`)
+- [ ] Scrub remaining **public** docs of operational homelab coupling; keep generic store/agent docs
+- [ ] Public README must not link to private implementation docs
+- [ ] Confirm public tree has **no** migration/cutover runbook
+
+---
+
+## Phase 7 — Secret scrub
+
+- [ ] Install/run **gitleaks** (and/or trufflehog) on **full git history**
+- [ ] Review findings; purge or rotate anything real (tokens, kubeconfigs, private host creds)
+- [ ] If history rewrite is required: use `git filter-repo` / BFG **before** public flip; force-push only with owner awareness; re-tag if needed
+- [ ] Rotate every credential that ever appeared in history
+- [ ] Paste scan command + “clean” / remediation summary into Attestations
+- [ ] Ensure `.gitignore` covers local secrets; no `.env` with secrets in tree
+
+---
+
+## Phase 8 — Contributor / security surface
+
+- [ ] Confirm `SECURITY.md` present (already)
+- [ ] Confirm `CODE_OF_CONDUCT.md` present (already)
+- [ ] Add `.github/ISSUE_TEMPLATE/` (bug + feature at minimum)
+- [ ] Add `.github/PULL_REQUEST_TEMPLATE.md` (CLA reminder, `make lint test`, Conventional Commits, `ci:run` note for externals)
+- [ ] Auth warnings: `docs/CONFIG.md` + chart `NOTES.txt` — **do not expose** `AUTH_MODE=none` to untrusted networks; recommend bearer/RBAC + `ADMIN_LISTEN_ADDR`
+- [ ] Standalone quickstart works without homelab (compose or documented `make` path agent → store)
+- [ ] README remains concise tech + motivation (already rewritten; keep GHCR paths on `prism-utils`)
+
+---
+
+## Phase 9 — Pre-release verification
+
+- [ ] `make lint test` green
+- [ ] `make store-integration` and/or `make full-tests` green if the environment supports Docker/CGO
+- [ ] `make release-check` (goreleaser config validate)
+- [ ] Helm lint/golden still green after image rename
+- [ ] License report clean (Phase 2.2)
+- [ ] CI authorize gate smoke: same-repo maintainer PR runs; unlabeled external/fork PR does **not** run build jobs
+
+---
+
+## Phase 10 — Tag `v1.0.0` + publish
+
+- [ ] Merge the launch implementation PR(s) to `main`
+- [ ] Finalize `LICENSE` Change Date = **UTC tag date + 4 years**
+- [ ] `git tag -a v1.0.0 -m "v1.0.0"` on the release commit; `git push origin v1.0.0`
+- [ ] Watch `release.yml`: Trivy gate green; images on `ghcr.io/prism-utils/{prism,prism-store,prism-alert}`; cosign signatures present
+- [ ] Verify cosign with updated `prism-utils` identity regexp
+- [ ] GitHub Release body: **source-available under BSL 1.1**; link LICENSE; no “open source” claim
+
+---
+
+## Phase 11 — Visibility flip (agent authorized)
+
+Only after **Exit criteria** are all checked:
+
+- [ ] `gh repo edit prism-utils/prism --visibility public`
+- [ ] Confirm https://github.com/prism-utils/prism loads while logged out / private browsing
+- [ ] Confirm Actions fork-approval setting still **all outside collaborators**
+- [ ] Confirm topics/description: source-available, BSL, Go, metrics, logs — **not** “open source”
+- [ ] Check off final Exit criteria row below
+- [ ] Post a short maintainer note on the Release or Discussion: public under BSL; CLA required; CI via `ci:run`
+
+---
+
+## Exit criteria (flip only when every box is checked)
+
+- [ ] `LICENSE` (BSL 1.1) with Sys Ramos IT LLC + Competing Service grant + Apache-2.0 Change License + Change Date set
+- [ ] CLA Assistant enforced on external PRs
+- [ ] Maintainer-only CI: GitHub fork approval = all outside collaborators **and** `ci.yml` authorize/`ci:run` gate
+- [ ] Zero remaining `elk-utilities` module/image refs in the public tree
+- [ ] Homelab/migration docs only in private `prism-implementation`
+- [ ] Full-history scrub attested; credentials rotated
+- [ ] Issue + PR templates; SECURITY; CoC; auth do-not-expose warnings; standalone quickstart
+- [ ] License report: no GPL/AGPL copyleft in release graph
+- [ ] `v1.0.0` release published (images + signatures) **or** tag pushed and workflow green
+- [ ] Repo visibility = **public**
+
+---
+
+## Attestations (executing agent fills in)
+
+| Item | Command / evidence | Result |
 |---|---|---|
-| 1 | MVP readiness | **Open as public beta on what is already shipped** (agent e2e + store + alert + Helm/release). No extra MVP feature gate. |
-| 2 | License | **BSL 1.1** + **CLA required on every external PR**. |
-| 3 | Module / branding | Rename **all** `elk-utilities` → `prism-utils` (Go module, imports, GHCR, cosign identity, docs). |
-| 4 | Auth defaults | Keep **`AUTH_MODE=none`**; document “do not expose unauthenticated”; no fail-closed code change for launch. |
-| 5 | First public tag | **`v1.0.0`** when this plan’s exit criteria are green. |
-| 6 | Name | Keep **`prism`**; freeze before `v1.0.0` (already the working name). |
-| 7 | Upstream boundary | Public repo = agent + store + alert + in-repo Helm/compose. Grafana / site-main / reconciler stay in `homelab-apps`. |
-| 8 | Homelab docs | **Remove from public tree.** Move to a **private** `prism-implementation` repo (create if missing). |
-| 9 | Secrets | Full-history scrub + rotate anything that ever leaked (**hard gate**). |
-| 10 | Contributor surface | Issue + PR templates + CoC + SECURITY (no CODEOWNERS/`govulncheck` required pre-flip). |
-| 11 | Visibility flip | **Agent may flip** once exit criteria below are checked off. |
-
-### Motivation (must appear in README)
-
-Unify **logging + metrics** in a single edge agent and a store built for that
-workload, so a deployment can use **far less resources** than a bolted-together
-Loki+Prometheus+warehouse stack. Push aggregation/encoding to the **agent** to
-offload the server, and **decouple storage from CPU** by design (immutable
-Parquet tiers + separate query/ingest planes).
+| License report | | |
+| gitleaks/trufflehog | | |
+| Fork CI approval setting | | |
+| `ci:run` label created | | |
+| CLA Assistant enabled | | |
+| `prism-implementation` private repo | | |
+| `v1.0.0` release URL | | |
+| Visibility flip timestamp (UTC) | | |
 
 ---
 
-## BSL 1.1 + CLA — compatibility review
+## Non-goals (do not do during launch)
 
-### Verdict
-
-**No hard conflict** with prism’s current direct dependency set (permissive:
-Apache-2.0 / MIT / BSD-class — Arrow, DuckDB, Prometheus client, OIDC, koanf,
-gRPC, etc.). BSL projects routinely consume those licenses.
-
-**BSL is not OSI “open source.”** It is **source-available** until the Change
-Date. Marketing, README, and GitHub topics must say **source-available / BSL**,
-never “open source,” until conversion.
-
-### Real constraints (not blockers if handled)
-
-| Area | Finding | Plan action |
-|---|---|---|
-| **GPL/AGPL deps** | MariaDB FAQ: BSL and GPL are **incompatible before Change Date**. | Gate: refuse new GPL/AGPL/LGPL-copyleft deps; run a license report before `v1.0.0`. |
-| **Permissive deps** | MIT/Apache/BSD → OK inside a BSL work. | Keep NOTICE attribution for Apache deps (Arrow, etc.). |
-| **CLA** | Required so prism-utils can ship BSL and later convert / dual-license commercially. MariaDB also accepts BSD-licensed patches; **CLA is stricter and matches your choice**. | Add CLA bot + `CONTRIBUTING` / PR template gate; block merge without signature. |
-| **Additional Use Grant** | Without a grant, **production use is disallowed** by default BSL. | Must choose grant wording before LICENSE lands (see open params below). |
-| **Change License** | Must be GPL-2+ or compatible. Cockroach/Sentry/Couchbase use **Apache-2.0**. | Recommend Apache-2.0. |
-| **Change Date** | Max **4 years** from first public distribution of that version. | Recommend 3 or 4 years (param below). |
-| **Downstream homelab** | Licensor (`prism-utils` / your entity) using prism in homelab is fine. Third parties need the Additional Use Grant or a commercial license. | Document in LICENSE FAQ / README License section. |
-| **GHCR / binaries** | Same BSL applies to images and binaries. | Cosign/GHCR paths move to `ghcr.io/prism-utils/...`. |
-| **Ecosystem friction** | Some distros/corp policies ban BSL; GitHub won’t treat it as OSI OSS. | Accept; do not claim OSI compliance. |
-| **Goreleaser** | Already packages `LICENSE*`. | Ship root `LICENSE` as BSL 1.1 parameterized text. |
-
-### Still required to write `LICENSE` (answer these next)
-
-BSL 1.1 is a **template**. These four fields are mandatory:
-
-1. **Licensor** legal name (e.g. individual or “Prism Utils …” entity)
-2. **Additional Use Grant** style:
-   - A) Production OK except offering prism as a **competing hosted/SaaS/DBaaS** (Cockroach/Sentry-style) — **recommended**
-   - B) Production OK only under a **numeric cap** (MariaDB MaxScale-style)
-   - C) **None** (non-production only unless commercial license)
-3. **Change Date** offset from first public `v1.0.0`: **3 years** or **4 years**
-4. **Change License**: recommend **Apache-2.0** (confirm or override)
-5. **CLA mechanism**: GitHub CLA assistant / CLA bot repo / other
-
----
-
-## Workstreams (ordered)
-
-### A — Legal & identity
-
-1. Answer BSL parameters above; add root `LICENSE` (BSL 1.1) + short `LICENSE_FAQ.md` if useful.
-2. Add CLA workflow; PR template requires signed CLA for external contributors.
-3. Rename module `github.com/elk-utilities/prism` → `github.com/prism-utils/prism` everywhere (Go imports, Dockerfiles, goreleaser, CI cosign identity regexp, README verify commands, chart values).
-4. Rename GHCR to `ghcr.io/prism-utils/{prism,prism-store,prism-alert}`.
-5. Full-history gitleaks/trufflehog; rotate leaked credentials; record attestation in this file.
-
-### B — Docs boundary
-
-1. Create private **`prism-implementation`** repo (if absent).
-2. Move out of public tree: `docs/MIGRATION.md` and any homelab/Traefik/site-main/prism-proxy cutover narrative; scrub remaining homelab-only asides from `STORE.md` / `OUTPUT_CONTRACT.md` / README.
-3. Public docs keep: DESIGN, CONFIG, STORE, MEMORY, OUTPUT_CONTRACT, ALERTING, TESTING, REVIEW, PLAN (sanitized), PUBLIC_LAUNCH/this plan.
-4. README: concise tech README with motivation (done in launch PR); no giant bench tables in README — link `bench/`.
-
-### C — Product surface for `v1.0.0`
-
-1. Standalone quickstart (compose or make target) for agent → store **without** homelab.
-2. Chart `NOTES.txt` + CONFIG: warn clearly that `AUTH_MODE=none` is for trusted networks only; recommend bearer/RBAC + `ADMIN_LISTEN_ADDR` split for exposure.
-3. Issue + PR templates.
-4. Tag **`v1.0.0`** via existing release workflow (Trivy + cosign + SBOM); verify cosign against `prism-utils` paths.
-
-### D — Flip
-
-1. Confirm A–C checkboxes green.
-2. Agent sets GitHub repo visibility to **public** (decision 11).
-3. Publish GitHub Release for `v1.0.0`; announce as **source-available (BSL 1.1)**, not open source.
-
----
-
-## Exit criteria (agent may flip when all are true)
-
-- [ ] BSL parameters answered; `LICENSE` merged
-- [ ] CLA enforced on external PRs
-- [ ] Zero `elk-utilities` references remain in this repo (module, images, docs, workflows)
-- [ ] Homelab/migration docs removed from this repo and present only in private `prism-implementation`
-- [ ] History scrub + rotation attested
-- [ ] Concise README + SECURITY + CoC + issue/PR templates present
-- [ ] Standalone quickstart works on a clean machine
-- [ ] Auth “do not expose” warnings in CONFIG + chart NOTES
-- [ ] `v1.0.0` release workflow dry-run or tag ready (Trivy green)
-- [ ] License report: no GPL/AGPL copyleft deps in the release graph
-
----
-
-## Non-goals for the flip
-
-- Changing `AUTH_MODE` default away from `none`
-- Moving Grafana/site-main into prism
-- OSI open-source relicensing before Change Date
-- CODEOWNERS / `govulncheck` as launch blockers
+- Changing default `AUTH_MODE` away from `none`
+- Moving Grafana / site-main into this repo
+- Claiming OSI open source
+- Using `pull_request_target` to build untrusted PR code
+- Blocking flip on homelab-apps image-ref PRs (file them; don’t wait unless release is broken)
