@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/bench/internal/gen"
 	"github.com/prism-utils/prism/internal/store/layout"
-	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/stretchr/testify/require"
 )
 

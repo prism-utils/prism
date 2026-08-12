@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/duckdbfile"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/segformat"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
-	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"golang.org/x/sync/singleflight"
 )
 

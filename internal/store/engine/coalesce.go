@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/logmeta"
-	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 type logCoalesceKey struct {

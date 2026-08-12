@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/segformat"
 	"github.com/prism-utils/prism/internal/store/testparquet"
-	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 func TestHotSnapshotDuckDBExportAtomicNoWAL(t *testing.T) {
