@@ -1,10 +1,10 @@
 # Spec: fix(store) — RO reader skip writable ensure (DuckDB engine spam)
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/prr-duckdb-ro-reader-8a90`
-- **Owner phase:** developer
+- **Owner phase:** reviewer
 - **Issue:** prism-utils/prism#125 (PRR / Homelab prod)
 - **PLAN phase(s):** store reader/writer split (post Phase store-run-jobs + sql_readonly_replica)
 
@@ -76,19 +76,19 @@ today's ensure behavior.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `admin.Config` includes `RunJobs bool`; `adminConfig()` / mux wiring sets
+- [x] `admin.Config` includes `RunJobs bool`; `adminConfig()` / mux wiring sets
       it from `serverConfig.runJobs`.
-- [ ] `EnsureHandler` with `RunJobs=false`: valid tenant → **204**, no
+- [x] `EnsureHandler` with `RunJobs=false`: valid tenant → **204**, no
       `eng.DB`, no seed/tier writes, no ERROR log for ensure engine.
-- [ ] `EnsureHandler` with `RunJobs=true` (default): unchanged — opens engine,
+- [x] `EnsureHandler` with `RunJobs=true` (default): unchanged — opens engine,
       seeds layout; non-writable data dir still **500** + ERROR.
-- [ ] Tests written first (a `test:` commit precedes implementation) —
+- [x] Tests written first (a `test:` commit precedes implementation) —
       CONTRIBUTING.md §1
-- [ ] Unit tests cover: jobs-off + non-writable dir → 204 and no
+- [x] Unit tests cover: jobs-off + non-writable dir → 204 and no
       `engine.duckdb`; jobs-on + non-writable → 500; jobs-on happy path still
       204 + seed present; unknown tenant still 404 in both modes.
-- [ ] `docs/STORE.md` documents ensure no-op under `RUN_JOBS=false`.
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O wiring needs it;
+- [x] `docs/STORE.md` documents ensure no-op under `RUN_JOBS=false`.
+- [x] `make lint test` green locally (+ `make full-tests` if I/O wiring needs it;
       this change is admin HTTP + engine open gate → at least `make lint test`).
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
