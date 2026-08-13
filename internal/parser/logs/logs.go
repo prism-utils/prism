@@ -10,12 +10,19 @@
 // column (which shape produced the row). Timestamp fields are never ingested:
 // storage stamps its own ingest time, and an embedded per-line timestamp is a
 // useless, high-cardinality summary dimension.
+//
+// When RawBatch.Source is a kubelet container log path, the parser also adds
+// namespace, pod, and container string columns (omitted when the path is not
+// recognized). Producer RawBatch.Labels merge with the same honor_labels rule:
+// a key already present on the row is left alone. The raw file path is never
+// emitted as a column.
 package logs
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -112,11 +119,130 @@ func (p *parser) Start(_ context.Context, host component.Host) error {
 func (p *parser) Shutdown(context.Context) error { return nil }
 
 func (p *parser) Parse(_ context.Context, in data.RawBatch) (data.RecordBatch, error) {
+	pathNS, pathPod, pathContainer, havePath := parseK8sLogPath(in.Source)
 	rows := make([]map[string]any, 0, len(in.Records))
 	for _, rec := range in.Records {
-		rows = append(rows, p.parseLine(strings.TrimRight(string(rec), "\r\n")))
+		row := p.parseLine(strings.TrimRight(string(rec), "\r\n"))
+		// Producer labels fill gaps left by the line; path inference fills last.
+		for k, v := range in.Labels {
+			mergeAbsentString(row, k, v)
+		}
+		if havePath {
+			mergeAbsentString(row, "namespace", pathNS)
+			mergeAbsentString(row, "pod", pathPod)
+			mergeAbsentString(row, "container", pathContainer)
+		}
+		rows = append(rows, row)
 	}
 	return columnar.Build(p.mem, in.Source, rows)
+}
+
+// mergeAbsentString sets key to value only when the row does not already carry
+// that key (honor_labels: parsed fields and producer labels win over inference).
+func mergeAbsentString(row map[string]any, key, value string) {
+	if value == "" {
+		return
+	}
+	if _, exists := row[key]; exists {
+		return
+	}
+	row[key] = value
+}
+
+// parseK8sLogPath extracts namespace, pod, and container from a kubelet log path.
+// Supported layouts:
+//
+//	.../pods/<namespace>_<pod>_<uid>/<container>/<n>.log
+//	.../containers/<pod>_<namespace>_<container>-<id>.log
+//
+// Returns ok=false when the path is not a recognized Kubernetes log path.
+func parseK8sLogPath(path string) (namespace, pod, container string, ok bool) {
+	path = filepath.ToSlash(path)
+	if ns, p, c, ok := parsePodsLogPath(path); ok {
+		return ns, p, c, true
+	}
+	return parseContainersLogPath(path)
+}
+
+func parsePodsLogPath(path string) (namespace, pod, container string, ok bool) {
+	const marker = "/pods/"
+	var rest string
+	switch {
+	case strings.Contains(path, marker):
+		rest = path[strings.Index(path, marker)+len(marker):]
+	case strings.HasPrefix(path, "pods/"):
+		rest = path[len("pods/"):]
+	default:
+		return "", "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) < 3 {
+		return "", "", "", false
+	}
+	idParts := strings.SplitN(parts[0], "_", 3)
+	if len(idParts) != 3 || idParts[0] == "" || idParts[1] == "" || idParts[2] == "" {
+		return "", "", "", false
+	}
+	if parts[1] == "" || !strings.HasSuffix(parts[2], ".log") {
+		return "", "", "", false
+	}
+	return idParts[0], idParts[1], parts[1], true
+}
+
+func parseContainersLogPath(path string) (namespace, pod, container string, ok bool) {
+	const marker = "/containers/"
+	var base string
+	switch {
+	case strings.Contains(path, marker):
+		base = path[strings.Index(path, marker)+len(marker):]
+	case strings.HasPrefix(path, "containers/"):
+		base = path[len("containers/"):]
+	default:
+		return "", "", "", false
+	}
+	if strings.Contains(base, "/") {
+		return "", "", "", false
+	}
+	if !strings.HasSuffix(base, ".log") {
+		return "", "", "", false
+	}
+	base = strings.TrimSuffix(base, ".log")
+	// <pod>_<namespace>_<container>-<64-hex-id>
+	underscore := 0
+	var podPart, nsPart, rest string
+	for j := 0; j < len(base); j++ {
+		if base[j] != '_' {
+			continue
+		}
+		underscore++
+		if underscore == 1 {
+			podPart = base[:j]
+			continue
+		}
+		if underscore == 2 {
+			nsPart = base[len(podPart)+1 : j]
+			rest = base[j+1:]
+			break
+		}
+	}
+	if underscore != 2 || podPart == "" || nsPart == "" || rest == "" {
+		return "", "", "", false
+	}
+	// Container name may contain hyphens; ID is the final -<hex{64}>.
+	if len(rest) < 65 || rest[len(rest)-65] != '-' {
+		return "", "", "", false
+	}
+	id := rest[len(rest)-64:]
+	for _, r := range id {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return "", "", "", false
+		}
+	}
+	container = rest[:len(rest)-65]
+	if container == "" {
+		return "", "", "", false
+	}
+	return nsPart, podPart, container, true
 }
 
 // parseLine turns one line into a row. It picks the extractor by configured

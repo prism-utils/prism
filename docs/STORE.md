@@ -1051,10 +1051,17 @@ filters, and formatters. A clear rejection beats a half-answered query.
 - **Line:** `message` when it has text, else the mined `template`, else empty.
   Label endpoints never project `message`.
 - **Labels:** the remaining **text** columns (`format`, `template`, extracted
-  fields) plus a synthetic **`job="prism"`** on every stream, so Grafana's default
-  `{job="prism"}` query works out of the box. `count` (from a summary window) is
-  exposed as a label string; other numeric columns are not labels. NULL/empty
-  values and names that are not legal label names are omitted.
+  fields, and when present Kubernetes identity **`namespace`**, **`pod`**,
+  **`container`**) plus a synthetic **`job="prism"`** on every stream, so
+  Grafana's default `{job="prism"}` query works out of the box. Operators can
+  scope like kubectl, e.g. `{namespace="user-fknjdouh-apps", pod=~"prism-cache-.*"}`.
+  `count` (from a summary window) is exposed as a label string; other numeric
+  columns are not labels. NULL/empty values and names that are not legal label
+  names are omitted. **Cardinality:** prefer these identity keys over raw file
+  paths (paths are never labels). `namespace`/`container` stay bounded;
+  `pod` is bounded by concurrent tailed pods (Homelab caps files via
+  `PRISM_LOG_PATH_MAX`). Do not promote UIDs, container IDs, or request IDs to
+  labels.
 - **Grouping:** rows with an identical label set form one stream; streams are
   returned in a deterministic order.
 

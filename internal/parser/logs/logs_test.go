@@ -368,10 +368,10 @@ func TestParse_JSONLineFieldsWinOverPath(t *testing.T) {
 
 func TestParseK8sLogPath(t *testing.T) {
 	cases := []struct {
-		name            string
-		path            string
-		ns, pod, c      string
-		ok              bool
+		name       string
+		path       string
+		ns, pod, c string
+		ok         bool
 	}{
 		{"pods", "/var/log/pods/default_nginx-7f5c_01234567-89ab-cdef-0123-456789abcdef/nginx/0.log", "default", "nginx-7f5c", "nginx", true},
 		{"pods_relative", "pods/kube-system_coredns_01234567-89ab-cdef-0123-456789abcdef/coredns/1.log", "kube-system", "coredns", "coredns", true},
