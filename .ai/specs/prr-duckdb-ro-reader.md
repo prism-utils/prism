@@ -1,10 +1,10 @@
 # Spec: fix(store) — RO reader skip writable ensure (DuckDB engine spam)
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/prr-duckdb-ro-reader-8a90`
-- **Owner phase:** reviewer
+- **Owner phase:** orchestrator
 - **Issue:** prism-utils/prism#125 (PRR / Homelab prod)
 - **PLAN phase(s):** store reader/writer split (post Phase store-run-jobs + sql_readonly_replica)
 
@@ -95,16 +95,16 @@ today's ensure behavior.
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-<!-- Reviewer appends one actionable line under any gate it unchecks. Set
-     Status: ALL_OK only when every box above is checked; otherwise
-     Status: CHANGES_REQUESTED. -->
-
-_(empty until first review)_
+**2026-08-13 — ALL_OK.** TDD order confirmed (`0305af7` test → `662307d` fix).
+`make lint test` re-run green. Ensure no-op gated on `RunJobs` only; writer path
+unchanged (500 on non-writable). STORE.md ensure table + reader/writer feature
+row match code. Comments self-contained (no cross-file refs). Wiring covered by
+`TestAdminConfigWiresRunJobs`.
