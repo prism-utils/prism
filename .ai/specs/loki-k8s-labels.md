@@ -1,6 +1,6 @@
 # Spec: Enrich Loki/store log labels with Kubernetes metadata
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/prr-loki-k8s-labels-8a90`
@@ -112,12 +112,16 @@ prod can consume the new labels.
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+- TDD: `4378d88` `test:` precedes `bfdc4cc` feat. `make lint test` green.
+- Edge cases covered: pods + containers paths, non-k8s source, honor_labels, JSON wins over path, short container id rejected, relative paths.
+- Docs: STORE.md Loki labels + OUTPUT_CONTRACT §3.2 identity columns align with code.
+- Comments describe behavior only; no cross-location references.
+- Scope matches Option A / prism#126; no store schema change required (text columns → Loki labels).
