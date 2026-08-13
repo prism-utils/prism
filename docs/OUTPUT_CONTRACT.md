@@ -114,10 +114,17 @@ Emitted by the `logs` parser. Two columns are **guaranteed** on every row:
 
 For a **known format** the parser may add extra **string** columns with the
 format's extracted fields (e.g. `stream` for k8s, structured keys for json).
-Consumers must tolerate those additional string columns. Timestamp fields are
-**never** ingested by parsers. Storage **may and must** stamp ingest-time at
-land/merge (for example as `__prism_ts_ns`) so charts stay honest after
-compaction; that is not an event timestamp from the parser.
+When `RawBatch.Source` is a kubelet log path
+(`/var/log/pods/<namespace>_<pod>_<uid>/<container>/<n>.log` or
+`/var/log/containers/<pod>_<namespace>_<container>-<id>.log`), the logs parser
+also adds **`namespace`**, **`pod`**, and **`container`** string columns when
+those keys are not already present on the row. Producer `RawBatch.Labels` merge
+the same way (line fields win, then labels, then path). The raw file path, pod
+UID, and container ID are **never** columns. Consumers must tolerate those
+additional string columns. Timestamp fields are **never** ingested by parsers.
+Storage **may and must** stamp ingest-time at land/merge (for example as
+`__prism_ts_ns`) so charts stay honest after compaction; that is not an event
+timestamp from the parser.
 
 ### 3.3 `logs-template`
 

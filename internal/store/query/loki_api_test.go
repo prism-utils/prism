@@ -650,3 +650,74 @@ func TestLokiLabelsSelectorFilter(t *testing.T) {
 		t.Fatalf("values = %v, want [json]", vals)
 	}
 }
+
+// TestLokiK8sIdentityLabels proves namespace/pod/container columns are exposed as
+// stream labels and LogQL matchers can scope like kubectl logs -n/-c.
+func TestLokiK8sIdentityLabels(t *testing.T) {
+	dataDir := t.TempDir()
+	landLokiRaw(t, dataDir, lokiTenant, "k8s.parquet", lokiBase, []testparquet.LogRow{
+		{
+			Message:   "cache miss",
+			Format:    "k8s",
+			Namespace: "user-fknjdouh-apps",
+			Pod:       "prism-cache-abc",
+			Container: "store",
+		},
+		{
+			Message:   "demo ready",
+			Format:    "k8s",
+			Namespace: "live-demo",
+			Pod:       "demo-prism-store-0",
+			Container: "demo-prism-store",
+		},
+	})
+	srv := lokiServer(t, lokiConfig(dataDir))
+
+	status, env := lokiGet(t, srv.URL+"/"+lokiTenant+"/loki/api/v1/labels")
+	if status != http.StatusOK {
+		t.Fatalf("labels status=%d", status)
+	}
+	var names []string
+	if err := json.Unmarshal(env.Data, &names); err != nil {
+		t.Fatalf("decode labels: %v", err)
+	}
+	for _, want := range []string{"namespace", "pod", "container", "job"} {
+		found := false
+		for _, n := range names {
+			if n == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing label %q in %v", want, names)
+		}
+	}
+
+	status, env = lokiGet(t, lokiRangeURL(srv.URL, lokiTenant,
+		`{namespace="user-fknjdouh-apps", pod="prism-cache-abc", container="store"}`))
+	if status != http.StatusOK || env.Status != "success" {
+		t.Fatalf("query status=%d env=%+v", status, env)
+	}
+	got := lokiLines(t, env)
+	if len(got) != 1 || got[0] != "cache miss" {
+		t.Fatalf("filtered lines = %v, want [cache miss]", got)
+	}
+	streams := lokiStreams(t, env)
+	if len(streams) != 1 {
+		t.Fatalf("streams = %+v, want 1", streams)
+	}
+	s := streams[0].Stream
+	if s["namespace"] != "user-fknjdouh-apps" || s["pod"] != "prism-cache-abc" || s["container"] != "store" {
+		t.Fatalf("stream labels = %v", s)
+	}
+
+	status, env = lokiGet(t, lokiRangeURL(srv.URL, lokiTenant, `{namespace="live-demo"}`))
+	if status != http.StatusOK {
+		t.Fatalf("live-demo status=%d", status)
+	}
+	got = lokiLines(t, env)
+	if len(got) != 1 || got[0] != "demo ready" {
+		t.Fatalf("live-demo lines = %v", got)
+	}
+}

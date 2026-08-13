@@ -269,14 +269,19 @@ func WriteLogsSummaryFile(t testing.TB, path string, rows []LogSummaryRow) {
 }
 
 // LogRow is one logs-raw row (message → line text, format → discovered shape),
-// contract v1 §3.4.
+// contract v1 §3.4. Optional Kubernetes identity columns become Loki stream
+// labels when non-empty.
 type LogRow struct {
-	Message string
-	Format  string
+	Message   string
+	Format    string
+	Namespace string
+	Pod       string
+	Container string
 }
 
 // WriteLogsRawFile writes rows to path as a logs-raw parquet (columns message
-// VARCHAR, format VARCHAR). Empty rows is a no-op.
+// VARCHAR, format VARCHAR, and optional namespace/pod/container). Empty rows is
+// a no-op.
 func WriteLogsRawFile(t testing.TB, path string, rows []LogRow) {
 	t.Helper()
 	if len(rows) == 0 {
@@ -293,21 +298,39 @@ func WriteLogsRawFile(t testing.TB, path string, rows []LogRow) {
 	db := sql.OpenDB(connector)
 	defer func() { _ = db.Close() }()
 
+	withK8s := false
+	for _, r := range rows {
+		if r.Namespace != "" || r.Pod != "" || r.Container != "" {
+			withK8s = true
+			break
+		}
+	}
+
 	parts := make([]string, len(rows))
 	for i, r := range rows {
-		parts[i] = fmt.Sprintf("('%s', '%s')", escape(r.Message), escape(r.Format))
+		if withK8s {
+			parts[i] = fmt.Sprintf("('%s', '%s', '%s', '%s', '%s')",
+				escape(r.Message), escape(r.Format),
+				escape(r.Namespace), escape(r.Pod), escape(r.Container))
+		} else {
+			parts[i] = fmt.Sprintf("('%s', '%s')", escape(r.Message), escape(r.Format))
+		}
 	}
 	values := parts[0]
 	for _, p := range parts[1:] {
 		values += ", " + p
 	}
 	tmp := path + ".tmp"
+	cols := "message, format"
+	if withK8s {
+		cols = "message, format, namespace, pod, container"
+	}
 	//nolint:gosec // G201: test fixture SQL with controlled literals only.
 	q := fmt.Sprintf(`
 		COPY (
-			SELECT * FROM (VALUES %s) AS t(message, format)
+			SELECT * FROM (VALUES %s) AS t(%s)
 		) TO '%s' (FORMAT parquet)
-	`, values, filepath.ToSlash(tmp))
+	`, values, cols, filepath.ToSlash(tmp))
 	if _, err := db.ExecContext(context.Background(), q); err != nil {
 		t.Fatalf("copy logs raw: %v", err)
 	}
