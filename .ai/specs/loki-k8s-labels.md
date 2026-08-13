@@ -1,6 +1,6 @@
 # Spec: Enrich Loki/store log labels with Kubernetes metadata
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/prr-loki-k8s-labels-8a90`
@@ -97,16 +97,16 @@ prod can consume the new labels.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `parser/logs` extracts `namespace`/`pod`/`container` from kubelet
+- [x] `parser/logs` extracts `namespace`/`pod`/`container` from kubelet
       pods + containers path forms on `RawBatch.Source`
-- [ ] Path enrichment merges with honor_labels; non-k8s Source unchanged;
+- [x] Path enrichment merges with honor_labels; non-k8s Source unchanged;
       raw path never becomes a column/label
-- [ ] `RawBatch.Labels` merged into log rows (honor_labels)
-- [ ] Loki API test: streams expose the three labels; LogQL matchers filter
-- [ ] `docs/STORE.md` + `docs/OUTPUT_CONTRACT.md` document label contract +
+- [x] `RawBatch.Labels` merged into log rows (honor_labels)
+- [x] Loki API test: streams expose the three labels; LogQL matchers filter
+- [x] `docs/STORE.md` + `docs/OUTPUT_CONTRACT.md` document label contract +
       cardinality guidance
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
