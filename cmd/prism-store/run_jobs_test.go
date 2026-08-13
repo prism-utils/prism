@@ -30,6 +30,22 @@ func TestLoadConfigRunJobsFalseFromEnv(t *testing.T) {
 	}
 }
 
+func TestAdminConfigWiresRunJobs(t *testing.T) {
+	clearStoreEnv(t)
+	t.Setenv("RUN_JOBS", "false")
+	cfg := loadConfig()
+	adminCfg := cfg.adminConfig()
+	if adminCfg.RunJobs {
+		t.Fatal("adminConfig.RunJobs = true, want false when RUN_JOBS=false")
+	}
+	t.Setenv("RUN_JOBS", "true")
+	cfg = loadConfig()
+	adminCfg = cfg.adminConfig()
+	if !adminCfg.RunJobs {
+		t.Fatal("adminConfig.RunJobs = false, want true when RUN_JOBS=true")
+	}
+}
+
 func TestRunServeJobsDisabledNoBackgroundLoop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 

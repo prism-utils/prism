@@ -25,6 +25,8 @@ func testAdminConfig(dataDir string) *admin.Config {
 	return &admin.Config{
 		DataDir:          dataDir,
 		AllowedArtifacts: []string{"metrics-raw"},
+		// Writer default matches process RUN_JOBS=true; replica tests set false.
+		RunJobs: true,
 	}
 }
 
@@ -120,6 +122,7 @@ func TestEnsureFailure500WhenDataDirNotWritable(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
 	cfg := testAdminConfig(dir)
+	cfg.RunJobs = true
 	eng := testEngine(t, dir)
 	mux := testAdminMux(t, cfg, eng, "")
 
@@ -137,6 +140,51 @@ func TestEnsureFailure500WhenDataDirNotWritable(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "ensure failed") {
 		t.Fatalf("body = %q, want ensure failed", string(body))
+	}
+}
+
+// A RUN_JOBS=false replica must not open or create engine.duckdb (shared RO
+// mounts fail writable open). Ensure is a no-op 204 after tenant validation.
+func TestEnsureRunJobsFalseNoOpOnReadOnlyDataDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	cfg := testAdminConfig(dir)
+	cfg.RunJobs = false
+	eng := testEngine(t, dir)
+	mux := testAdminMux(t, cfg, eng, "")
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp := postEnsure(t, srv.URL+"/admin/tenants/"+testTenant+"/ensure")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("want 204 on jobs-off ensure, got %d", resp.StatusCode)
+	}
+	enginePath := dir + "/" + testTenant + "/engine.duckdb"
+	if _, err := os.Stat(enginePath); !os.IsNotExist(err) {
+		t.Fatalf("jobs-off ensure must not create %s (stat err=%v)", enginePath, err)
+	}
+}
+
+func TestEnsureRunJobsFalseUnknownTenantStill404(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testAdminConfig(dir)
+	cfg.RunJobs = false
+	eng := testEngine(t, dir)
+	mux := testAdminMux(t, cfg, eng, "")
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp := postEnsure(t, srv.URL+"/admin/tenants/not valid!/ensure")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
 	}
 }
 
