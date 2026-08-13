@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -283,5 +284,115 @@ func TestParse_CustomMessageColumn(t *testing.T) {
 	row := rowsOf(t, rb)[0]
 	if row["line"] != "hello" || has(row, "message") {
 		t.Fatalf("custom message column not honored: %v", row)
+	}
+}
+
+func parseSource(t *testing.T, format, source, line string, labels map[string]string) map[string]any {
+	t.Helper()
+	p, err := factory{}.Create(&Config{Format: format}, component.Settings{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := p.Start(context.Background(), nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	rb, err := p.Parse(context.Background(), data.RawBatch{
+		Source:  source,
+		Records: [][]byte{[]byte(line)},
+		Labels:  labels,
+	})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer rb.Release()
+	rows := rowsOf(t, rb)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	return rows[0]
+}
+
+func TestParse_K8sPodsPathEnrichment(t *testing.T) {
+	src := "/var/log/pods/user-fknjdouh-apps_prism-cache-abc_01234567-89ab-cdef-0123-456789abcdef/store/0.log"
+	row := parseSource(t, "k8s", src, `2026-07-04T00:11:22.123456789Z stdout F boom`, nil)
+	if row["namespace"] != "user-fknjdouh-apps" || row["pod"] != "prism-cache-abc" || row["container"] != "store" {
+		t.Fatalf("k8s identity = ns=%v pod=%v container=%v", row["namespace"], row["pod"], row["container"])
+	}
+	if has(row, "path") || has(row, "filename") || has(row, "uid") {
+		t.Fatalf("must not label path/uid: %v", row)
+	}
+}
+
+func TestParse_K8sContainersSymlinkEnrichment(t *testing.T) {
+	id := strings.Repeat("a", 64)
+	src := "/var/log/containers/prism-cache-abc_user-fknjdouh-apps_store-" + id + ".log"
+	row := parseSource(t, "auto", src, `2026-07-04T00:11:22.123456789Z stderr F oops`, nil)
+	if row["namespace"] != "user-fknjdouh-apps" || row["pod"] != "prism-cache-abc" || row["container"] != "store" {
+		t.Fatalf("containers identity = ns=%v pod=%v container=%v row=%v", row["namespace"], row["pod"], row["container"], row)
+	}
+}
+
+func TestParse_NonK8sSourceNoIdentity(t *testing.T) {
+	row := parseSource(t, "none", "/var/log/app/service.log", "hello", nil)
+	for _, k := range []string{"namespace", "pod", "container"} {
+		if has(row, k) {
+			t.Fatalf("non-k8s source must not invent %q: %v", k, row)
+		}
+	}
+}
+
+func TestParse_PathEnrichmentHonorLabels(t *testing.T) {
+	src := "/var/log/pods/ns-a_pod-a_01234567-89ab-cdef-0123-456789abcdef/c-a/0.log"
+	row := parseSource(t, "k8s", src, `2026-07-04T00:11:22.123456789Z stdout F x`, map[string]string{
+		"namespace": "from-label",
+		"pod":       "from-label-pod",
+	})
+	if row["namespace"] != "from-label" || row["pod"] != "from-label-pod" {
+		t.Fatalf("RawBatch.Labels must win: %v", row)
+	}
+	if row["container"] != "c-a" {
+		t.Fatalf("path container should fill when label absent: %v", row)
+	}
+}
+
+func TestParse_JSONLineFieldsWinOverPath(t *testing.T) {
+	src := "/var/log/pods/ns-a_pod-a_01234567-89ab-cdef-0123-456789abcdef/c-a/0.log"
+	row := parseSource(t, "json", src, `{"message":"hi","namespace":"from-json","pod":"from-json"}`, nil)
+	if row["namespace"] != "from-json" || row["pod"] != "from-json" {
+		t.Fatalf("parsed fields must win over path: %v", row)
+	}
+	if row["container"] != "c-a" {
+		t.Fatalf("path container should fill when line omits it: %v", row)
+	}
+}
+
+func TestParseK8sLogPath(t *testing.T) {
+	cases := []struct {
+		name            string
+		path            string
+		ns, pod, c      string
+		ok              bool
+	}{
+		{"pods", "/var/log/pods/default_nginx-7f5c_01234567-89ab-cdef-0123-456789abcdef/nginx/0.log", "default", "nginx-7f5c", "nginx", true},
+		{"pods_relative", "pods/kube-system_coredns_01234567-89ab-cdef-0123-456789abcdef/coredns/1.log", "kube-system", "coredns", "coredns", true},
+		{"containers", "/var/log/containers/nginx-7f5c_default_nginx-" + strings.Repeat("b", 64) + ".log", "default", "nginx-7f5c", "nginx", true},
+		{"containers_hyphenated_name", "/var/log/containers/x_y_my-sidecar-" + strings.Repeat("c", 64) + ".log", "y", "x", "my-sidecar", true},
+		{"plain_file", "/var/log/syslog", "", "", "", false},
+		{"truncated_container_id", "/var/log/containers/p_n_c-abcd.log", "", "", "", false},
+		{"pods_missing_container", "/var/log/pods/ns_pod_01234567-89ab-cdef-0123-456789abcdef/0.log", "", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ns, pod, c, ok := parseK8sLogPath(tc.path)
+			if ok != tc.ok {
+				t.Fatalf("ok=%v want %v (%q %q %q)", ok, tc.ok, ns, pod, c)
+			}
+			if !tc.ok {
+				return
+			}
+			if ns != tc.ns || pod != tc.pod || c != tc.c {
+				t.Fatalf("got ns=%q pod=%q c=%q want %q %q %q", ns, pod, c, tc.ns, tc.pod, tc.c)
+			}
+		})
 	}
 }
