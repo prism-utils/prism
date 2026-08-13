@@ -38,7 +38,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **RBAC** | Optional JWT/OIDC + deny-by-default YAML policy (`AUTHZ_POLICY_FILE`); fixed roles `reader` / `writer` / `admin`. |
 | **Cluster modes** | `MODE=standalone` (all-in-one), `client` (owned tenants + local engine), `cluster` (stateless coordinator proxy). |
 | **Metering / stats** | `GET /stats?ns=` — frozen billing JSON + on-disk bytes and compaction CPU seconds. |
-| **Reader/writer split** | `RUN_JOBS=false` disables background maintenance on a node (query/ingest only). |
+| **Reader/writer split** | `RUN_JOBS=false` disables background maintenance; `/admin/tenants/{ns}/ensure` is a no-op 204 (query/ingest only). |
 | **Tenant engine LRU** | `MAX_OPEN_TENANTS` caps resident per-tenant DuckDB handles. |
 
 Memory sizing: [`MEMORY.md`](MEMORY.md). Full env reference: [`CONFIG.md`](CONFIG.md) §14.
@@ -1098,12 +1098,16 @@ compare). When unset, no auth — rely on network isolation (NetworkPolicy/gatew
 ### `POST /admin/tenants/{ns}/ensure`
 
 Idempotently seeds zero-row Parquet placeholders so DuckDB `read_parquet` globs
-never error on empty tenants.
+never error on empty tenants. On a **read replica** (`RUN_JOBS=false`), ensure
+is a **no-op `204`** after tenant validation: it does not open `engine.duckdb`
+or write seeds (writers own the tenant layout; shared RO mounts would fail a
+writable open).
 
 | Condition | Status |
 |---|---|
 | unknown/malformed tenant | `404 unknown tenant` |
-| seed or engine failure | `500 ensure failed` |
+| `RUN_JOBS=false` (valid tenant) | `204 No Content` (no engine/seed writes) |
+| seed or engine failure (`RUN_JOBS=true`) | `500 ensure failed` |
 | success (including repeat calls) | `204 No Content` |
 
 Seeds written (all idempotent, atomic `.tmp` + rename):

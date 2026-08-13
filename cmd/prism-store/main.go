@@ -368,6 +368,7 @@ func (c *serverConfig) adminConfig() *admin.Config {
 		AdminToken:       c.adminToken,
 		RoutePrefix:      c.routePrefix,
 		RBACEnabled:      c.rbac != nil,
+		RunJobs:          c.runJobs,
 	}
 }
 

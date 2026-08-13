@@ -29,6 +29,11 @@ func EnsureHandler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Ha
 			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
+		// Read replicas own no tenant writes; writers create engine + seeds.
+		if !cfg.RunJobs {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if _, err := eng.DB(ns); err != nil {
 			logger.Error("ensure tenant engine", "ns", ns, "err", err)
 			http.Error(w, "ensure failed", http.StatusInternalServerError)
