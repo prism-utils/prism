@@ -106,6 +106,13 @@ func TestEnsureTenant204AndIdempotent(t *testing.T) {
 	}
 	firstSize := info.Size()
 
+	for _, artifact := range []string{"logs-raw", "logs-template", "logs-summary"} {
+		logSeed := dir + "/" + testTenant + "/logs/" + artifact + "/" + seed.SeedName
+		if _, err := os.Stat(logSeed); err != nil {
+			t.Fatalf("logs seed missing for %s: %v", artifact, err)
+		}
+	}
+
 	resp := postEnsure(t, url)
 	_ = resp.Body.Close()
 	info2, _ := os.Stat(seedPath)
