@@ -768,7 +768,7 @@ func parseLokiLimit(raw string, maxEntries int) (int, *lokiError) {
 }
 
 // execError hides sandbox internals from the client while keeping the cause in
-// the store's logs; a cancelled or timed-out query is reported as unavailable.
+// the store's logs. A gone client is 499; a deadline is 503 unavailable.
 func (h *lokiHandler) execError(op string, err error) *lokiError {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
