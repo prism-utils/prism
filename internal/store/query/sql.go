@@ -289,27 +289,35 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 	return conn, cleanup, nil
 }
 
-func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, hotOnly bool) ([]string, error) {
+func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, hotOnly bool) (hotPins, error) {
 	sources, err := collectMetricsSources(tenantRoot, hotOnly)
 	if err != nil {
-		return nil, err
+		return hotPins{}, err
 	}
 	pins, err := pinHotSnapshotSources(sources)
 	if err != nil {
-		return nil, err
+		return hotPins{}, err
+	}
+	if pins.extraDir != "" {
+		q := fmt.Sprintf("SET allowed_directories=[%s, %s]",
+			quoteSQLPath(tenantRoot), quoteSQLPath(pins.extraDir))
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			pins.cleanup()
+			return hotPins{}, fmt.Errorf("allow pin dir: %w", err)
+		}
 	}
 	if err := attachMetricsDuckDB(ctx, conn, sources); err != nil {
-		unlinkPins(pins)
-		return nil, err
+		pins.cleanup()
+		return hotPins{}, err
 	}
 	viewSQL, err := sandboxMetricsUnionSQLFromSources(sources)
 	if err != nil {
-		unlinkPins(pins)
-		return nil, err
+		pins.cleanup()
+		return hotPins{}, err
 	}
 	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
-		unlinkPins(pins)
-		return nil, fmt.Errorf("create metrics view: %w", err)
+		pins.cleanup()
+		return hotPins{}, fmt.Errorf("create metrics view: %w", err)
 	}
 	return pins, nil
 }

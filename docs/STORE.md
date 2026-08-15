@@ -492,7 +492,9 @@ The query sandbox pins `hot/current.parquet` and `hot/current.duckdb` to a uniqu
 sibling (`hot/.read-*`) for the request lifetime (hardlink; copy if the pin
 directory is a different filesystem). View and ATTACH SQL use the pin, so an
 overlapping export cannot mix a parquet footer's byte ranges with a newly
-published file. Pins are unlinked when the sandbox connection closes.
+published file. Pins are unlinked when the sandbox connection closes. A
+read-only replica mount cannot create a sibling under `hot/`, so the pin is
+copied into a private temporary directory that the sandbox also allows.
 
 Grafana DuckDB datasources that `read_parquet` the published `current.parquet`
 path (`print-view-sql` / glob) can still race with export; metrics dashboards

@@ -262,6 +262,33 @@ func TestSQLSandboxUnlinksHotPins(t *testing.T) {
 	}
 }
 
+func TestMetricsSandboxReadOnlyHotDirStillQueries(t *testing.T) {
+	ctx := context.Background()
+	tenantRoot, hotDir := newHotTenant(t)
+	writeMultiRowGroupHotParquet(t, filepath.Join(hotDir, "current.parquet"), 4)
+	if err := os.Chmod(hotDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hotDir, 0o750) })
+
+	conn, cleanup, err := prepareMetricsSandboxConn(ctx, tenantRoot, true, sandboxLimits{})
+	if err != nil {
+		t.Fatalf("prepare metrics sandbox on read-only hot dir: %v", err)
+	}
+	defer cleanup()
+
+	if pins := listHotPins(t, hotDir); len(pins) != 0 {
+		t.Fatalf("read-only hot dir pins = %v, want none (pin must live off the mount)", pins)
+	}
+	var n int
+	if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM metrics`).Scan(&n); err != nil {
+		t.Fatalf("count on read-only hot dir: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("rows=%d want 4", n)
+	}
+}
+
 func TestCollectMetricsSourcesIgnoresReadPins(t *testing.T) {
 	tenantRoot, hotDir := newHotTenant(t)
 	current := filepath.Join(hotDir, "current.parquet")
