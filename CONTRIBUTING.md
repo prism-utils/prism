@@ -41,6 +41,10 @@ it is testable, or write it up in the PR and get explicit reviewer sign-off.
 - **Small PRs, one phase-slice each** (see [`PLAN.md`](docs/PLAN.md)). A PR that
   touches five components is five PRs.
 - **`main` stays green.** If CI goes red after merge, that is the top priority.
+- **Dependabot** (`.github/dependabot.yml`) opens weekly grouped minor/patch
+  PRs for Go modules, GitHub Actions, and Docker. Those PRs follow the
+  normal PR → CI → squash flow (no `--admin`, no fast-track for
+  `go.mod` / Dockerfile bumps).
 
 ---
 
