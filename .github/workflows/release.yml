@@ -157,7 +157,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v4.1.4
       - name: log in to GHCR
