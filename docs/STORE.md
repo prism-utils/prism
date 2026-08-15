@@ -32,7 +32,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **Arbitrary SQL** | `POST /{ns}/sql` — read-only SQL in a per-request sandbox; JSON (default) or Arrow IPC stream on the **same route** via `Accept`. |
 | **PromQL API** | `GET`/`POST /{ns}/api/v1/{query,query_range,series,labels,label/<name>/values}` — Prometheus-compatible read API over the tenant metrics view (`PROMQL_API_ENABLED`, default on). Metrics-only. |
 | **Loki logs API** | `GET`/`POST /{ns}/loki/api/v1/{query_range,labels,label/<name>/values}` — Loki-compatible read API over the tenant `logs` relation, LogQL subset (`LOKI_API_ENABLED`, default on). Logs-only. |
-| **Read queue** | In-flight limiter on heavy reads (`SQL_API_QUEUE_ENABLED`, **default on**) with `429` + `Retry-After` backpressure on data nodes. |
+| **Read queue** | In-flight limiter on heavy reads (`SQL_API_QUEUE_ENABLED`, **default on**) with `429` + `Retry-After` backpressure on live clients; a gone waiter is `499`. |
 | **Queue snapshot** | `GET /admin/queue` — live caps, in-flight, waiting, and shed total for operators. |
 | **Prometheus metrics** | `GET /metrics` on every plane (`METRICS_ENABLED`, **default on**) — Go/process collectors plus USE series for HTTP, per-tenant queries, the read queue, the tenant LRU, and lifecycle jobs. |
 | **RBAC** | Optional JWT/OIDC + deny-by-default YAML policy (`AUTHZ_POLICY_FILE`); fixed roles `reader` / `writer` / `admin`. |
@@ -66,7 +66,9 @@ guard rejects non-owned `ns` before the engine is touched.
 
 Cluster mode serves `/healthz`, `/readyz`, and query routing only on
 `LISTEN_ADDR`. It forwards the inbound `Authorization` header and preserves
-the full path + query string via `httputil.ReverseProxy`.
+the full path + query string via `httputil.ReverseProxy`. An inbound request
+the client abandoned surfaces as **`499 client closed`** (not `502`); other
+proxy failures remain `502 bad gateway`.
 
 When **`AUTHZ_POLICY_FILE`** is set, RBAC is enforced on HTTP data and admin
 routes in **all** modes (standalone, client, cluster coordinator, and client
@@ -604,6 +606,7 @@ hot table mid-flush.
 | missing/invalid `start` or `end` | `400` |
 | unknown/malformed tenant | `404 unknown tenant` |
 | tenant root absent on disk | `400 bad query` |
+| client gone (request context canceled) | `499 client closed` |
 | execution failure | `500 query failed` |
 | success | `200 application/json` `{ "rows": […], "sql"? }` |
 
@@ -726,6 +729,8 @@ build tag (CGO enabled). Production `Makefile` / release targets include it;
 | Condition | Status |
 |---|---|
 | malformed JSON / empty SQL / non-SELECT / multi-statement / exec error | `400 bad query` |
+| query timeout (`SQL_API_TIMEOUT_SECONDS`) | `400 bad query` |
+| client gone (request context canceled; in-flight sandbox query is interrupted) | `499 client closed` |
 | unknown/malformed tenant / missing tenant root | `404 unknown tenant` |
 | internal failure (snapshot, sandbox) | `500 query failed` |
 
@@ -810,7 +815,7 @@ OWASP API1 BOLA.
 | Env | Default | Effect |
 |---|---|---|
 | `SQL_API_MAX_ROWS` | `100000` | Server cap; `min(request.max_rows, cap)` |
-| `SQL_API_TIMEOUT_SECONDS` | `30` | Query timeout (context cancel) |
+| `SQL_API_TIMEOUT_SECONDS` | `30` | Query timeout (deadline; still `400`, not client-cancel) |
 | `SQL_API_MAX_BODY_BYTES` | `1048576` | Maximum JSON request body (1 MiB) |
 | `SQL_API_ENABLED` | `true` | Register route when `true` |
 | `DUCKDB_MEMORY_LIMIT` | _(empty)_ | Sandbox (and engine) memory cap when set |
@@ -830,9 +835,10 @@ When `SQL_API_QUEUE_ENABLED=true` on a **data node** (standalone or client —
 Cheap auth/guard rejections do not consume a slot. At most
 `SQL_API_MAX_INFLIGHT` requests execute concurrently; additional requests wait up
 to `SQL_API_QUEUE_TIMEOUT_MS` for a slot, with at most `SQL_API_MAX_QUEUE`
-waiters. When the wait queue is full, wait times out, or the client cancels →
+waiters. When the wait queue is full or the wait times out →
 **`429 Too Many Requests`**, body `too many concurrent queries`, header
-**`Retry-After: 1`**.
+**`Retry-After: 1`**. When the client goes away while queued → **`499`**, body
+`client closed`, **no** `Retry-After` (the slot was never held).
 
 Default **on** since v1.9.6 (previously off): a fresh or misconfigured deploy is
 protected without operator env. One shared limiter serves public and admin HTTP
@@ -897,7 +903,8 @@ errors are `{"status":"error","errorType":"…","error":"…"}`.
 | missing/invalid param, malformed expression, `> PROMQL_MAX_POINTS` steps | `400` / `bad_data` |
 | unknown/malformed tenant / missing tenant root | `404` (`unknown tenant`) |
 | evaluation error, `> PROMQL_MAX_SAMPLES` samples | `422` / `execution` |
-| query timeout / cancellation | `503` / `timeout`\|`canceled` |
+| query timeout | `503` / `timeout` |
+| client gone (request context canceled) | `499` / `canceled` |
 
 ### Semantics and memory
 
@@ -1019,7 +1026,8 @@ the label endpoints put a JSON string array in `data`. Errors are
 |---|---|
 | unsupported LogQL, malformed query/params, invalid label name, `end` before `start` | `400` (`status: error`) |
 | unknown/malformed tenant / missing tenant root | `404` (`unknown tenant`) |
-| query timeout / cancellation | `503` |
+| query timeout | `503` |
+| client gone (request context canceled) | `499` |
 | sandbox or scan failure | `500` (`query failed`) |
 
 A provisioned tenant with **no landed logs** answers `200` with an empty
@@ -1181,9 +1189,9 @@ frozen contract — unlike `/stats`, this shape may grow.
 `enabled`, `maxInFlight`, `maxQueue`, and `timeoutMs` echo the configured caps.
 `inFlight` (occupied slots) and `waiting` (queued requests) are instantaneous
 gauges read with atomic loads; `rejectedTotal` is cumulative since process start
-and counts **every** `429` — full queue, expired wait, and client cancellation
-alike. There is no scrape registry: reading this route allocates one small JSON
-response and touches no query path.
+and counts every shed — full queue and expired wait (`429`) plus client
+cancellation (`499`) alike. There is no scrape registry: reading this route
+allocates one small JSON response and touches no query path.
 
 A **cluster coordinator** (`MODE=cluster`) runs no limiter of its own — it
 proxies reads to data nodes — so it does **not** register this route and answers

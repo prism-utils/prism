@@ -5,18 +5,14 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 
 	"github.com/prism-utils/prism/internal/duckdbfile"
 	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/httperr"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
-
-// statusClientClosed is the nginx/Cloudflare convention for "client closed
-// the connection before the server finished" (not an RFC status).
-const statusClientClosed = 499
 
 // IngestRoutePattern returns the ServeMux pattern for the ingest POST route.
 func IngestRoutePattern(prefix string) string {
@@ -151,24 +147,11 @@ func writeIngestError(w http.ResponseWriter, logger *slog.Logger, ns, artifact, 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if isClientAbort(err) {
-		logger.Warn(msg, "ns", ns, "artifact", artifact, "err", err, "status", statusClientClosed)
-		http.Error(w, "client closed", statusClientClosed)
+	if httperr.IsCanceled(err) {
+		logger.Warn(msg, "ns", ns, "artifact", artifact, "err", err, "status", httperr.StatusClientClosed)
+		httperr.Write(w)
 		return
 	}
 	logger.Error(msg, "ns", ns, "artifact", artifact, "err", err)
 	http.Error(w, "ingest failed", http.StatusInternalServerError)
-}
-
-func isClientAbort(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, engine.ErrClientAbort) {
-		return true
-	}
-	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
-		return true
-	}
-	return false
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
@@ -133,6 +134,11 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.Timeout)
 	defer cancel()
 
+	if err := ctx.Err(); err != nil {
+		h.writeError(w, execError(err))
+		return
+	}
+
 	// A writer flushes fresh hot rows so its own reads are current; a read-only
 	// replica serves the writer's snapshot as-is and never writes here.
 	if h.cfg.RunJobs && h.eng != nil {
@@ -140,6 +146,10 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 		if err := h.eng.ExportHotSnapshot(ns); err != nil {
 			h.logger.Error("promql hot snapshot", "ns", ns, "err", err)
 			h.writeError(w, &apiError{status: http.StatusInternalServerError, typ: errTypeInternal, msg: "query failed"})
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			h.writeError(w, execError(err))
 			return
 		}
 	}
@@ -152,6 +162,10 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 		Threads:     h.cfg.Threads,
 	})
 	if err != nil {
+		if apiErr := execErrorIfCtx(ctx, err); apiErr != nil {
+			h.writeError(w, apiErr)
+			return
+		}
 		h.logger.Error("promql sandbox", "ns", ns, "err", err)
 		h.writeError(w, &apiError{status: http.StatusInternalServerError, typ: errTypeInternal, msg: "query failed"})
 		return
@@ -161,6 +175,10 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 	q := &sandboxQueryable{conn: conn, view: sandboxMetricsView, maxSamples: h.cfg.MaxSamples}
 	data, apiErr := fn(ctx, q)
 	if apiErr != nil {
+		if err := ctx.Err(); err != nil {
+			h.writeError(w, execError(err))
+			return
+		}
 		h.writeError(w, apiErr)
 		return
 	}
@@ -452,11 +470,23 @@ func execError(err error) *apiError {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return &apiError{status: http.StatusServiceUnavailable, typ: errTypeTimeout, msg: "query timed out"}
-	case errors.Is(err, context.Canceled):
-		return &apiError{status: http.StatusServiceUnavailable, typ: errTypeCanceled, msg: "query was canceled"}
+	case httperr.IsCanceled(err):
+		return &apiError{status: httperr.StatusClientClosed, typ: errTypeCanceled, msg: "query was canceled"}
 	default:
 		return &apiError{status: http.StatusUnprocessableEntity, typ: errTypeExecution, msg: err.Error()}
 	}
+}
+
+// execErrorIfCtx maps a sandbox failure onto timeout/cancel when the request
+// context is already done, including driver errors that omit the cancel cause.
+func execErrorIfCtx(ctx context.Context, err error) *apiError {
+	if httperr.IsCanceled(err) || httperr.IsCanceled(ctx.Err()) {
+		return execError(context.Canceled)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return execError(context.DeadlineExceeded)
+	}
+	return nil
 }
 
 func (h *promQLHandler) writeSuccess(w http.ResponseWriter, data any) {

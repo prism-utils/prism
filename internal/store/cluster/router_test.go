@@ -276,3 +276,54 @@ func TestRouterHealthEndpoints(t *testing.T) {
 		t.Fatalf("upstream hits = %d during health checks", hits.Load())
 	}
 }
+
+func TestRouterClientCancelReturns499(t *testing.T) {
+	started := make(chan struct{})
+	unblocked := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(unblocked)
+	}))
+	t.Cleanup(up.Close)
+
+	clients, err := cluster.ParseClients(validTenantA + "=" + up.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := cluster.NewServeMux(clients, "", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/"+validTenantA+"/query?start=2024-01-01T00:00:00Z&end=2024-01-02T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		mux.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream did not see the request")
+	}
+	cancel()
+
+	select {
+	case <-unblocked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream did not unblock after inbound cancel")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("proxy did not return after inbound cancel")
+	}
+	if rec.Code != 499 {
+		t.Fatalf("status = %d, want 499 body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "client closed") {
+		t.Fatalf("body = %q, want client closed", rec.Body.String())
+	}
+}

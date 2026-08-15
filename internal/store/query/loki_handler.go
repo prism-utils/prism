@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	"github.com/prism-utils/prism/internal/store/logmeta"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
@@ -240,11 +241,20 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startN
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.Timeout)
 	defer cancel()
 
+	if err := ctx.Err(); err != nil {
+		h.writeError(w, h.execError("loki", err))
+		return
+	}
+
 	conn, cleanup, err := openLokiSandbox(ctx, absRoot, sandboxLimits{
 		MemoryLimit: h.cfg.MemoryLimit,
 		Threads:     h.cfg.Threads,
 	}, startNs, endNs, omitMessage, h.cfg.RecentLookback)
 	if err != nil {
+		if apiErr := h.execErrorIfCtx(ctx, err); apiErr != nil {
+			h.writeError(w, apiErr)
+			return
+		}
 		h.log().Error("loki sandbox", "ns", ns, "err", err)
 		h.writeError(w, &lokiError{status: http.StatusInternalServerError, msg: "query failed"})
 		return
@@ -253,12 +263,20 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startN
 
 	rel, err := newLokiRelation(ctx, conn, h.cfg.DataDir, ns)
 	if err != nil {
+		if apiErr := h.execErrorIfCtx(ctx, err); apiErr != nil {
+			h.writeError(w, apiErr)
+			return
+		}
 		h.log().Error("loki relation", "ns", ns, "err", err)
 		h.writeError(w, &lokiError{status: http.StatusInternalServerError, msg: "query failed"})
 		return
 	}
 	data, apiErr := fn(ctx, rel)
 	if apiErr != nil {
+		if err := ctx.Err(); err != nil {
+			h.writeError(w, h.execError("loki", err))
+			return
+		}
 		h.writeError(w, apiErr)
 		return
 	}
@@ -750,17 +768,27 @@ func parseLokiLimit(raw string, maxEntries int) (int, *lokiError) {
 }
 
 // execError hides sandbox internals from the client while keeping the cause in
-// the store's logs; a cancelled or timed-out query is reported as unavailable.
+// the store's logs. A gone client is 499; a deadline is 503 unavailable.
 func (h *lokiHandler) execError(op string, err error) *lokiError {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return &lokiError{status: http.StatusServiceUnavailable, msg: "query timed out"}
-	case errors.Is(err, context.Canceled):
-		return &lokiError{status: http.StatusServiceUnavailable, msg: "query was canceled"}
+	case httperr.IsCanceled(err):
+		return &lokiError{status: httperr.StatusClientClosed, msg: "query was canceled"}
 	default:
 		h.log().Error(op, "err", err)
 		return &lokiError{status: http.StatusInternalServerError, msg: "query failed"}
 	}
+}
+
+func (h *lokiHandler) execErrorIfCtx(ctx context.Context, err error) *lokiError {
+	if httperr.IsCanceled(err) || httperr.IsCanceled(ctx.Err()) {
+		return h.execError("loki", context.Canceled)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return h.execError("loki", context.DeadlineExceeded)
+	}
+	return nil
 }
 
 func (h *lokiHandler) writeSuccess(w http.ResponseWriter, data any) {

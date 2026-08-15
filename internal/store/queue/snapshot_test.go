@@ -148,7 +148,7 @@ func TestSnapshotRejectedTotalCountsWaitTimeout429(t *testing.T) {
 	close(block)
 }
 
-func TestSnapshotRejectedTotalCountsClientCancel429(t *testing.T) {
+func TestSnapshotRejectedTotalCountsClientCancel(t *testing.T) {
 	t.Parallel()
 	lim := NewLimiter(LimiterConfig{
 		Enabled:     true,
@@ -187,8 +187,8 @@ func TestSnapshotRejectedTotalCountsClientCancel429(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancelled waiter did not return")
 	}
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429", rec.Code)
+	if rec.Code != 499 {
+		t.Fatalf("status = %d, want 499", rec.Code)
 	}
 	if got := lim.Snapshot().RejectedTotal; got != 1 {
 		t.Fatalf("rejectedTotal = %d, want 1", got)

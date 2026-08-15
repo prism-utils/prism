@@ -1,7 +1,9 @@
 package query
 
 import (
+	"context"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -243,5 +245,25 @@ func TestIsValidLabelName(t *testing.T) {
 		if isValidLabelName(v) {
 			t.Errorf("%q should be invalid", v)
 		}
+	}
+}
+
+func TestExecErrorCanceledIs499(t *testing.T) {
+	e := execError(context.Canceled)
+	if e.status != 499 {
+		t.Fatalf("status=%d want 499", e.status)
+	}
+	if e.typ != errTypeCanceled {
+		t.Fatalf("typ=%q want canceled", e.typ)
+	}
+}
+
+func TestExecErrorDeadlineStill503(t *testing.T) {
+	e := execError(context.DeadlineExceeded)
+	if e.status != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want 503", e.status)
+	}
+	if e.typ != errTypeTimeout {
+		t.Fatalf("typ=%q want timeout", e.typ)
 	}
 }
