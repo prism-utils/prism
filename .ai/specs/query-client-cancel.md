@@ -1,6 +1,6 @@
 # Spec: Cancel abandoned read requests (HTTP 499)
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/query-client-cancel-c2b4`
@@ -94,11 +94,9 @@ Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
 - [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-  - `lokiHandler.execError` comment still says a cancelled query is reported as unavailable; that function now returns 499. Update the comment so cancel vs timeout match the delivered statuses (499 vs 503).
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
 - [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
-  - Blocked on Gate 3 (stale `execError` comment). Re-check after that comment matches 499 cancel vs 503 timeout.
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
@@ -106,8 +104,8 @@ Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here
      Status: ALL_OK only when every box above is checked; otherwise
      Status: CHANGES_REQUESTED. -->
 
-- **Verdict: CHANGES_REQUESTED** (Gate 3 + full checklist).
-- History `origin/main..HEAD`: `test(store):` → `feat(store):` → `docs(store):` (TDD contract holds).
-- `make lint`: 0 issues. `make test`: all store packages green (`httperr`, `ingest` including `TestIngestClientAbortReturns499`, `query`, `queue`, `cluster`). `internal/e2e.TestE2E_LoggingThreePhaseParquet` fails here and on `origin/main` (unrelated logging tailer; not this branch) — not a Gate 2 fail.
-- Particulars: no extra success-path goroutine; SQL timeout still 400 / PromQL+Loki 503; queue waiter 499 without Retry-After; `ExportHotSnapshot` not bound to request ctx + post-export `ctx.Err()` skip; DuckDB interrupt elapsed-bound (`TestSQLClientCancelInterruptsLongQuery`, same 5s cap as `TestSQLTimeoutInterrupts`); `httperr.IsCanceled` does not treat `DeadlineExceeded` as cancel; public `docs/STORE.md` has no secrets.
+- **Verdict: ALL_OK.** Re-review after Gate 3 fix. `lokiHandler.execError` now documents 499 gone-client vs 503 deadline, matching the switch.
+- History `origin/main..HEAD`: `test(store):` → `feat(store):` → `docs(store):` then comment-only `docs(store/query):` (TDD contract holds).
+- Re-ran `make lint`: 0 issues. Re-ran `make test`: all store packages green (`httperr`, `ingest`, `query`, `queue`, `cluster`). `internal/e2e.TestE2E_LoggingThreePhaseParquet` fails here and on `origin/main` (unrelated logging tailer) — out of scope, not a Gate 2 fail.
+- Particulars: no extra success-path goroutine; SQL timeout still 400 / PromQL+Loki 503; queue waiter 499 without Retry-After; `ExportHotSnapshot` not bound to request ctx + post-export `ctx.Err()` skip; DuckDB interrupt elapsed-bound (`TestSQLClientCancelInterruptsLongQuery`, same 5s cap as `TestSQLTimeoutInterrupts`); `httperr.IsCanceled` does not treat `DeadlineExceeded` as cancel; `docs/STORE.md` cancel vs timeout tables match the handlers.
 - New comments are atomic. Pre-existing `//nolint:contextcheck` “below/above” wording was not introduced by this change.
