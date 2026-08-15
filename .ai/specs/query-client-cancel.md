@@ -1,6 +1,6 @@
 # Spec: Cancel abandoned read requests (HTTP 499)
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/query-client-cancel-c2b4`
