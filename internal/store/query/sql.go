@@ -149,7 +149,7 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		}
 
 		// SQL reads serve from immutable hot/tier segments only: the :memory:
-		// sandbox opens hot/current.{parquet|duckdb} and tiers/*.{parquet|duckdb}
+		// sandbox opens a pinned hot snapshot inode and tiers/*.{parquet|duckdb}
 		// (read_parquet or read-only ATTACH) and never opens the live tenant
 		// engine.duckdb. This lets a read-only replica (RUN_JOBS=false, with a
 		// read-only data mount owned by the writer) serve /sql without hitting
@@ -236,24 +236,12 @@ func prepareMetricsSandboxConn(ctx context.Context, tenantRoot string, hotOnly b
 	if err != nil {
 		return nil, nil, err
 	}
-	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, hotOnly)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
-	if err := attachMetricsDuckDB(ctx, conn, sources); err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(err)
-	}
-	viewSQL, err := sandboxMetricsUnionSQLFromSources(sources)
-	if err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(err)
-	}
-	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
-	}
+	cleanup = withPinnedCleanup(cleanup, pins)
 	if err := lockSandbox(ctx, conn); err != nil {
 		cleanup()
 		return nil, nil, err
@@ -267,24 +255,12 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 	if err != nil {
 		return nil, nil, err
 	}
-	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, hotOnly)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
-	if err := attachMetricsDuckDB(ctx, conn, sources); err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(err)
-	}
-	viewSQL, err := sandboxMetricsUnionSQLFromSources(sources)
-	if err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(err)
-	}
-	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(fmt.Errorf("create metrics view: %w", err))
-	}
+	cleanup = withPinnedCleanup(cleanup, pins)
 	logFiles, err := listLogSegmentFiles(tenantRoot)
 	if err != nil {
 		cleanup()
@@ -311,6 +287,31 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 		return nil, nil, err
 	}
 	return conn, cleanup, nil
+}
+
+func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, hotOnly bool) ([]string, error) {
+	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+	if err != nil {
+		return nil, err
+	}
+	pins, err := pinHotSnapshotSources(sources)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachMetricsDuckDB(ctx, conn, sources); err != nil {
+		unlinkPins(pins)
+		return nil, err
+	}
+	viewSQL, err := sandboxMetricsUnionSQLFromSources(sources)
+	if err != nil {
+		unlinkPins(pins)
+		return nil, err
+	}
+	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxMetricsView+" AS "+viewSQL); err != nil {
+		unlinkPins(pins)
+		return nil, fmt.Errorf("create metrics view: %w", err)
+	}
+	return pins, nil
 }
 
 func queryJSON(ctx context.Context, conn *sql.Conn, userSQL string, rowCap int) (*SQLResponse, error) {

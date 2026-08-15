@@ -162,7 +162,10 @@ func TestMetricsSandboxUnlinksPinsAfterScanError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare metrics sandbox: %v", err)
 	}
-	_, err = conn.QueryContext(ctx, `SELECT not_a_column FROM metrics`)
+	rows, err := conn.QueryContext(ctx, `SELECT not_a_column FROM metrics`)
+	if rows != nil {
+		_ = rows.Close()
+	}
 	if err == nil {
 		t.Fatal("want a scan error")
 	}

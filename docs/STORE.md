@@ -488,6 +488,16 @@ on successful export so a format flip does not double-count. Live tenant
 `engine.duckdb` is unchanged. Reads see in-flight rows; a background ticker
 exports every `HOT_SNAPSHOT_SECONDS` (default 15s).
 
+The query sandbox pins `hot/current.parquet` and `hot/current.duckdb` to a unique
+sibling (`hot/.read-*`) for the request lifetime (hardlink; copy if the pin
+directory is a different filesystem). View and ATTACH SQL use the pin, so an
+overlapping export cannot mix a parquet footer's byte ranges with a newly
+published file. Pins are unlinked when the sandbox connection closes.
+
+Grafana DuckDB datasources that `read_parquet` the published `current.parquet`
+path (`print-view-sql` / glob) can still race with export; metrics dashboards
+use PromQL, which goes through the sandbox pin.
+
 Exports for one tenant are serialized: a writer store exports per query request
 (PromQL and `/sql`), so a dashboard firing many panels at once — plus the
 snapshot ticker — would otherwise run overlapping exports against the same
@@ -792,7 +802,7 @@ order; **`lock_configuration=true` last**). Bundled DuckDB is **≥1.2** via
 2. `SET max_temp_directory_size='0B'`
 3. `LOAD parquet`
 4. `SET allowed_directories=['<abs tenantRoot>']` — required read boundary
-5. `CREATE VIEW metrics AS …` — lazy union over hot snapshot + tier parquet
+5. `CREATE VIEW metrics AS …` — lazy union over a pinned hot snapshot inode + tier parquet
    (zero-copy; no materialization)
 6. `SET enable_external_access=false` + extension hardening knobs
 7. `SET lock_configuration=true`
