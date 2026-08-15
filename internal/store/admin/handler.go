@@ -49,6 +49,11 @@ func EnsureHandler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Ha
 			http.Error(w, "ensure failed", http.StatusInternalServerError)
 			return
 		}
+		if err := seed.EnsureLogsLayoutForTenant(cfg.DataDir, ns); err != nil {
+			logger.Error("ensure logs layout", "ns", ns, "err", err)
+			http.Error(w, "ensure failed", http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

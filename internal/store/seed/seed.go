@@ -42,6 +42,71 @@ func EnsureTieredLayoutForTenant(dataDir, tenant string) error {
 	return nil
 }
 
+// EnsureLogsLayoutForTenant writes zero-row parquet seeds so read_parquet globs
+// under logs/{logs-raw,logs-template,logs-summary} match at least one file
+// before the tenant ships any logs.
+func EnsureLogsLayoutForTenant(dataDir, tenant string) error {
+	type artifactSeed struct {
+		name string
+		sql  string
+	}
+	seeds := []artifactSeed{
+		{
+			name: "logs-raw",
+			sql: `
+		COPY (
+			SELECT
+				CAST(NULL AS VARCHAR) AS message,
+				CAST(NULL AS VARCHAR) AS format,
+				CAST(NULL AS VARCHAR) AS stream,
+				CAST(NULL AS VARCHAR) AS logtag,
+				CAST(NULL AS BIGINT) AS __prism_ts_ns
+			WHERE false
+		) TO '%s' (FORMAT parquet)
+	`,
+		},
+		{
+			name: "logs-template",
+			sql: `
+		COPY (
+			SELECT
+				CAST(NULL AS VARCHAR) AS message,
+				CAST(NULL AS VARCHAR) AS format,
+				CAST(NULL AS VARCHAR) AS template,
+				CAST(NULL AS BIGINT) AS __prism_ts_ns
+			WHERE false
+		) TO '%s' (FORMAT parquet)
+	`,
+		},
+		{
+			name: "logs-summary",
+			sql: `
+		COPY (
+			SELECT
+				CAST(NULL AS VARCHAR) AS template,
+				CAST(NULL AS BIGINT) AS count,
+				CAST(NULL AS BIGINT) AS __prism_ts_ns
+			WHERE false
+		) TO '%s' (FORMAT parquet)
+	`,
+		},
+	}
+	for _, item := range seeds {
+		dir := filepath.Join(dataDir, tenant, "logs", item.name)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return fmt.Errorf("seed: mkdir %s: %w", dir, err)
+		}
+		path := filepath.Join(dir, SeedName)
+		if _, err := os.Stat(path); err == nil {
+			continue
+		}
+		if err := writeEmptyParquet(path, item.sql); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func ensureSeedDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("seed: mkdir %s: %w", dir, err)

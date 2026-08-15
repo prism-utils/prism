@@ -1122,6 +1122,7 @@ Seeds written (all idempotent, atomic `.tmp` + rename):
 - `<tenant>/metrics-raw/_seed.parquet` — embedded contract-v1 zero-row fixture
 - `<tenant>/tiers/_seed.parquet`, `hot/current.parquet`
 - `<tenant>/rollups/{1m,5m,1h}/_seed.parquet` — zero-row rollup schema
+- `<tenant>/logs/{logs-raw,logs-template,logs-summary}/_seed.parquet` — zero-row log schema so empty globs still bind
 
 Reserved name: `_seed.parquet` (`seed.SeedName`).
 

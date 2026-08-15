@@ -66,6 +66,44 @@ func TestEnsureTieredLayoutForTenantWritesAllSeeds(t *testing.T) {
 	}
 }
 
+func TestEnsureLogsLayoutForTenantWritesZeroRowSeeds(t *testing.T) {
+	dir := t.TempDir()
+	const ns = "user-6f3a9c2b-apps"
+	if err := EnsureLogsLayoutForTenant(dir, ns); err != nil {
+		t.Fatalf("logs layout: %v", err)
+	}
+	want := []string{
+		filepath.Join(ns, "logs", "logs-raw", SeedName),
+		filepath.Join(ns, "logs", "logs-template", SeedName),
+		filepath.Join(ns, "logs", "logs-summary", SeedName),
+	}
+	var firstSizes []int64
+	for _, rel := range want {
+		path := filepath.Join(dir, rel)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("missing %s: %v", rel, err)
+		}
+		if info.Size() == 0 {
+			t.Fatalf("%s is empty", rel)
+		}
+		firstSizes = append(firstSizes, info.Size())
+	}
+
+	if err := EnsureLogsLayoutForTenant(dir, ns); err != nil {
+		t.Fatalf("second logs layout: %v", err)
+	}
+	for i, rel := range want {
+		info, err := os.Stat(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatalf("missing after second call %s: %v", rel, err)
+		}
+		if info.Size() != firstSizes[i] {
+			t.Fatalf("%s size changed on second call: %d -> %d", rel, firstSizes[i], info.Size())
+		}
+	}
+}
+
 func TestSeedIsNonEmpty(t *testing.T) {
 	if len(metricsRawSeed) == 0 {
 		t.Fatal("embedded seed parquet is empty")
