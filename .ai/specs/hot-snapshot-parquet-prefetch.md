@@ -1,9 +1,9 @@
 # Spec: Pin hot snapshot inode for sandbox reads
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `cursor/fix-hot-snapshot-parquet-prefetch-0de6`
-- **Owner phase:** developer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** Store query / engine hardening
 - **Worktree:** `~/workdir/cursor-fix-hot-snapshot-parquet-prefetch-0de6/prism`
 
@@ -114,12 +114,27 @@ footer and bytes.
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Verdict: **ALL_OK**. History is test-first (`57a7181` `test(store/query): …` then `99d8345` / `7b41ba1` implementation). Scope is the sandbox pin only.
+
+**Checks (reviewer re-ran):**
+- `make lint test` — golangci-lint 0 issues; `go test -race -tags duckdb_arrow ./...` ok
+- `internal/store/query` uncached (`go test -count=1 -race -tags duckdb_arrow`) — ok, 29.5s
+- `make full-tests` — printed `full-tests: OK` (compose `http-sink` bind on `:18080` failed: existing `kubectl` port-forward; store integration does not use that sink)
+- Uncached `go test -count=1 -tags integration,duckdb_arrow ./test/integration/...` — ok
+- Uncached `go test -count=1 -tags e2e,duckdb_arrow ./test/e2e/...` — ok, 236s
+
+**Gates:** 1–4 hold. Pin lives in `internal/store/query` (existing package, no new component/import cycle). Tests cover the 168-byte replace race, unique `.read-*` siblings, cleanup on success and scan error, empty snapshot = 0 rows, `current.duckdb` pin+replace, SQL sandbox, read-only hot dir copy, and `collectMetricsSources` ignoring leftover pins. `docs/STORE.md` records the pin and the Grafana DuckDB residual. Comments describe local intent (no file/symbol/line pointers).
+
+**Checklist nits (non-blocking):**
+- `withPinnedCleanup` unlinks pins before closing the DuckDB conn; close-then-unlink would be safer if Close re-reads by path. Query is already finished; tests pass.
+- Sandbox step 4 in STORE.md / DESIGN.md still show `allowed_directories=[tenantRoot]` only; the replica path also allows the private pin temp dir (described in the hot-snapshot paragraph).
+- EXDEV copy-beside and extraDir `MkdirTemp` cleanup are not directly asserted (read-only test proves the query, not leftover `/tmp/prism-hotpin-*`).
+- `linkOrCopyPin` only hardlinks; copy is in the callers.
