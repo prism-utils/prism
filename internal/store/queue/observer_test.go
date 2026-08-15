@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -139,8 +140,9 @@ func TestObserverSeesClientCancelRejection(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	rec := httptest.NewRecorder()
 	go func() {
-		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(ctx, http.MethodPost, "/sql", nil))
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost, "/sql", nil))
 		close(done)
 	}()
 	time.Sleep(20 * time.Millisecond)
@@ -151,6 +153,15 @@ func TestObserverSeesClientCancelRejection(t *testing.T) {
 	got := obs.reasons()
 	if len(got) != 1 || got[0] != RejectClientCanceled {
 		t.Fatalf("reasons = %v, want [%s]", got, RejectClientCanceled)
+	}
+	if rec.Code != 499 {
+		t.Fatalf("status = %d, want 499 body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") != "" {
+		t.Fatalf("Retry-After = %q, want empty", rec.Header().Get("Retry-After"))
+	}
+	if !strings.Contains(rec.Body.String(), "client closed") {
+		t.Fatalf("body = %q, want client closed", rec.Body.String())
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -255,12 +256,13 @@ func TestMiddleware_clientCancelReturnsPromptly(t *testing.T) {
 	t.Parallel()
 	block := make(chan struct{})
 	started := make(chan struct{}, 1)
-	h := Middleware(NewLimiter(LimiterConfig{
+	lim := NewLimiter(LimiterConfig{
 		Enabled:     true,
 		MaxInFlight: 1,
 		MaxQueue:    4,
 		Wait:        time.Minute,
-	}), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	})
+	h := Middleware(lim, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		started <- struct{}{}
 		<-block
 		w.WriteHeader(http.StatusOK)
@@ -294,8 +296,20 @@ func TestMiddleware_clientCancelReturnsPromptly(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("cancelled waiter did not return promptly")
 	}
-	if rec2.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429", rec2.Code)
+	if rec2.Code != 499 {
+		t.Fatalf("status = %d, want 499 body=%s", rec2.Code, rec2.Body.String())
+	}
+	if rec2.Header().Get("Retry-After") != "" {
+		t.Fatalf("Retry-After = %q, want empty", rec2.Header().Get("Retry-After"))
+	}
+	if !strings.Contains(rec2.Body.String(), "client closed") {
+		t.Fatalf("body = %q, want client closed", rec2.Body.String())
+	}
+	if got := lim.Snapshot().Waiting; got != 0 {
+		t.Fatalf("waiting = %d after cancel, want 0", got)
+	}
+	if got := lim.Snapshot().InFlight; got != 1 {
+		t.Fatalf("inFlight = %d after waiter cancel, want 1 (holder still running)", got)
 	}
 
 	close(block)

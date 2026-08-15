@@ -721,3 +721,42 @@ func TestLokiK8sIdentityLabels(t *testing.T) {
 		t.Fatalf("live-demo lines = %v", got)
 	}
 }
+
+func serveLoki(t *testing.T, h http.Handler, ctx context.Context, path, ns string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	req.SetPathValue("ns", ns)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestLokiClientCancelReturns499(t *testing.T) {
+	dataDir := t.TempDir()
+	seedLokiLogs(t, dataDir)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := query.LokiHandler(lokiConfig(dataDir), logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	path := "/" + lokiTenant + "/loki/api/v1/query_range?query=" + url.QueryEscape("{}")
+	rec := serveLoki(t, h, ctx, path, lokiTenant)
+	if rec.Code != 499 {
+		t.Fatalf("status=%d want 499 body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLokiTimeoutStill503(t *testing.T) {
+	dataDir := t.TempDir()
+	seedLokiLogs(t, dataDir)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := query.LokiHandler(lokiConfig(dataDir, func(c *query.LokiConfig) {
+		c.Timeout = time.Nanosecond
+	}), logger)
+
+	path := "/" + lokiTenant + "/loki/api/v1/query_range?query=" + url.QueryEscape("{}")
+	rec := serveLoki(t, h, context.Background(), path, lokiTenant)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want 503 body=%s", rec.Code, rec.Body.String())
+	}
+}

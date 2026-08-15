@@ -1,6 +1,8 @@
 package query
 
 import (
+	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -117,5 +119,21 @@ func TestLokiTimeParsing(t *testing.T) {
 	}
 	if _, err := parseLokiTimeNanos("not-a-time", 0); err == nil {
 		t.Fatal("malformed time accepted")
+	}
+}
+
+func TestLokiExecErrorCanceledIs499(t *testing.T) {
+	h := &lokiHandler{cfg: &LokiConfig{}}
+	e := h.execError("test", context.Canceled)
+	if e.status != 499 {
+		t.Fatalf("status=%d want 499", e.status)
+	}
+}
+
+func TestLokiExecErrorDeadlineStill503(t *testing.T) {
+	h := &lokiHandler{cfg: &LokiConfig{}}
+	e := h.execError("test", context.DeadlineExceeded)
+	if e.status != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want 503", e.status)
 	}
 }

@@ -326,3 +326,38 @@ func TestConcurrentQueryAndFlush(t *testing.T) {
 		t.Fatalf("gap-free row count: got %d want %d", len(rows), wantRows)
 	}
 }
+
+func TestHandlerClientCancelReturns499(t *testing.T) {
+	dataDir := t.TempDir()
+	start := time.Unix(1700000000, 0).UTC()
+	eng := engine.New(engine.Config{DataDir: dataDir, HotWindow: time.Hour}, func() time.Time { return start })
+	t.Cleanup(func() { _ = eng.Close() })
+
+	dir := t.TempDir()
+	path := testparquet.WriteWindow(t, dir, "w.parquet", []testparquet.Row{
+		{Name: "up", Labels: "{}", Value: 1, TimestampMs: 0},
+	})
+	f, _ := os.Open(path)
+	if _, err := eng.Ingest(testTenant, f); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	_ = f.Close()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := query.Handler(&query.Config{DataDir: dataDir}, eng, logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	startS := start.Format(time.RFC3339)
+	endS := start.Add(time.Hour).Format(time.RFC3339)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/"+testTenant+"/query?start="+startS+"&end="+endS, nil)
+	req.SetPathValue("ns", testTenant)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 499 {
+		t.Fatalf("status=%d want 499 body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "client closed") {
+		t.Fatalf("body=%q want client closed", rec.Body.String())
+	}
+}

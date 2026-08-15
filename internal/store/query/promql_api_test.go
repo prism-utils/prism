@@ -442,3 +442,54 @@ func TestPromQLBadLimit(t *testing.T) {
 		t.Fatalf("status=%d env=%+v", status, env)
 	}
 }
+
+func serveProm(t *testing.T, h http.Handler, ctx context.Context, path, ns string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	req.SetPathValue("ns", ns)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestPromQLClientCancelReturns499(t *testing.T) {
+	dataDir := t.TempDir()
+	seedPromMetrics(t, dataDir)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := query.PromQLHandler(promConfig(dataDir), nil, logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := serveProm(t, h, ctx, "/"+promTenant+"/api/v1/query?query=up", promTenant)
+	if rec.Code != 499 {
+		t.Fatalf("status=%d want 499 body=%s", rec.Code, rec.Body.String())
+	}
+	var env promEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if env.ErrorType != "canceled" {
+		t.Fatalf("errorType=%q want canceled env=%+v", env.ErrorType, env)
+	}
+}
+
+func TestPromQLTimeoutStill503(t *testing.T) {
+	dataDir := t.TempDir()
+	seedPromMetrics(t, dataDir)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := query.PromQLHandler(promConfig(dataDir, func(c *query.PromQLConfig) {
+		c.Timeout = time.Nanosecond
+	}), nil, logger)
+
+	rec := serveProm(t, h, context.Background(), "/"+promTenant+"/api/v1/query?query=up", promTenant)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want 503 body=%s", rec.Code, rec.Body.String())
+	}
+	var env promEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if env.ErrorType != "timeout" {
+		t.Fatalf("errorType=%q want timeout env=%+v", env.ErrorType, env)
+	}
+}
