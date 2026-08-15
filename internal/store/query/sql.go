@@ -17,6 +17,7 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
@@ -142,6 +143,11 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		ctx, cancel := context.WithTimeout(r.Context(), cfg.Timeout)
 		defer cancel()
 
+		if httperr.IsCanceled(ctx.Err()) {
+			httperr.Write(w)
+			return
+		}
+
 		// SQL reads serve from immutable hot/tier segments only: the :memory:
 		// sandbox opens hot/current.{parquet|duckdb} and tiers/*.{parquet|duckdb}
 		// (read_parquet or read-only ATTACH) and never opens the live tenant
@@ -163,6 +169,10 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 				http.Error(w, "query failed", http.StatusInternalServerError)
 				return
 			}
+			if httperr.IsCanceled(ctx.Err()) {
+				httperr.Write(w)
+				return
+			}
 		}
 
 		rowCap := cfg.MaxRows
@@ -180,36 +190,14 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			Threads:     cfg.Threads,
 		})
 		if err != nil {
-			if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
-				errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
-				errors.Is(err, errNoParquetSources) {
-				http.Error(w, "bad query", http.StatusBadRequest)
-				return
-			}
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				http.Error(w, "bad query", http.StatusBadRequest)
-				return
-			}
-			logger.Error("sql sandbox", "ns", ns, "err", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
+			writeSQLErr(w, ctx, err, logger, ns, "sql sandbox")
 			return
 		}
 		defer cleanup()
 
 		if wantsArrowStream(r) {
 			if err := writeArrowResponse(ctx, w, conn, req.SQL, rowCap, logger); err != nil {
-				if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
-					errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
-					errors.Is(err, errNoParquetSources) {
-					http.Error(w, "bad query", http.StatusBadRequest)
-					return
-				}
-				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-					http.Error(w, "bad query", http.StatusBadRequest)
-					return
-				}
-				logger.Error("sql arrow failed", "ns", ns, "err", err)
-				http.Error(w, "query failed", http.StatusInternalServerError)
+				writeSQLErr(w, ctx, err, logger, ns, "sql arrow failed")
 				return
 			}
 			return
@@ -217,18 +205,7 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 
 		result, err := queryJSON(ctx, conn, req.SQL, rowCap)
 		if err != nil {
-			if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
-				errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
-				errors.Is(err, errNoParquetSources) {
-				http.Error(w, "bad query", http.StatusBadRequest)
-				return
-			}
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				http.Error(w, "bad query", http.StatusBadRequest)
-				return
-			}
-			logger.Error("sql failed", "ns", ns, "err", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
+			writeSQLErr(w, ctx, err, logger, ns, "sql failed")
 			return
 		}
 
@@ -891,6 +868,27 @@ func wrapSandboxErr(err error) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %w", errSandboxExec, err)
+}
+
+// writeSQLErr maps a sandbox or user-SQL failure onto the HTTP status the
+// caller should see. A gone client is not a bad query.
+func writeSQLErr(w http.ResponseWriter, ctx context.Context, err error, logger *slog.Logger, ns, op string) {
+	if httperr.IsCanceled(err) || httperr.IsCanceled(ctx.Err()) {
+		httperr.Write(w)
+		return
+	}
+	if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
+		errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
+		errors.Is(err, errNoParquetSources) {
+		http.Error(w, "bad query", http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		http.Error(w, "bad query", http.StatusBadRequest)
+		return
+	}
+	logger.Error(op, "ns", ns, "err", err)
+	http.Error(w, "query failed", http.StatusInternalServerError)
 }
 
 func parsePositiveInt64(s string) (int64, error) {

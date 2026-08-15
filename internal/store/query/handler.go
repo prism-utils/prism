@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
@@ -92,6 +93,10 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 			payload, encErr = ToJSON(rows, cfg.ExposeSQL, sqlText)
 			return encErr
 		}); err != nil {
+			if httperr.IsCanceled(err) || httperr.IsCanceled(ctx.Err()) {
+				httperr.Write(w)
+				return
+			}
 			if isBadQueryErr(err) {
 				http.Error(w, "bad query", http.StatusBadRequest)
 				return

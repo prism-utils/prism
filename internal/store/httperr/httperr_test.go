@@ -44,8 +44,11 @@ func TestWriteClientClosed(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
 	httperr.Write(rec)
-	if rec.Code != httperr.StatusClientClosed || rec.Code != 499 {
-		t.Fatalf("status = %d, want 499", rec.Code)
+	if rec.Code != httperr.StatusClientClosed {
+		t.Fatalf("status = %d, want %d", rec.Code, httperr.StatusClientClosed)
+	}
+	if rec.Code != 499 {
+		t.Fatalf("StatusClientClosed = %d, want 499", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), httperr.ClientClosedBody) {
 		t.Fatalf("body = %q, want %q", rec.Body.String(), httperr.ClientClosedBody)

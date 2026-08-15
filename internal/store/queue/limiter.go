@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/prism-utils/prism/internal/store/httperr"
 )
 
 const tooManyBody = "too many concurrent queries"
@@ -20,7 +22,7 @@ const (
 	// slot coming free.
 	RejectWaitTimeout RejectReason = "wait_timeout"
 	// RejectClientCanceled is a shed because the caller went away while queued;
-	// the slot was never held, so it is backpressure, not a server fault.
+	// the slot was never held. A gone client is not backpressure.
 	RejectClientCanceled RejectReason = "client_canceled"
 )
 
@@ -166,7 +168,7 @@ func Middleware(l *Limiter, next http.Handler) http.Handler {
 				default:
 				}
 			}
-			l.rejectTooMany(w, RejectClientCanceled, time.Since(queuedAt))
+			l.rejectCanceled(w, time.Since(queuedAt))
 		}
 	})
 }
@@ -200,12 +202,17 @@ func releaseOnce(l *Limiter) func() {
 	}
 }
 
-// rejectTooMany sheds one request and counts it, so every shed path — full wait
-// queue, expired wait, cancelled client — is visible in a single total and,
-// separately, attributed to the reason it happened.
+// rejectTooMany sheds a live client that cannot be admitted: the wait queue
+// was full, or the wait budget expired.
 func (l *Limiter) rejectTooMany(w http.ResponseWriter, reason RejectReason, waited time.Duration) {
 	l.rejectedTotal.Add(1)
 	l.observer().ObserveRejected(reason, waited)
 	w.Header().Set("Retry-After", "1")
 	http.Error(w, tooManyBody, http.StatusTooManyRequests)
+}
+
+func (l *Limiter) rejectCanceled(w http.ResponseWriter, waited time.Duration) {
+	l.rejectedTotal.Add(1)
+	l.observer().ObserveRejected(RejectClientCanceled, waited)
+	httperr.Write(w)
 }

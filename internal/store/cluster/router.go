@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	"github.com/prism-utils/prism/internal/store/query"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
@@ -107,7 +108,11 @@ func (r *Router) proxyFor(target *url.URL) *httputil.ReverseProxy {
 			pr.Out.URL.Path = pr.In.URL.Path
 			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			if httperr.IsCanceled(err) {
+				httperr.Write(w)
+				return
+			}
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 		},
 	}
