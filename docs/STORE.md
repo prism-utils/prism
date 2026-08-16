@@ -693,9 +693,11 @@ manifest), PromQL/`/sql`/`/query` open only that snapshot even without
 
 **Open-set prune:** PromQL, `/sql` (when `start`/`end` are supplied), and
 structured `/query` never `open()` a metrics file whose `[min_ts, max_ts]`
-misses `[start, end)` (`MaxTs < start || MinTs >= end`). Files whose bounds
-cannot be read are skipped and logged. Grafana `ViewSQL` (static DuckDB
-`initSQL`) remains a full live-set union — it has no per-query window.
+misses `[start, end)` (`MaxTs < start || MinTs >= end`). Catalog bounds for
+Parquet come from footer column stats (`parquet_metadata` `ts` min/max), not a
+full `MIN(ts)` scan. Files whose bounds cannot be read are skipped and logged.
+Grafana `ViewSQL` (static DuckDB `initSQL`) remains a full live-set union — it
+has no per-query window.
 
 By default the structured query unions hot + overlapping tiers + rollups; the
 `/sql` sandbox unions hot + overlapping tiers only (never rollups — see "When
