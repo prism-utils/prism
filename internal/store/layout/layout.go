@@ -39,6 +39,12 @@ func RollupDir(dataDir, tenant, step string) string {
 	return filepath.Join(dataDir, tenant, "rollups", step)
 }
 
+// MaterializationDir returns the on-disk directory for a named merge-time
+// materialization. name must already be filesystem-safe.
+func MaterializationDir(dataDir, tenant, name string) string {
+	return filepath.Join(dataDir, tenant, "materializations", name)
+}
+
 // LogsLandingDir returns the on-disk landing directory for a logs artifact.
 func LogsLandingDir(dataDir, tenant, artifact string) string {
 	return filepath.Join(dataDir, tenant, "logs", artifact)

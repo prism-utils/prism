@@ -10,6 +10,7 @@ import (
 	"github.com/prism-utils/prism/internal/store/engine"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/materialize"
 	"github.com/prism-utils/prism/internal/store/merge"
 	"github.com/prism-utils/prism/internal/store/metricsmeta"
 	"github.com/prism-utils/prism/internal/store/rollup"
@@ -69,6 +70,8 @@ type Config struct {
 	// still live can finish opening it. Zero deletes as soon as the merge
 	// output is durable.
 	DeleteGrace time.Duration
+	// Materializations are named merge-time SQL artifacts. Empty is a no-op.
+	Materializations materialize.File
 	// Logger records per-tenant / per-file errors; nil uses slog.Default.
 	Logger *slog.Logger
 	// Recorder receives tick outcomes and file counts; nil discards them.
@@ -225,7 +228,40 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 			return err
 		}
 	}
-	return nil
+	return r.runMaterialize(tenant, out.Path, sourcePaths(action), action.DestTier, materialize.PlaneMetrics, now)
+}
+
+func sourcePaths(action merge.MergeAction) []string {
+	return segmentPaths(action.Sources)
+}
+
+func segmentPaths(sources []merge.Segment) []string {
+	out := make([]string, len(sources))
+	for i, s := range sources {
+		out[i] = s.Path
+	}
+	return out
+}
+
+func (r *Runner) runMaterialize(tenant, dest string, sources []string, destTier int, plane materialize.Plane, now time.Time) error {
+	if len(r.cfg.Materializations.Materializations) == 0 {
+		return nil
+	}
+	return materialize.Run(context.Background(), &materialize.RunConfig{
+		DataDir:     r.cfg.DataDir,
+		Tenant:      tenant,
+		DestPath:    dest,
+		SourcePaths: sources,
+		DestTier:    destTier,
+		Plane:       plane,
+		Items:       r.cfg.Materializations.Materializations,
+		RunJobs:     true,
+		Now:         now,
+		Threads:     r.cfg.Threads,
+		MemoryLimit: r.cfg.MemoryLimit,
+		DeleteGrace: r.cfg.DeleteGrace,
+		Logger:      r.log,
+	})
 }
 
 func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
@@ -280,6 +316,9 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 			// label values enter the index; folding in just the new segment keeps
 			// the next label query off a full rescan of every tier.
 			if err := logmeta.MergeLabelIndexFromParquet(r.cfg.DataDir, tenant, out.Path); err != nil {
+				return err
+			}
+			if err := r.runMaterialize(tenant, out.Path, segmentPaths(action.Sources), action.DestTier, materialize.PlaneLogs, mergeStart); err != nil {
 				return err
 			}
 		}

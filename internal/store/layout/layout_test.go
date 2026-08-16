@@ -21,6 +21,14 @@ func TestSegmentNameUniqueForSameInstant(t *testing.T) {
 	}
 }
 
+func TestMaterializationDir(t *testing.T) {
+	got := MaterializationDir("/data", "user-abc-apps", "last_events")
+	want := "/data/user-abc-apps/materializations/last_events"
+	if got != want {
+		t.Fatalf("MaterializationDir = %q, want %q", got, want)
+	}
+}
+
 func TestSegmentNameOrdersByInstant(t *testing.T) {
 	earlier := SegmentName(time.Unix(1700000000, 0).UTC())
 	later := SegmentName(time.Unix(1700000001, 0).UTC())

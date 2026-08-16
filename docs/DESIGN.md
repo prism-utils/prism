@@ -892,3 +892,17 @@ Turning the exporter off registers no collectors at all, so the cost of running
 without it is zero. Homelab scrape wiring, alert rules, and `/admin/resources`
 charts are a sibling task. See [`STORE.md`](STORE.md) and
 [`CONFIG.md`](CONFIG.md) §14.
+
+### Merge-time materializations (2026-08)
+
+**Decision:** named read-only SQL runs after merge dest rename (`internal/store/materialize`), writing `<tenant>/materializations/<name>/<ts>-<id>.parquet`. Grafana queries `mat_<name>` via `/sql`. This is not `ROLLUP_STEPS` (labels dropped; PromQL unused). Empty config is a merge no-op. Shared RO (`RUN_JOBS=false`) does not write.
+
+**References:** ClickHouse incremental materialized views —
+https://clickhouse.com/docs/concepts/features/materialized-views/incremental-materialized-view
+; Prometheus recording rules —
+https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/
+; dbt incremental merge —
+https://docs.getdbt.com/docs/build/incremental-strategy .
+
+**Consequences:** extra COPY per configured name per merge, capped by existing DuckDB limits. Compaction identity is dest basename + `.compacted` sidecar. v1 serving API is `/sql` only.
+

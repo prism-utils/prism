@@ -26,7 +26,8 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **Hot snapshot** | Near-real-time export of `hot_current` to `hot/current.parquet` or `hot/current.duckdb` (`HOT_SEGMENT_FORMAT`, default `parquet`; `HOT_SNAPSHOT_SECONDS`). |
 | **Tiered storage** | Immutable Parquet segments `L0`…`L{n}` (`MAX_TIER`); Lucene-style merge compaction when `SEGMENTS_PER_TIER` reached. |
 | **Merges** | Background tier merges (`MERGE_TICK_SECONDS`); honors `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT`. |
-| **Rollups** | Downsampled Parquet under `rollups/{step}/` after L1+ merges (`ROLLUP_STEPS`); same DuckDB caps as merges. |
+| **Rollups** | Downsampled Parquet under `rollups/{step}/` after L1+ merges (`ROLLUP_STEPS`); same DuckDB caps as merges. PromQL/`/sql` do not read them. |
+| **Materializations** | Named merge-time SQL parquet under `materializations/<name>/` (`MATERIALIZATIONS_FILE`); `/sql` view `mat_<name>`. |
 | **Retention** | Deletes expired tier segments and rollups (`RETENTION_DAYS`, retention ticker). |
 | **Structured query** | `GET /{ns}/query?start=&end=&step=` — union over hot + tiers + rollups; optional hot-only (`QUERY_HOT_ONLY`). |
 | **Arbitrary SQL** | `POST /{ns}/sql` — read-only SQL in a per-request sandbox; JSON (default) or Arrow IPC stream on the **same route** via `Accept`. |
@@ -326,7 +327,7 @@ Notable groups:
 
 - **Listen / routing:** `LISTEN_ADDR`, `ADMIN_LISTEN_ADDR`, `ROUTE_PREFIX`, `MODE`, `CLIENT_TENANTS`, `CLUSTER_CLIENTS`
 - **Ingest / Flight:** `DATA_DIR`, `ALLOWED_ARTIFACTS`, `MAX_BODY_BYTES`, `FLIGHT_ADDR`, `AUTH_MODE`, `INGEST_TOKEN`
-- **Hot / lifecycle:** `HOT_WINDOW_*`, tickers, `SEGMENTS_PER_TIER`, `MAX_SEGMENT_BYTES`, `RETENTION_*`, `ROLLUP_STEPS`, `MAX_TIER`, `RUN_JOBS`
+- **Hot / lifecycle:** `HOT_WINDOW_*`, tickers, `SEGMENTS_PER_TIER`, `MAX_SEGMENT_BYTES`, `RETENTION_*`, `ROLLUP_STEPS`, `MATERIALIZATIONS_FILE`, `MAX_TIER`, `RUN_JOBS`
 - **Query / SQL:** `QUERY_HOT_ONLY`, `SQL_API_*`, `SQL_API_QUEUE_*`, `E2E_EXPOSE_QUERY_SQL`
 - **DuckDB governance:** `DUCKDB_THREADS`, `DUCKDB_MEMORY_LIMIT`, `MAX_OPEN_TENANTS`
 - **RBAC:** `AUTHZ_POLICY_FILE`, `OIDC_*`, `AUTHZ_RELOAD_SECONDS`
@@ -451,7 +452,9 @@ DATA_DIR/
       .meta_generation     # bump stamp so planners rescan after flush/merge
       L0/ … L7/            # immutable merged segments, coarsest at L7
     rollups/
-      1m/  5m/  1h/        # time-bucket aggregate Parquet
+      1m/  5m/  1h/        # time-bucket aggregate Parquet (labels dropped)
+    materializations/
+      <name>/              # merge-time named SQL parquet (Grafana `/sql` `mat_<name>`)
     .metering.json         # on-disk usage / compaction metering (operator-facing)
 ```
 
@@ -594,6 +597,47 @@ Parquet under `rollups/{step}/` for each step in `ROLLUP_STEPS` (default
 from `time_bucket(step, ts)` grouped by bucket and name. L0 merges do not build
 rollups (avoids rework on volatile data). Rollup DuckDB workers apply the same
 `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT` as the engine and merges.
+
+**PromQL home panels must not assume these files.** PromQL and `/sql` do not
+read `ROLLUP_STEPS` output (labels are dropped). Dashboard-shaped precomputes
+belong in merge-time materializations below.
+
+### Merge-time materializations (`internal/store/materialize`)
+
+When a merge dest is durable, the writer optionally runs named read-only DuckDB
+SQL against `merge_output` (the dest) and `merge_input` (UNION ALL of sources)
+and writes:
+
+```
+<DATA_DIR>/<tenant>/materializations/<name>/<ts>-<id>.parquet
+```
+
+The basename matches the dest segment so a later merge that retires that dest
+also marks the matching materialization `.compacted` (same sidecar rule as
+tiers). `POST /{ns}/sql` binds `mat_<name>` from the live (non-compacted) files
+only — never from `tiers/` or `hot/`. Empty `MATERIALIZATIONS_FILE` (or unset)
+is a no-op: merge output is byte-identical to a store without this feature.
+
+Config is a YAML file, not an env blob:
+
+```yaml
+materializations:
+  - name: last_events          # ^[a-z][a-z0-9_]{0,63}$
+    sql: |
+      SELECT 1 AS x FROM merge_output
+    on: metrics                # metrics | logs; default metrics
+    format: parquet            # parquet | duckdb; default parquet
+    minTier: 0                 # skip dest tier < N; default 0 (includes L0)
+```
+
+Point at it with `MATERIALIZATIONS_FILE`. Invalid name / non-SELECT SQL fails
+process start. A runtime SQL error logs and skips that name; merge and
+`ROLLUP_STEPS` still succeed. `RUN_JOBS=false` never writes these files (query
+replicas still serve existing ones via `mat_<name>`).
+
+`QUERY_HOT_ONLY` does not hide `mat_*` — they are their own open set, not a
+hot-window substitute. Grafana should query `SELECT … FROM mat_<name>`; PromQL
+does not read arbitrary-schema materializations in v1.
 
 ### Retention
 
