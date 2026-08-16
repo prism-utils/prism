@@ -138,3 +138,67 @@ func TestRebuildManifestSkipsCompactedAndUnknownBounds(t *testing.T) {
 		t.Fatalf("manifest files = %+v, want only live parquet with stats", m.Files)
 	}
 }
+
+func TestParquetFooterBoundsReadsTsColumn(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "seg.parquet")
+	lo := time.Date(2026, 4, 2, 15, 4, 5, 0, time.UTC)
+	hi := lo.Add(7 * time.Minute)
+	testparquet.WriteSegmentRows(t, path, []testparquet.SegRow{
+		{Name: "up", Labels: "{}", Value: 1, Ts: hi},
+		{Name: "up", Labels: "{}", Value: 1, Ts: lo},
+	})
+	minTs, maxTs, ok, err := parquetFooterBounds(context.Background(), path)
+	if err != nil {
+		t.Fatalf("parquetFooterBounds: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected footer stats for ts")
+	}
+	if minTs.UTC() != lo || maxTs.UTC() != hi {
+		t.Fatalf("footer bounds min=%s max=%s want %s .. %s", minTs, maxTs, lo, hi)
+	}
+}
+
+func TestParquetFooterBoundsEmptyFileHasNoStats(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.parquet")
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	q := `COPY (
+		SELECT
+			CAST(NULL AS VARCHAR) AS "__name__",
+			CAST(NULL AS VARCHAR) AS labels,
+			CAST(NULL AS DOUBLE) AS value,
+			CAST(NULL AS BIGINT) AS timestamp_ms,
+			CAST(NULL AS TIMESTAMP) AS ts
+		WHERE false
+	) TO '` + filepath.ToSlash(path) + `' (FORMAT parquet)`
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("write empty parquet: %v", err)
+	}
+	_, _, ok, err := parquetFooterBounds(context.Background(), path)
+	if err != nil {
+		t.Fatalf("parquetFooterBounds empty: %v", err)
+	}
+	if ok {
+		t.Fatal("empty parquet should not report footer ts stats")
+	}
+}
+
+func TestBoundsDuckDBMemoryCapIsSmall(t *testing.T) {
+	t.Parallel()
+	if boundsDuckDBMemoryLimit != "128MB" {
+		t.Fatalf("boundsDuckDBMemoryLimit=%q want 128MB", boundsDuckDBMemoryLimit)
+	}
+	if boundsDuckDBThreads != 1 {
+		t.Fatalf("boundsDuckDBThreads=%d want 1", boundsDuckDBThreads)
+	}
+}
