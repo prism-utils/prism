@@ -157,7 +157,7 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 	// hot_only can only tighten scope: a request may force the hot snapshot, but
 	// cannot widen a store that is already globally hot-only.
 	openStart, openEnd := promQLOpenWindow(r, h.cfg.LookbackDelta)
-	opts := metricsOpenOpts{
+	opts := &metricsOpenOpts{
 		HotOnly:   h.cfg.HotOnly || wantsHotOnly(r),
 		Start:     openStart,
 		End:       openEnd,

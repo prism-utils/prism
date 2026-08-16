@@ -54,7 +54,7 @@ func TestRebuildManifestRecordsParquetMinMax(t *testing.T) {
 	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "a.parquet"), ts0, "up", 1)
 	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "b.parquet"), ts1, "up", 1)
 
-	m, err := RebuildManifest(dir, tenant, 7)
+	m, err := RebuildManifest(context.Background(), dir, tenant, 7)
 	if err != nil {
 		t.Fatalf("RebuildManifest: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestFileBoundsEmptyParquetIsKnownEmpty(t *testing.T) {
 	if _, err := db.ExecContext(context.Background(), q); err != nil {
 		t.Fatalf("write empty parquet: %v", err)
 	}
-	minNs, maxNs, ok := FileBounds(path)
+	minNs, maxNs, ok := FileBounds(context.Background(), path)
 	if !ok {
 		t.Fatal("empty parquet should be known-empty, not skipped")
 	}
@@ -130,7 +130,7 @@ func TestRebuildManifestSkipsCompactedAndUnknownBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m, err := RebuildManifest(dir, tenant, 1)
+	m, err := RebuildManifest(context.Background(), dir, tenant, 1)
 	if err != nil {
 		t.Fatalf("RebuildManifest: %v", err)
 	}

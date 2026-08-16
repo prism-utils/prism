@@ -1,6 +1,7 @@
 package query_test
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,7 @@ func TestPromQLCountUpOneHourDoesNotSeeNonOverlappingPartitions(t *testing.T) {
 	testparquet.WriteSegmentRows(t, filepath.Join(dataDir, promTenant, "hot", "current.parquet"), []testparquet.SegRow{
 		{Name: "up", Labels: `job="api",day="hot"`, Value: 1, Ts: hotTs},
 	})
-	if err := metricsmeta.SyncManifest(dataDir, promTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, promTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
 

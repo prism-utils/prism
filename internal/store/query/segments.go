@@ -61,8 +61,8 @@ func sandboxMetricsUnionSQLFromSources(sources []metricsSource) (string, error) 
 // sandboxMetricsUnionSQL builds a metrics UNION ALL from parquet sources under
 // tenantRoot (hot and optionally tiers). .duckdb paths are omitted because they
 // need ATTACH aliases before projection.
-func sandboxMetricsUnionSQL(tenantRoot string, opts metricsOpenOpts) (string, error) {
-	sources, err := collectMetricsSources(tenantRoot, opts)
+func sandboxMetricsUnionSQL(ctx context.Context, tenantRoot string, opts *metricsOpenOpts) (string, error) {
+	sources, err := collectMetricsSources(ctx, tenantRoot, opts)
 	if err != nil {
 		return "", err
 	}

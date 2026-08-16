@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,12 +66,12 @@ func TestMetricsOpenSetPrunesNonOverlappingFiles(t *testing.T) {
 	writeOpenSetFile(t, filepath.Join(l0, "a.parquet"), tA, "up")
 	writeOpenSetFile(t, filepath.Join(l0, "b.parquet"), tB, "up")
 	writeOpenSetFile(t, filepath.Join(l0, "c.parquet"), tC, "up")
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
 
 	start, end := tB, tB.Add(time.Hour)
-	sources, err := collectMetricsSources(root, metricsOpenOpts{Start: start, End: end})
+	sources, err := collectMetricsSources(context.Background(), root, &metricsOpenOpts{Start: start, End: end})
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -92,10 +93,10 @@ func TestMetricsOpenSetIncludesOverlappingFile(t *testing.T) {
 	// a query that begins at start when min==max==that sample).
 	sample := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	writeOpenSetFile(t, filepath.Join(l0, "overlap.parquet"), sample, "up")
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
-	sources, err := collectMetricsSources(root, metricsOpenOpts{
+	sources, err := collectMetricsSources(context.Background(), root, &metricsOpenOpts{
 		Start: sample.Add(-time.Minute),
 		End:   sample.Add(time.Minute),
 	})
@@ -114,10 +115,10 @@ func TestMetricsOpenSetHotOnlyOmitsTiersOnWideRange(t *testing.T) {
 	hotTs := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
 	writeOpenSetFile(t, filepath.Join(root, "hot", "current.parquet"), hotTs, "up")
 	writeOpenSetFile(t, filepath.Join(root, "tiers", "L0", "old.parquet"), hotTs.Add(-24*time.Hour), "up")
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
-	sources, err := collectMetricsSources(root, metricsOpenOpts{
+	sources, err := collectMetricsSources(context.Background(), root, &metricsOpenOpts{
 		HotOnly: true,
 		Start:   hotTs.Add(-24 * time.Hour),
 		End:     hotTs.Add(time.Hour),
@@ -138,12 +139,12 @@ func TestMetricsOpenSetProcessHotOnlyCannotWiden(t *testing.T) {
 	hotTs := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
 	writeOpenSetFile(t, filepath.Join(root, "hot", "current.parquet"), hotTs, "up")
 	writeOpenSetFile(t, filepath.Join(root, "tiers", "L0", "cold.parquet"), hotTs, "up")
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
 	// Process QUERY_HOT_ONLY is modeled as HotOnly=true; a request cannot
 	// pass a flag that widens past that (there is no widen API).
-	sources, err := collectMetricsSources(root, metricsOpenOpts{HotOnly: true})
+	sources, err := collectMetricsSources(context.Background(), root, &metricsOpenOpts{HotOnly: true})
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -163,10 +164,10 @@ func TestMetricsOpenSetSkippedPathsAbsentFromUnionSQL(t *testing.T) {
 	tB := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	writeOpenSetFile(t, filepath.Join(l0, "skip-me.parquet"), tA, "up")
 	writeOpenSetFile(t, filepath.Join(l0, "keep-me.parquet"), tB, "up")
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
-	sqlText, err := sandboxMetricsUnionSQL(root, metricsOpenOpts{Start: tB, End: tB.Add(time.Hour)})
+	sqlText, err := sandboxMetricsUnionSQL(context.Background(), root, &metricsOpenOpts{Start: tB, End: tB.Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("union sql: %v", err)
 	}
@@ -194,10 +195,10 @@ func TestMetricsAutoHotUsesSnapshotCoverage(t *testing.T) {
 		{Name: "up", Labels: "{}", Value: 1, Ts: now},
 	})
 	writeOpenSetFile(t, filepath.Join(root, "tiers", "L0", "older.parquet"), now.Add(-2*time.Hour), "up")
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
-	sources, err := collectMetricsSources(root, metricsOpenOpts{
+	sources, err := collectMetricsSources(context.Background(), root, &metricsOpenOpts{
 		Start:     hotMin,
 		End:       now,
 		Now:       now,
@@ -225,10 +226,10 @@ func TestMetricsAutoHotWideRangeIncludesOverlappingCold(t *testing.T) {
 		{Name: "up", Labels: "{}", Value: 1, Ts: now},
 	})
 	writeOpenSetFile(t, filepath.Join(root, "tiers", "L0", "day.parquet"), now.Add(-12*time.Hour), "up")
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
-	sources, err := collectMetricsSources(root, metricsOpenOpts{
+	sources, err := collectMetricsSources(context.Background(), root, &metricsOpenOpts{
 		Start:     now.Add(-24 * time.Hour),
 		End:       now,
 		Now:       now,
@@ -257,13 +258,13 @@ func TestMetricsHourlyPartitionsOneHourQueryOpensAtMostHotPlusTwo(t *testing.T) 
 	testparquet.WriteSegmentRows(t, filepath.Join(root, "hot", "current.parquet"), []testparquet.SegRow{
 		{Name: "up", Labels: "{}", Value: 1, Ts: base.Add(7 * time.Hour)},
 	})
-	if err := metricsmeta.SyncManifest(dataDir, openSetTenant); err != nil {
+	if err := metricsmeta.SyncManifest(context.Background(), dataDir, openSetTenant); err != nil {
 		t.Fatalf("SyncManifest: %v", err)
 	}
 
 	start := base.Add(3 * time.Hour)
 	end := start.Add(time.Hour)
-	sources, err := collectMetricsSources(root, metricsOpenOpts{Start: start, End: end})
+	sources, err := collectMetricsSources(context.Background(), root, &metricsOpenOpts{Start: start, End: end})
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}

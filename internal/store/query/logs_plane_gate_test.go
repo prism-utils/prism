@@ -540,7 +540,7 @@ func TestPrepareMetricsSandboxIgnoresStaleLogCache(t *testing.T) {
 		t.Fatalf("metrics rows = %d, want >= 1", n)
 	}
 
-	conn2, cleanup2, err := prepareSandboxConn(ctx, tenantRoot, metricsOpenOpts{}, sandboxLimits{})
+	conn2, cleanup2, err := prepareSandboxConn(ctx, tenantRoot, &metricsOpenOpts{}, sandboxLimits{})
 	if err != nil {
 		t.Fatalf("full sandbox with stale log path: %v", err)
 	}

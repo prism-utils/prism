@@ -105,7 +105,7 @@ func TestSQLSandboxLogsViewOmitsLandingRows(t *testing.T) {
 	fx := seedLandingAndTier(t, "logs-raw")
 
 	ctx := context.Background()
-	conn, cleanup, err := prepareSandboxConn(ctx, fx.tenantRoot, metricsOpenOpts{}, sandboxLimits{})
+	conn, cleanup, err := prepareSandboxConn(ctx, fx.tenantRoot, &metricsOpenOpts{}, sandboxLimits{})
 	if err != nil {
 		t.Fatalf("prepareSandboxConn: %v", err)
 	}

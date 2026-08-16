@@ -219,7 +219,7 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			return
 		}
 
-		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, metricsOpenOpts{
+		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, &metricsOpenOpts{
 			HotOnly:   cfg.HotOnly,
 			Start:     sqlWindowStart(r, req),
 			End:       sqlWindowEnd(r, req),
@@ -271,10 +271,10 @@ func wantsArrowStream(r *http.Request) bool {
 // fail the whole query when a stale logs parquet path disappears mid-flight
 // (retention/compaction), and metrics never need those files.
 func prepareMetricsSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, limits sandboxLimits) (*sql.Conn, func(), error) {
-	return prepareMetricsSandbox(ctx, tenantRoot, metricsOpenOpts{HotOnly: hotOnly}, limits)
+	return prepareMetricsSandbox(ctx, tenantRoot, &metricsOpenOpts{HotOnly: hotOnly}, limits)
 }
 
-func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
+func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts *metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
 		return nil, nil, err
@@ -293,7 +293,7 @@ func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts metricsO
 }
 
 // prepareSandboxConn opens the /sql sandbox: metrics + logs views.
-func prepareSandboxConn(ctx context.Context, tenantRoot string, opts metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
+func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
 		return nil, nil, err
@@ -332,8 +332,8 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, opts metricsOpen
 	return conn, cleanup, nil
 }
 
-func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, opts metricsOpenOpts) (hotPins, error) {
-	sources, err := collectMetricsSources(tenantRoot, opts)
+func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, opts *metricsOpenOpts) (hotPins, error) {
+	sources, err := collectMetricsSources(ctx, tenantRoot, opts)
 	if err != nil {
 		return hotPins{}, err
 	}
@@ -721,7 +721,7 @@ func stripStringLiterals(s string) string {
 }
 
 func collectSafeParquetPaths(absTenantRoot, tenantRoot string, hotOnly bool) ([]string, error) {
-	sources, err := collectMetricsSources(tenantRoot, metricsOpenOpts{HotOnly: hotOnly})
+	sources, err := collectMetricsSources(context.Background(), tenantRoot, &metricsOpenOpts{HotOnly: hotOnly})
 	if err != nil {
 		return nil, err
 	}

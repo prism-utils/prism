@@ -4,6 +4,7 @@
 package metricsmeta
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -143,7 +144,7 @@ func isSegmentName(name string) bool {
 
 // RebuildManifest scans hot + live tiers and records min/max ts per file.
 // Files whose bounds cannot be read are omitted (fail closed).
-func RebuildManifest(dataDir, tenant string, version uint64) (Manifest, error) {
+func RebuildManifest(ctx context.Context, dataDir, tenant string, version uint64) (Manifest, error) {
 	tenantRoot := filepath.Join(dataDir, tenant)
 	var files []ManifestFile
 	add := func(abs, rel string) error {
@@ -154,7 +155,7 @@ func RebuildManifest(dataDir, tenant string, version uint64) (Manifest, error) {
 			}
 			return err
 		}
-		minNs, maxNs, ok := FileBounds(abs)
+		minNs, maxNs, ok := FileBounds(ctx, abs)
 		if !ok {
 			return nil
 		}
@@ -200,12 +201,12 @@ func RebuildManifest(dataDir, tenant string, version uint64) (Manifest, error) {
 }
 
 // SyncManifest rebuilds and writes the catalog at the current generation.
-func SyncManifest(dataDir, tenant string) error {
+func SyncManifest(ctx context.Context, dataDir, tenant string) error {
 	gen, err := ReadGeneration(dataDir, tenant)
 	if err != nil {
 		return err
 	}
-	m, err := RebuildManifest(dataDir, tenant, gen)
+	m, err := RebuildManifest(ctx, dataDir, tenant, gen)
 	if err != nil {
 		return err
 	}
@@ -213,9 +214,9 @@ func SyncManifest(dataDir, tenant string) error {
 }
 
 // SyncAfterChange bumps the generation then rewrites the catalog.
-func SyncAfterChange(dataDir, tenant string) error {
+func SyncAfterChange(ctx context.Context, dataDir, tenant string) error {
 	if err := Bump(dataDir, tenant); err != nil {
 		return err
 	}
-	return SyncManifest(dataDir, tenant)
+	return SyncManifest(ctx, dataDir, tenant)
 }

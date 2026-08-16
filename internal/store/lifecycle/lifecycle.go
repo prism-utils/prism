@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -319,7 +320,7 @@ func (r *Runner) tickRetention() error {
 					r.log.Error("retention delete segment", "tenant", tenant, "path", del.Segment.Path, "err", err)
 				}
 			}
-			if err := metricsmeta.SyncAfterChange(r.cfg.DataDir, tenant); err != nil {
+			if err := metricsmeta.SyncAfterChange(context.Background(), r.cfg.DataDir, tenant); err != nil {
 				r.log.Error("retention metrics catalog", "tenant", tenant, "err", err)
 			}
 		}

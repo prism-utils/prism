@@ -72,7 +72,7 @@ func (b *Builder) buildSQL(ctx context.Context, req *Request, db *sql.DB) (strin
 	}
 
 	if !b.HotOnly {
-		sources, err := collectMetricsSources(tenantRoot, metricsOpenOpts{
+		sources, err := collectMetricsSources(ctx, tenantRoot, &metricsOpenOpts{
 			Start:     req.Start,
 			End:       req.End,
 			HotWindow: b.HotWindow,

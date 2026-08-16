@@ -396,7 +396,7 @@ func (e *Engine) flushTenant(tenant string) error {
 		return fmt.Errorf("engine: drop hot_prev: %w", err)
 	}
 	e.clearFlushSchedule(tenant)
-	if err := metricsmeta.SyncAfterChange(e.cfg.DataDir, tenant); err != nil {
+	if err := metricsmeta.SyncAfterChange(context.Background(), e.cfg.DataDir, tenant); err != nil {
 		return fmt.Errorf("engine: metrics catalog: %w", err)
 	}
 	return nil

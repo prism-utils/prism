@@ -14,8 +14,8 @@ import (
 // FileBounds returns [min,max] ingest timestamps for a metrics segment.
 // Parquet/DuckDB stats are preferred. Files that cannot be read are reported
 // as not-ok so callers skip them instead of treating them as "everything".
-func FileBounds(path string) (minNs, maxNs int64, ok bool) {
-	minTs, maxTs, err := statMinMax(path)
+func FileBounds(ctx context.Context, path string) (minNs, maxNs int64, ok bool) {
+	minTs, maxTs, err := statMinMax(ctx, path)
 	if err != nil {
 		slog.Warn("metrics catalog skipped file without bounds", "path", path, "err", err)
 		return 0, 0, false
@@ -26,7 +26,7 @@ func FileBounds(path string) (minNs, maxNs int64, ok bool) {
 	return minTs.UTC().UnixNano(), maxTs.UTC().UnixNano(), true
 }
 
-func statMinMax(path string) (minTs, maxTs time.Time, err error) {
+func statMinMax(ctx context.Context, path string) (minTs, maxTs time.Time, err error) {
 	connector, err := duckdb.NewConnector("", nil)
 	if err != nil {
 		return time.Time{}, time.Time{}, err
@@ -34,7 +34,6 @@ func statMinMax(path string) (minTs, maxTs time.Time, err error) {
 	defer func() { _ = connector.Close() }()
 	db := sql.OpenDB(connector)
 	defer func() { _ = db.Close() }()
-	ctx := context.Background()
 	var minN, maxN sql.NullTime
 	if segformat.IsDuckDB(path) {
 		alias := "mstat"

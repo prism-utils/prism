@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +31,10 @@ type metricsFileMeta struct {
 
 const autoHotSkew = time.Minute
 
-func collectMetricsSources(tenantRoot string, opts metricsOpenOpts) ([]metricsSource, error) {
+func collectMetricsSources(ctx context.Context, tenantRoot string, opts *metricsOpenOpts) ([]metricsSource, error) {
+	if opts == nil {
+		opts = &metricsOpenOpts{}
+	}
 	absRoot, err := filepath.Abs(tenantRoot)
 	if err != nil {
 		return nil, err
@@ -40,16 +44,16 @@ func collectMetricsSources(tenantRoot string, opts metricsOpenOpts) ([]metricsSo
 	}
 	absRoot = filepath.Clean(absRoot)
 
-	files, err := listMetricsFiles(absRoot)
+	files, err := listMetricsFiles(ctx, absRoot)
 	if err != nil {
 		return nil, err
 	}
-	files = ensureHotFiles(absRoot, files)
+	files = ensureHotFiles(ctx, absRoot, files)
 
 	var hot, cold []metricsFileMeta
 	for _, f := range files {
 		if f.hot {
-			if minNs, maxNs, ok := metricsmeta.FileBounds(f.Path); ok {
+			if minNs, maxNs, ok := metricsmeta.FileBounds(ctx, f.Path); ok {
 				f.MinTsNs, f.MaxTsNs = minNs, maxNs
 			}
 			hot = append(hot, f)
@@ -77,7 +81,7 @@ func collectMetricsSources(tenantRoot string, opts metricsOpenOpts) ([]metricsSo
 	return metasToSources(out), nil
 }
 
-func ensureHotFiles(absRoot string, files []metricsFileMeta) []metricsFileMeta {
+func ensureHotFiles(ctx context.Context, absRoot string, files []metricsFileMeta) []metricsFileMeta {
 	seen := map[string]struct{}{}
 	for _, f := range files {
 		if f.hot {
@@ -94,7 +98,7 @@ func ensureHotFiles(absRoot string, files []metricsFileMeta) []metricsFileMeta {
 		if _, dup := seen[slash]; dup {
 			continue
 		}
-		minNs, maxNs, bounded := metricsmeta.FileBounds(p)
+		minNs, maxNs, bounded := metricsmeta.FileBounds(ctx, p)
 		if !bounded {
 			continue
 		}
@@ -111,7 +115,7 @@ func metasToSources(files []metricsFileMeta) []metricsSource {
 	return out
 }
 
-func rangeInsideHot(start, end time.Time, hot []metricsFileMeta, opts metricsOpenOpts) bool {
+func rangeInsideHot(start, end time.Time, hot []metricsFileMeta, opts *metricsOpenOpts) bool {
 	hotMin, hotMax, ok := hotCoverage(hot, opts)
 	if !ok {
 		return false
@@ -120,7 +124,7 @@ func rangeInsideHot(start, end time.Time, hot []metricsFileMeta, opts metricsOpe
 	return s >= hotMin && e <= hotMax+autoHotSkew.Nanoseconds()
 }
 
-func hotCoverage(hot []metricsFileMeta, opts metricsOpenOpts) (minNs, maxNs int64, ok bool) {
+func hotCoverage(hot []metricsFileMeta, opts *metricsOpenOpts) (minNs, maxNs int64, ok bool) {
 	var sawEmpty bool
 	for _, f := range hot {
 		if f.MinTsNs == 0 && f.MaxTsNs == 0 {
@@ -162,7 +166,7 @@ func filterMetricsFiles(files []metricsFileMeta, startNs, endNs int64) []metrics
 	return out
 }
 
-func listMetricsFiles(absRoot string) ([]metricsFileMeta, error) {
+func listMetricsFiles(ctx context.Context, absRoot string) ([]metricsFileMeta, error) {
 	dataDir := filepath.Dir(absRoot)
 	tenant := filepath.Base(absRoot)
 	gen, err := metricsmeta.ReadGeneration(dataDir, tenant)
@@ -178,14 +182,14 @@ func listMetricsFiles(absRoot string) ([]metricsFileMeta, error) {
 			return files, nil
 		}
 	}
-	rebuilt, err := metricsmeta.RebuildManifest(dataDir, tenant, gen)
+	rebuilt, err := metricsmeta.RebuildManifest(ctx, dataDir, tenant, gen)
 	if err != nil {
 		return nil, err
 	}
 	_ = metricsmeta.WriteManifest(dataDir, tenant, rebuilt)
 	files, ok := manifestToMetricsFiles(absRoot, rebuilt)
 	if !ok {
-		return scanMetricsFiles(absRoot)
+		return scanMetricsFiles(ctx, absRoot)
 	}
 	return files, nil
 }
@@ -216,7 +220,7 @@ func isHotRel(rel string) bool {
 	return s == "hot/current.parquet" || s == "hot/current.duckdb"
 }
 
-func scanMetricsFiles(absRoot string) ([]metricsFileMeta, error) {
+func scanMetricsFiles(ctx context.Context, absRoot string) ([]metricsFileMeta, error) {
 	var out []metricsFileMeta
 	for _, rel := range []string{"hot/current.parquet", "hot/current.duckdb"} {
 		p := filepath.Join(absRoot, filepath.FromSlash(rel))
@@ -227,7 +231,7 @@ func scanMetricsFiles(absRoot string) ([]metricsFileMeta, error) {
 		if !ok {
 			continue
 		}
-		minNs, maxNs, bounded := metricsmeta.FileBounds(p)
+		minNs, maxNs, bounded := metricsmeta.FileBounds(ctx, p)
 		if !bounded {
 			continue
 		}
@@ -262,7 +266,7 @@ func scanMetricsFiles(absRoot string) ([]metricsFileMeta, error) {
 			if !ok {
 				continue
 			}
-			minNs, maxNs, bounded := metricsmeta.FileBounds(p)
+			minNs, maxNs, bounded := metricsmeta.FileBounds(ctx, p)
 			if !bounded {
 				continue
 			}

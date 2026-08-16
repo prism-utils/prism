@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,7 +77,7 @@ func TestCollectMetricsSourcesSkipsCompactedSegments(t *testing.T) {
 	testparquet.WriteSegmentWithTs(t, compacted, ts, "up", 1)
 	markGraceCompacted(t, compacted)
 
-	sources, err := collectMetricsSources(resolvedTenantRoot(t, dataDir, graceTenant), metricsOpenOpts{})
+	sources, err := collectMetricsSources(context.Background(), resolvedTenantRoot(t, dataDir, graceTenant), &metricsOpenOpts{})
 	if err != nil {
 		t.Fatalf("collectMetricsSources: %v", err)
 	}

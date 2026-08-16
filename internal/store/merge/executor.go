@@ -129,7 +129,7 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	if err := retireSources(action.Sources, now, x.cfg.DeleteGrace); err != nil {
 		return Segment{}, err
 	}
-	if err := metricsmeta.SyncAfterChange(x.cfg.DataDir, x.cfg.Tenant); err != nil {
+	if err := metricsmeta.SyncAfterChange(context.Background(), x.cfg.DataDir, x.cfg.Tenant); err != nil {
 		return Segment{}, fmt.Errorf("merge: metrics catalog: %w", err)
 	}
 	return seg, nil
