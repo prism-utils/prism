@@ -22,6 +22,7 @@ import (
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/duckdbfile"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/metricsmeta"
 	"github.com/prism-utils/prism/internal/store/segformat"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 	"golang.org/x/sync/singleflight"
@@ -395,6 +396,9 @@ func (e *Engine) flushTenant(tenant string) error {
 		return fmt.Errorf("engine: drop hot_prev: %w", err)
 	}
 	e.clearFlushSchedule(tenant)
+	if err := metricsmeta.SyncAfterChange(e.cfg.DataDir, tenant); err != nil {
+		return fmt.Errorf("engine: metrics catalog: %w", err)
+	}
 	return nil
 }
 

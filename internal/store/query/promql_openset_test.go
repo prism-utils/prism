@@ -48,3 +48,4 @@ func TestPromQLCountUpOneHourDoesNotSeeNonOverlappingPartitions(t *testing.T) {
 	if result[0].Value[1] != "1" {
 		t.Fatalf("count(up)=%v, want 1 (open-set prune must not load the other 6 hours)", result[0].Value[1])
 	}
+}

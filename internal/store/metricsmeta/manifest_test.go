@@ -1,11 +1,14 @@
 package metricsmeta
 
 import (
+	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
@@ -72,6 +75,38 @@ func TestRebuildManifestRecordsParquetMinMax(t *testing.T) {
 	}
 	if b.MinTsNs != ts1.UnixNano() || b.MaxTsNs != ts1.UnixNano() {
 		t.Fatalf("b bounds min=%d max=%d want %d", b.MinTsNs, b.MaxTsNs, ts1.UnixNano())
+	}
+}
+
+func TestFileBoundsEmptyParquetIsKnownEmpty(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.parquet")
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	q := `COPY (
+		SELECT
+			CAST(NULL AS VARCHAR) AS "__name__",
+			CAST(NULL AS VARCHAR) AS labels,
+			CAST(NULL AS DOUBLE) AS value,
+			CAST(NULL AS BIGINT) AS timestamp_ms,
+			CAST(NULL AS TIMESTAMP) AS ts
+		WHERE false
+	) TO '` + filepath.ToSlash(path) + `' (FORMAT parquet)`
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("write empty parquet: %v", err)
+	}
+	minNs, maxNs, ok := FileBounds(path)
+	if !ok {
+		t.Fatal("empty parquet should be known-empty, not skipped")
+	}
+	if minNs != 0 || maxNs != 0 {
+		t.Fatalf("empty bounds min=%d max=%d want 0,0", minNs, maxNs)
 	}
 }
 

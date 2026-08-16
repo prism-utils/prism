@@ -588,8 +588,8 @@ carry forward under the new binary and image name
   together in one supply chain.
 - **Store package layout** under `internal/store/`:
   `ingest`, `engine`, `lifecycle`, `merge`, `rollup`, `query`, `tenant`,
-  `stats` — one package per responsibility, leaf packages that do not import
-  each other beyond documented reuse.
+  `stats`, `logmeta`, `metricsmeta` — one package per responsibility, leaf
+  packages that do not import each other beyond documented reuse.
 - **Reuse boundaries (do not fork):** `internal/columnar`,
   `internal/encoder/parquet`, `internal/config`, `internal/tlsconf`,
   `internal/obs`, and `internal/version`. The store is the **consumer** side of
@@ -633,6 +633,23 @@ forwarding (Decision Protocol in `store-mode-cluster` spec).
 **Consequences:** `internal/store/cluster` is a leaf package with no engine
 import; cluster-mode `prism-store` opens no `DATA_DIR` catalog. Ingest and
 admin remain on client/standalone nodes only until a later federation slice.
+
+### Shared query plane + metrics open-set (2026-08, issue #141)
+
+**Decision:** Grafana PromQL/`/sql`/`/query` execute on the shared store process
+(standalone or `RUN_JOBS=false` replica). They are **not** proxied to tenant
+`prism-cache`. `hot_only` means “this process opens only the hot snapshot,” not
+“tenant does hot / shared does cold.” Metrics planners skip files whose
+`[min_ts, max_ts]` cannot overlap the query window (Iceberg-style manifest
+min/max skip; same overlap test as logs). Auto-hot uses the snapshot’s actual
+min/max, not the reader’s `HOT_WINDOW_*`.
+
+**References:** Apache Iceberg scan planning —
+https://iceberg.apache.org/docs/latest/performance/
+
+**Consequences:** a 1h Explore panel opens O(hot + overlapping L0), not every
+live tier file. Tenant writer CPU stays ingest/merge. `MODE=cluster`
+scatter-gather and Grafana URL changes are out of this slice.
 
 ### RBAC — JWT/OIDC identity + per-tenant roles (2026-07)
 

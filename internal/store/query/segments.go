@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -16,67 +15,6 @@ import (
 type metricsSource struct {
 	Path  string
 	Alias string // set for duckdb after ATTACH; empty for parquet
-}
-
-func collectMetricsSources(tenantRoot string, hotOnly bool) ([]metricsSource, error) {
-	absRoot, err := filepath.Abs(tenantRoot)
-	if err != nil {
-		return nil, err
-	}
-	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
-		absRoot = resolved
-	}
-	absRoot = filepath.Clean(absRoot)
-
-	var out []metricsSource
-	for _, rel := range []string{"hot/current.parquet", "hot/current.duckdb"} {
-		p := filepath.Join(tenantRoot, rel)
-		ok, err := safeTenantSegmentFile(absRoot, p)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, metricsSource{Path: p})
-		}
-	}
-	if hotOnly {
-		return out, nil
-	}
-	for tier := 0; tier < maxTier; tier++ {
-		dir := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier))
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		// A segment held for its delete grace is on disk but no longer part of
-		// the view: its rows were rewritten into a parent, so reading both
-		// would double every sample it holds.
-		retired := layout.CompactedSet(entries)
-		for _, e := range entries {
-			if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-				continue
-			}
-			ext := filepath.Ext(e.Name())
-			if ext != ".parquet" && ext != ".duckdb" {
-				continue
-			}
-			if _, held := retired[e.Name()]; held {
-				continue
-			}
-			p := filepath.Join(dir, e.Name())
-			ok, err := safeTenantSegmentFile(absRoot, p)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				out = append(out, metricsSource{Path: p})
-			}
-		}
-	}
-	return out, nil
 }
 
 func attachMetricsDuckDB(ctx context.Context, conn *sql.Conn, sources []metricsSource) error {
@@ -123,8 +61,8 @@ func sandboxMetricsUnionSQLFromSources(sources []metricsSource) (string, error) 
 // sandboxMetricsUnionSQL builds a metrics UNION ALL from parquet sources under
 // tenantRoot (hot and optionally tiers). .duckdb paths are omitted because they
 // need ATTACH aliases before projection.
-func sandboxMetricsUnionSQL(tenantRoot string, hotOnly bool) (string, error) {
-	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+func sandboxMetricsUnionSQL(tenantRoot string, opts metricsOpenOpts) (string, error) {
+	sources, err := collectMetricsSources(tenantRoot, opts)
 	if err != nil {
 		return "", err
 	}

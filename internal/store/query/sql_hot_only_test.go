@@ -97,7 +97,7 @@ func TestSandboxMetricsUnionSQLHotOnlyOmitsTiers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hotSQL, err := sandboxMetricsUnionSQL(absRoot, true)
+	hotSQL, err := sandboxMetricsUnionSQL(absRoot, metricsOpenOpts{HotOnly: true})
 	if err != nil {
 		t.Fatalf("hot-only union: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestSandboxMetricsUnionSQLHotOnlyOmitsTiers(t *testing.T) {
 		t.Fatalf("hot-only union must include snapshot: %s", hotSQL)
 	}
 
-	fullSQL, err := sandboxMetricsUnionSQL(absRoot, false)
+	fullSQL, err := sandboxMetricsUnionSQL(absRoot, metricsOpenOpts{})
 	if err != nil {
 		t.Fatalf("full union: %v", err)
 	}

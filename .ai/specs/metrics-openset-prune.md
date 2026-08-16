@@ -71,36 +71,36 @@ Copied from prism#141 (homelab-follow-up items marked N/A this PR).
 
 ### Definition of done
 
-- [ ] Metrics PromQL, `/sql` metrics view, and structured `/query` tier parts use an overlap open set (manifest or equivalent). Loki behavior unchanged / still pruned.
-- [ ] Auto-hot documented and implemented in-store; `hot_only` request still force-on; process `QUERY_HOT_ONLY=true` still cannot widen.
-- [ ] New flushed L0 segments are time-bounded and catalogued with min/max ts.
-- [ ] Homelab writer vs shared `HOT_WINDOW_*` aligned in chart defaults + gitops — **N/A this PR** (out of scope; homelab-apps follow-up).
-- [ ] Grafana URL still shared loopback (unit test) — **N/A this PR** (homelab-apps). Writer not used as Grafana query plane (documented here).
-- [ ] `docs/STORE.md` + `docs/CONFIG.md`: open-set, auto-hot, layout, “shared executes, tenant does not serve Grafana.”
-- [ ] Homelab `docs/solutions/` pointer — **N/A this PR** (after apps wiring PR).
-- [ ] Spec Decision Log records option 1+5 (and why 2/3/4/6 were rejected: tenant query CPU / billing).
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] Metrics PromQL, `/sql` metrics view, and structured `/query` tier parts use an overlap open set (manifest or equivalent). Loki behavior unchanged / still pruned.
+- [x] Auto-hot documented and implemented in-store; `hot_only` request still force-on; process `QUERY_HOT_ONLY=true` still cannot widen.
+- [x] New flushed L0 segments are time-bounded and catalogued with min/max ts.
+- [x] Homelab writer vs shared `HOT_WINDOW_*` aligned in chart defaults + gitops — **N/A this PR** (out of scope; homelab-apps follow-up).
+- [x] Grafana URL still shared loopback (unit test) — **N/A this PR** (homelab-apps). Writer not used as Grafana query plane (documented here).
+- [x] `docs/STORE.md` + `docs/CONFIG.md`: open-set, auto-hot, layout, “shared executes, tenant does not serve Grafana.”
+- [x] Homelab `docs/solutions/` pointer — **N/A this PR** (after apps wiring PR).
+- [x] Spec Decision Log records option 1+5 (and why 2/3/4/6 were rejected: tenant query CPU / billing).
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
 - [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ### Prune
 
-- [ ] Unit: metrics open-set with `start`/`end` covering only file B does **not** include file A (`max_ts < start`) or file C (`min_ts >= end`).
-- [ ] Unit: overlapping file (range crosses `start`) **is** included.
-- [ ] Unit: `hot_only=true` on a 24h range still opens **only** hot snapshot files (0 tier paths).
-- [ ] Unit: `QUERY_HOT_ONLY=true` process ignores a request that tries to widen (no API to widen — assert tiers absent).
-- [ ] Unit: PromQL `count(up)` 1h fixture with 7d of partitions records opened paths; count is **O(hot + overlapping)**, not all fixtures.
-- [ ] Test spy / path list: skipped files are never passed to `read_parquet` / `ATTACH`.
+- [x] Unit: metrics open-set with `start`/`end` covering only file B does **not** include file A (`max_ts < start`) or file C (`min_ts >= end`).
+- [x] Unit: overlapping file (range crosses `start`) **is** included.
+- [x] Unit: `hot_only=true` on a 24h range still opens **only** hot snapshot files (0 tier paths).
+- [x] Unit: `QUERY_HOT_ONLY=true` process ignores a request that tries to widen (no API to widen — assert tiers absent).
+- [x] Unit: PromQL `count(up)` 1h fixture with 7d of partitions records opened paths; count is **O(hot + overlapping)**, not all fixtures.
+- [x] Test spy / path list: skipped files are never passed to `read_parquet` / `ATTACH`.
 
 ### Auto-hot
 
-- [ ] Unit: range `now-hotWindow`…`now` → open set is only `hot/current.*` even without `hot_only` query param.
-- [ ] Unit: range `now-24h`…`now` with `QUERY_HOT_ONLY=false` → hot + overlapping cold, not hot-only.
-- [ ] Unit: `hot_only=true` + 24h range → hot only.
+- [x] Unit: range `now-hotWindow`…`now` → open set is only `hot/current.*` even without `hot_only` query param.
+- [x] Unit: range `now-24h`…`now` with `QUERY_HOT_ONLY=false` → hot + overlapping cold, not hot-only.
+- [x] Unit: `hot_only=true` + 24h range → hot only.
 
 ### Layout
 
-- [ ] Flush/merge test: new L0 has min/max in manifest (and/or filename); catalog round-trip.
-- [ ] 1h query over 7×1h partitions opens at most hot + 2 L0 files in the fixture.
+- [x] Flush/merge test: new L0 has min/max in manifest (and/or filename); catalog round-trip.
+- [x] 1h query over 7×1h partitions opens at most hot + 2 L0 files in the fixture.
 
 ### Homelab wiring (follow-up; does not block this PR)
 

@@ -14,7 +14,7 @@ import (
 // 400 "bad query".
 func TestSandboxMetricsUnionSQL_EmptyTenantYieldsEmptyView(t *testing.T) {
 	t.Parallel()
-	got, err := sandboxMetricsUnionSQL(t.TempDir(), false)
+	got, err := sandboxMetricsUnionSQL(t.TempDir(), metricsOpenOpts{})
 	if err != nil {
 		t.Fatalf("unexpected error for empty tenant: %v", err)
 	}

@@ -60,6 +60,9 @@ type SQLConfig struct {
 	// fresh hot snapshot (that is the writer's job, and the replica's data mount
 	// is read-only).
 	RunJobs bool
+	// HotWindow is the process hot-window duration, used only when snapshot
+	// min/max stats are missing so auto-hot still has a coverage estimate.
+	HotWindow time.Duration
 }
 
 // SQLRoutePattern returns the ServeMux pattern for POST /{ns}/sql.
@@ -75,6 +78,8 @@ func SQLRoutePattern(prefix string) string {
 type SQLRequest struct {
 	SQL     string `json:"sql"`
 	MaxRows *int   `json:"max_rows,omitempty"`
+	Start   string `json:"start,omitempty"`
+	End     string `json:"end,omitempty"`
 }
 
 // SQLResponse is the JSON success body for POST /{ns}/sql.
@@ -83,6 +88,35 @@ type SQLResponse struct {
 	Rows      [][]any  `json:"rows"`
 	RowCount  int      `json:"row_count"`
 	Truncated bool     `json:"truncated"`
+}
+
+func sqlWindowStart(r *http.Request, req SQLRequest) time.Time {
+	return parseOptionalQueryTime(firstNonEmpty(r.URL.Query().Get("start"), req.Start))
+}
+
+func sqlWindowEnd(r *http.Request, req SQLRequest) time.Time {
+	return parseOptionalQueryTime(firstNonEmpty(r.URL.Query().Get("end"), req.End))
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+func parseOptionalQueryTime(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts.UTC()
+	}
+	if ts, err := parseTimeParam(s, time.Time{}); err == nil {
+		return ts.UTC()
+	}
+	return time.Time{}
 }
 
 // SQLHandler serves POST /{ns}/sql in a per-request tenant sandbox.
@@ -185,7 +219,12 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			return
 		}
 
-		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, cfg.HotOnly, sandboxLimits{
+		conn, cleanup, err := prepareSandboxConn(ctx, absRoot, metricsOpenOpts{
+			HotOnly:   cfg.HotOnly,
+			Start:     sqlWindowStart(r, req),
+			End:       sqlWindowEnd(r, req),
+			HotWindow: cfg.HotWindow,
+		}, sandboxLimits{
 			MemoryLimit: cfg.MemoryLimit,
 			Threads:     cfg.Threads,
 		})
@@ -232,11 +271,15 @@ func wantsArrowStream(r *http.Request) bool {
 // fail the whole query when a stale logs parquet path disappears mid-flight
 // (retention/compaction), and metrics never need those files.
 func prepareMetricsSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, limits sandboxLimits) (*sql.Conn, func(), error) {
+	return prepareMetricsSandbox(ctx, tenantRoot, metricsOpenOpts{HotOnly: hotOnly}, limits)
+}
+
+func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
 		return nil, nil, err
 	}
-	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, hotOnly)
+	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, opts)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -250,12 +293,12 @@ func prepareMetricsSandboxConn(ctx context.Context, tenantRoot string, hotOnly b
 }
 
 // prepareSandboxConn opens the /sql sandbox: metrics + logs views.
-func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, limits sandboxLimits) (*sql.Conn, func(), error) {
+func prepareSandboxConn(ctx context.Context, tenantRoot string, opts metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
 	if err != nil {
 		return nil, nil, err
 	}
-	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, hotOnly)
+	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, opts)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -289,8 +332,8 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, hotOnly bool, li
 	return conn, cleanup, nil
 }
 
-func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, hotOnly bool) (hotPins, error) {
-	sources, err := collectMetricsSources(tenantRoot, hotOnly)
+func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, opts metricsOpenOpts) (hotPins, error) {
+	sources, err := collectMetricsSources(tenantRoot, opts)
 	if err != nil {
 		return hotPins{}, err
 	}
@@ -678,36 +721,21 @@ func stripStringLiterals(s string) string {
 }
 
 func collectSafeParquetPaths(absTenantRoot, tenantRoot string, hotOnly bool) ([]string, error) {
-	root, err := filepath.EvalSymlinks(absTenantRoot)
+	sources, err := collectMetricsSources(tenantRoot, metricsOpenOpts{HotOnly: hotOnly})
 	if err != nil {
-		root = absTenantRoot
-	}
-	root = filepath.Clean(root)
-
-	var paths []string
-	snapshot := filepath.Join(tenantRoot, hotSnapshotRel)
-	if ok, err := safeTenantParquetFile(root, snapshot); err != nil {
 		return nil, err
-	} else if ok {
-		paths = append(paths, snapshot)
 	}
-	if hotOnly {
-		return paths, nil
-	}
-	for tier := 0; tier < maxTier; tier++ {
-		glob := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier), "*.parquet")
-		matches, err := filepath.Glob(glob)
+	var paths []string
+	for _, s := range sources {
+		if filepath.Ext(s.Path) != ".parquet" {
+			continue
+		}
+		ok, err := safeTenantParquetFile(absTenantRoot, s.Path)
 		if err != nil {
 			return nil, err
 		}
-		for _, match := range matches {
-			ok, err := safeTenantParquetFile(root, match)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				paths = append(paths, match)
-			}
+		if ok {
+			paths = append(paths, s.Path)
 		}
 	}
 	return paths, nil

@@ -433,6 +433,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		RoutePrefix: cfg.routePrefix,
 		ExposeSQL:   query.ExposeSQLFromEnv(),
 		HotOnly:     cfg.queryHotOnly,
+		HotWindow:   cfg.hotWindow,
 	}
 
 	if serveIngest {
@@ -474,6 +475,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 				MaxBodyBytes: cfg.sqlAPIMaxBodyBytes,
 				HotOnly:      cfg.queryHotOnly,
 				RunJobs:      cfg.runJobs,
+				HotWindow:    cfg.hotWindow,
 			}
 			h := query.SQLHandler(sqlCfg, eng, logger)
 			h = queue.Middleware(sqlLimiter, h)
@@ -489,6 +491,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 			promqlCfg := query.PromQLConfigFromEnv(cfg.dataDir, cfg.routePrefix, cfg.duckdbMemoryLimit, cfg.queryThreads())
 			promqlCfg.HotOnly = cfg.queryHotOnly
 			promqlCfg.RunJobs = cfg.runJobs
+			promqlCfg.HotWindow = cfg.hotWindow
 			ph := query.PromQLHandler(&promqlCfg, eng, logger)
 			// PromQL is a heavy read like /sql, so it shares the same in-flight
 			// limiter and the query RBAC action; a cluster client also guards
