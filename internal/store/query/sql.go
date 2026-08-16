@@ -349,7 +349,7 @@ func bindMaterializationViews(ctx context.Context, conn *sql.Conn, tenantRoot st
 			return err
 		}
 		viewSQL := materialize.ViewSQL(files)
-		//nolint:gosec // G202: name is Validate()'d [a-z][a-z0-9_]*; viewSQL is listing-built.
+		//nolint:gosec // G202: name is filesystem-safe [a-z][a-z0-9_]*; viewSQL is listing-built.
 		q := "CREATE VIEW mat_" + name + " AS " + viewSQL
 		if _, err := conn.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("create mat_%s: %w", name, err)
