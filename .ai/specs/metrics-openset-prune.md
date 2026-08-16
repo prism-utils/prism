@@ -4,12 +4,12 @@
   Loop state for prism#141. Process: .ai/workflows/feature-loop.md
 -->
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/metrics-openset-prune-baa6`
 - **Issue:** [prism#141](https://github.com/prism-utils/prism/issues/141)
-- **Owner phase:** reviewer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** store query / merge (Phase 4-adjacent; query open-set)
 
 ## 1. Task
@@ -116,16 +116,18 @@ _(reviewer owns §6)_
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-<!-- Reviewer appends one actionable line under any gate it unchecks. Set
-     Status: ALL_OK only when every box above is checked; otherwise
-     Status: CHANGES_REQUESTED. -->
-
-_(empty until first review)_
+- History: `test(store/query): metrics open-set prune…` precedes `feat(store/query): prune metrics open-set…` (TDD holds).
+- Re-ran `make lint test` (green). `make store-integration` and `make e2e` green. Compose `make integration` skipped: Docker daemon not reachable in this environment.
+- Gate 1: `metricsmeta` is a leaf catalog package (log-catalog analog); query CPU stays on shared RO per DESIGN.md ADR.
+- Gate 2: prune A/B/C, overlap, hot_only, process hot-only, auto-hot vs 24h, 7×1h partitions, skipped paths absent from union SQL, compacted skip, unknown-bounds skip, empty parquet known-empty.
+- Gate 3: STORE.md / CONFIG.md / DESIGN.md describe open-set, auto-hot from snapshot stats, and “shared executes.”
+- Gate 4: new comments describe local intent (fail closed, catalog bump); no file/symbol pointers.
+- Unrelated `test(store/authz)` mtime bump unblocks `TestReloadAppliesValidEdit` on coarse-mtime filesystems; not product behavior.
