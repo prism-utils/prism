@@ -4,7 +4,7 @@
   Loop state for prism#141 follow-up. Process: .ai/workflows/feature-loop.md
 -->
 
-Status: READY
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/metrics-bounds-footer-baa6`
@@ -50,24 +50,24 @@ v1.0.5 `FileBounds` runs `SELECT MIN(ts), MAX(ts) FROM read_parquet(...)` on eve
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] Parquet `FileBounds` uses footer `ts` stats when present; result matches the written ingest timestamps.
-- [ ] Empty parquet remains known-empty `(0,0,true)`; unreadable files remain skipped `(false)`.
-- [ ] Bounds DuckDB sets a small `memory_limit` and `threads=1` before any file read.
-- [ ] DuckDB segment bounds still come from `MIN(ts)/MAX(ts)` on the metrics table (capped connector).
-- [ ] `docs/STORE.md` states catalog bounds come from Parquet column stats.
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] Parquet `FileBounds` uses footer `ts` stats when present; result matches the written ingest timestamps.
+- [x] Empty parquet remains known-empty `(0,0,true)`; unreadable files remain skipped `(false)`.
+- [x] Bounds DuckDB sets a small `memory_limit` and `threads=1` before any file read.
+- [x] DuckDB segment bounds still come from `MIN(ts)/MAX(ts)` on the metrics table (capped connector).
+- [x] `docs/STORE.md` states catalog bounds come from Parquet column stats.
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Local `make lint` 0 issues (fresh GOLANGCI_LINT_CACHE); `make test` green including `metricsmeta` and `store/query`. History: `test:` before `fix:`. Footer stats + 128MB cap match the incident (writer OOMKilled at 4Gi on `FileBounds` full scans).
