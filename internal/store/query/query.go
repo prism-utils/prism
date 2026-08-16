@@ -38,8 +38,9 @@ const (
 
 // Builder constructs unified-view SQL without union_by_name or filename.
 type Builder struct {
-	DataDir string
-	HotOnly bool
+	DataDir   string
+	HotOnly   bool
+	HotWindow time.Duration
 }
 
 // BuildSQL returns parameterized SQL and args for the unified view.
@@ -71,44 +72,39 @@ func (b *Builder) buildSQL(ctx context.Context, req *Request, db *sql.DB) (strin
 	}
 
 	if !b.HotOnly {
-		for tier := 0; tier < maxTier; tier++ {
-			dir := filepath.Join(tenantRoot, "tiers", fmt.Sprintf("L%d", tier))
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				if !os.IsNotExist(err) {
-					return "", nil, err
-				}
+		sources, err := collectMetricsSources(ctx, tenantRoot, &metricsOpenOpts{
+			Start:     req.Start,
+			End:       req.End,
+			HotWindow: b.HotWindow,
+		})
+		if err != nil {
+			return "", nil, err
+		}
+		for _, s := range sources {
+			slash := filepath.ToSlash(s.Path)
+			if strings.Contains(slash, "/hot/") {
 				continue
 			}
-			for _, e := range entries {
-				if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			ext := filepath.Ext(s.Path)
+			if ext == ".duckdb" {
+				if db == nil {
 					continue
 				}
-				ext := filepath.Ext(e.Name())
-				if ext != ".parquet" && ext != ".duckdb" {
-					continue
-				}
-				p := filepath.Join(dir, e.Name())
-				if ext == ".duckdb" {
-					if db == nil {
-						continue
-					}
-					alias := sanitizeAlias(fmt.Sprintf("qseg_%d_%s", tier, strings.TrimSuffix(e.Name(), ext)))
-					if _, err := db.ExecContext(ctx, fmt.Sprintf(
-						"ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(p), alias,
-					)); err != nil {
-						return "", nil, fmt.Errorf("query: attach %s: %w", p, err)
-					}
-					parts = append(parts, fmt.Sprintf(
-						"SELECT * FROM %s.metrics WHERE ts >= ? AND ts < ?", alias,
-					))
-					continue
+				alias := sanitizeAlias(fmt.Sprintf("qseg_%s", strings.TrimSuffix(filepath.Base(s.Path), ext)))
+				if _, err := db.ExecContext(ctx, fmt.Sprintf(
+					"ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(s.Path), alias,
+				)); err != nil {
+					return "", nil, fmt.Errorf("query: attach %s: %w", s.Path, err)
 				}
 				parts = append(parts, fmt.Sprintf(
-					"SELECT * FROM read_parquet('%s') WHERE ts >= ? AND ts < ?",
-					layout.ToSlash(p),
+					"SELECT * FROM %s.metrics WHERE ts >= ? AND ts < ?", alias,
 				))
+				continue
 			}
+			parts = append(parts, fmt.Sprintf(
+				"SELECT * FROM read_parquet('%s') WHERE ts >= ? AND ts < ?",
+				layout.ToSlash(s.Path),
+			))
 		}
 
 		if step := pickRollupStep(req.Step, req.Start, req.End); step != "" {

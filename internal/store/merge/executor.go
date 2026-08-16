@@ -10,6 +10,7 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/metricsmeta"
 	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
@@ -127,6 +128,9 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	}
 	if err := retireSources(action.Sources, now, x.cfg.DeleteGrace); err != nil {
 		return Segment{}, err
+	}
+	if err := metricsmeta.SyncAfterChange(context.Background(), x.cfg.DataDir, x.cfg.Tenant); err != nil {
+		return Segment{}, fmt.Errorf("merge: metrics catalog: %w", err)
 	}
 	return seg, nil
 }

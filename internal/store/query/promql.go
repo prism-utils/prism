@@ -35,6 +35,9 @@ type PromQLConfig struct {
 	Threads     int
 	// HotOnly restricts the sandbox metrics view to the hot snapshot.
 	HotOnly bool
+	// HotWindow is the process hot-window duration, used only when snapshot
+	// min/max stats are missing so auto-hot still has a coverage estimate.
+	HotWindow time.Duration
 	// RunJobs mirrors the process-wide flag: a writer flushes a fresh hot
 	// snapshot before serving; a read-only replica serves the writer's snapshot
 	// as-is and never writes to the tenant data dir.

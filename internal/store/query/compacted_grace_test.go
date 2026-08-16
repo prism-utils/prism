@@ -1,11 +1,14 @@
 package query
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
 const graceTenant = "user-gracequery-apps"
@@ -69,11 +72,12 @@ func TestCollectMetricsSourcesSkipsCompactedSegments(t *testing.T) {
 	tierDir := layout.TierDir(dataDir, graceTenant, 0)
 	live := filepath.Join(tierDir, "1786140844863329878-aaaaaaaa.parquet")
 	compacted := filepath.Join(tierDir, "1786140844863329879-bbbbbbbb.parquet")
-	writeGraceFixture(t, live)
-	writeGraceFixture(t, compacted)
+	ts := time.Unix(1_700_000_000, 0).UTC()
+	testparquet.WriteSegmentWithTs(t, live, ts, "up", 1)
+	testparquet.WriteSegmentWithTs(t, compacted, ts, "up", 1)
 	markGraceCompacted(t, compacted)
 
-	sources, err := collectMetricsSources(resolvedTenantRoot(t, dataDir, graceTenant), false)
+	sources, err := collectMetricsSources(context.Background(), resolvedTenantRoot(t, dataDir, graceTenant), &metricsOpenOpts{})
 	if err != nil {
 		t.Fatalf("collectMetricsSources: %v", err)
 	}

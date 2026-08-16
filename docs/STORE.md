@@ -447,11 +447,19 @@ DATA_DIR/
     engine.duckdb          # embedded DuckDB catalog (hot + view definitions)
     hot/                   # current hot-window Parquet snapshot
     tiers/
+      _manifest.json       # metrics open-set catalog (per-file min/max ts)
+      .meta_generation     # bump stamp so planners rescan after flush/merge
       L0/ … L7/            # immutable merged segments, coarsest at L7
     rollups/
       1m/  5m/  1h/        # time-bucket aggregate Parquet
     .metering.json         # on-disk usage / compaction metering (operator-facing)
 ```
+
+Each new L0 flush is one hot-window of rows (default 10 minutes), catalogued with
+`min_ts_ns` / `max_ts_ns`. Existing large files stay until merge; planners skip
+any file whose `[min_ts, max_ts]` misses the query range. Grafana PromQL and
+`/sql` always execute on this process (shared read-only replica or standalone) —
+tenant `prism-cache` does not serve Grafana.
 
 Each tenant namespace must satisfy the validators in `internal/store/tenant`
 (`^[a-z0-9][a-z0-9._-]{0,62}$`). Artifact types follow the output-contract
@@ -628,9 +636,26 @@ guards; not for production).
 When `QUERY_HOT_ONLY=true`, the union includes only parts (1)–(2) below; tier
 and rollup Parquet reads are skipped for lower latency on freshness-only
 queries. The same flag also constrains the **SQL API sandbox** (`POST /{tenant}/sql`):
-the `metrics` view unions only `hot/current.parquet` and skips `tiers/L*/*.parquet`.
-By default the structured query unions hot + tiers + rollups; the `/sql` sandbox
-unions hot + tiers only (never rollups — see "When rollups help").
+the `metrics` view unions only the hot snapshot and skips `tiers/L*`. A request
+`hot_only=true` can only **tighten** (never widen a process that is already
+hot-only). `hot_only=false` still time-prunes overlapping files.
+
+**Auto-hot:** when the query `[start, end)` sits entirely inside the hot
+snapshot’s actual `[min_ts, max_ts]` (parquet/DuckDB stats or the metrics
+manifest), PromQL/`/sql`/`/query` open only that snapshot even without
+`hot_only`. Coverage comes from the **file**, not the reader’s `HOT_WINDOW_*`
+(a replica often has an unused 24h env while the writer flushes every 10m).
+`HOT_WINDOW_*` is a fallback only when stats are missing.
+
+**Open-set prune:** PromQL, `/sql` (when `start`/`end` are supplied), and
+structured `/query` never `open()` a metrics file whose `[min_ts, max_ts]`
+misses `[start, end)` (`MaxTs < start || MinTs >= end`). Files whose bounds
+cannot be read are skipped and logged. Grafana `ViewSQL` (static DuckDB
+`initSQL`) remains a full live-set union — it has no per-query window.
+
+By default the structured query unions hot + overlapping tiers + rollups; the
+`/sql` sandbox unions hot + overlapping tiers only (never rollups — see "When
+rollups help").
 
 ### Union SQL shape
 
@@ -638,7 +663,9 @@ unions hot + tiers only (never rollups — see "When rollups help").
 
 1. `hot_current` — `ts >= ? AND ts < ?`
 2. `hot_prev` — same
-3. each present tier `L0`…`L7` — `read_parquet('<tenant>/tiers/L{n}/*.parquet')` filtered on `ts`
+3. each overlapping live tier file `L0`…`L7` — `read_parquet('<abs path>')` (or
+   read-only `ATTACH` for `.duckdb`), filtered on `ts`. Directory globs are not
+   used; the metrics catalog supplies the open set.
 4. optional rollup — `read_parquet('<tenant>/rollups/<step>/*.parquet')` projected to the row shape, filtered on `bucket`
 
 Wrapped as `SELECT * FROM (…) ORDER BY ts`. **Fixed schema only:** no
@@ -715,7 +742,11 @@ Read-only **arbitrary SQL** over a single tenant's metrics, RBAC-guarded
 
 `POST <ROUTE_PREFIX>/{tenant}/sql`
 
-Request JSON: `{"sql": "<single SELECT or WITH>", "max_rows": <optional int>}`.
+Request JSON: `{"sql": "<single SELECT or WITH>", "max_rows": <optional int>, "start": "<optional RFC3339>", "end": "<optional RFC3339>"}`.
+`start` / `end` may also be query parameters (RFC3339 or Prometheus unix). When
+both are present, the `metrics` view opens only overlapping hot/tier files.
+When omitted, `/sql` does not time-prune (an unbounded `SELECT` is valid);
+`QUERY_HOT_ONLY` and request `hot_only` still apply.
 
 Success `200 application/json`:
 
@@ -788,11 +819,11 @@ When summary windows are present (`count` column), prefer
 `SUM(COALESCE(count, 1))` so each raw row counts as 1 and summary rows use
 their group count.
 
-The `metrics` relation is built from the tenant's **`hot/current.parquet`** snapshot (exported per request)
-plus present **`tiers/L*/*.parquet`** globs when `QUERY_HOT_ONLY` is off — same
-union shape as structured query / Grafana view SQL. With `QUERY_HOT_ONLY=true`,
-only the hot snapshot is included. Visibility: committed hot (as of snapshot) + all
-tiers (tiers omitted in hot-only mode).
+The `metrics` relation is built from the tenant's **`hot/current.parquet`** (or
+`.duckdb`) snapshot plus **overlapping** live `tiers/L*` files when
+`QUERY_HOT_ONLY` is off. Directory-wide globs are not used. Auto-hot (query
+range inside snapshot coverage) and request `hot_only` restrict the view to the
+snapshot. Grafana static `ViewSQL` still unions the full live set.
 
 ### Sandbox guarantees
 
@@ -906,6 +937,12 @@ skipping cold Parquet tiers. It can only **tighten** scope: on a store already
 running with `QUERY_HOT_ONLY=true` the param is a no-op (a request can never
 widen back to the tiers). `prism-alert` sets it on every evaluation so recurring
 rules stay cheap and never touch cold storage (see [`ALERTING.md`](ALERTING.md)).
+
+PromQL also **time-prunes** the sandbox open set: files whose catalog min/max
+miss `[start, end)` are not opened. Instant/range windows are expanded by
+`PROMQL_LOOKBACK_DELTA_SECONDS` and by the expression’s longest range/subquery
+selector (so `rate(x[5m])` still sees enough samples). When the expanded window
+sits inside hot-snapshot coverage, only the snapshot is opened (auto-hot).
 
 Responses use the exact Prometheus envelope: `{"status":"success","data":{"resultType":"vector|matrix|scalar|string","result":…}}`;
 errors are `{"status":"error","errorType":"…","error":"…"}`.

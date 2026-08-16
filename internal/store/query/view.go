@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func ViewSQL(dataDir, tenant string) (string, error) {
 		return "", fmt.Errorf("query: tenant root: %w", err)
 	}
 
-	sources, err := collectMetricsSources(tenantRoot, false)
+	sources, err := collectMetricsSources(context.Background(), tenantRoot, &metricsOpenOpts{})
 	if err != nil {
 		return "", err
 	}

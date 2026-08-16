@@ -245,7 +245,7 @@ func TestSQLSandboxUnlinksHotPins(t *testing.T) {
 	tenantRoot, hotDir := newHotTenant(t)
 	writeMultiRowGroupHotParquet(t, filepath.Join(hotDir, "current.parquet"), 4)
 
-	conn, cleanup, err := prepareSandboxConn(ctx, tenantRoot, true, sandboxLimits{})
+	conn, cleanup, err := prepareSandboxConn(ctx, tenantRoot, &metricsOpenOpts{HotOnly: true}, sandboxLimits{})
 	if err != nil {
 		t.Fatalf("prepare sql sandbox: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestCollectMetricsSourcesIgnoresReadPins(t *testing.T) {
 	pin := filepath.Join(hotDir, ".read-deadbeef.parquet")
 	writeEmptyHotParquet(t, pin)
 
-	sources, err := collectMetricsSources(tenantRoot, true)
+	sources, err := collectMetricsSources(context.Background(), tenantRoot, &metricsOpenOpts{HotOnly: true})
 	if err != nil {
 		t.Fatalf("collectMetricsSources: %v", err)
 	}

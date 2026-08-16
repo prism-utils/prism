@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/logmeta"
 	"github.com/prism-utils/prism/internal/store/merge"
+	"github.com/prism-utils/prism/internal/store/metricsmeta"
 	"github.com/prism-utils/prism/internal/store/rollup"
 	"github.com/prism-utils/prism/internal/store/segformat"
 	"github.com/prism-utils/prism/internal/store/stats"
@@ -317,6 +319,9 @@ func (r *Runner) tickRetention() error {
 				if err := removePath(del.Segment.Path); err != nil {
 					r.log.Error("retention delete segment", "tenant", tenant, "path", del.Segment.Path, "err", err)
 				}
+			}
+			if err := metricsmeta.SyncAfterChange(context.Background(), r.cfg.DataDir, tenant); err != nil {
+				r.log.Error("retention metrics catalog", "tenant", tenant, "err", err)
 			}
 		}
 		r.deleteExpiredRollups(tenant, cutoff)

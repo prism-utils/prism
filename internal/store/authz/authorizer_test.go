@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prism-utils/prism/internal/store/authz"
 )
@@ -115,6 +116,14 @@ func TestAuthorizedTenantsStats(t *testing.T) {
 	}
 }
 
+func bumpPolicyMtime(t *testing.T, path string) {
+	t.Helper()
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReloadKeepsOldOnBadEdit(t *testing.T) {
 	path := writePolicy(t, samplePolicy())
 	a, err := authz.NewAuthorizer(context.Background(), authz.Config{PolicyFile: path, ReloadSeconds: 3600})
@@ -128,6 +137,7 @@ func TestReloadKeepsOldOnBadEdit(t *testing.T) {
 	if err := os.WriteFile(path, []byte("bindings: [{subject: x, role: bad, tenants: ['a']}]"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bumpPolicyMtime(t, path)
 	a.ReloadNow()
 	if got := a.Authorize("alice@corp", authz.ActionQuery, tenantA); got != authz.DecisionAllow {
 		t.Fatalf("after bad reload = %v, want prior policy", got)
@@ -145,6 +155,7 @@ func TestReloadAppliesValidEdit(t *testing.T) {
 	if err := os.WriteFile(path, []byte(newBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bumpPolicyMtime(t, path)
 	a.ReloadNow()
 	if got := a.Authorize("alice@corp", authz.ActionIngest, tenantA); got != authz.DecisionAllow {
 		t.Fatalf("after reload ingest = %v", got)
