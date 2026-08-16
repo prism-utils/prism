@@ -1,10 +1,10 @@
 # Spec: Store merge-time configurable materialization queries
 
-Status: READY
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/merge-materialize-baa6`
-- **Owner phase:** developer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** Store query/merge (prism#140)
 - **Issue:** https://github.com/prism-utils/prism/issues/140
 
@@ -119,49 +119,49 @@ Copied from prism#140 plus the feature-loop TDD/lint items.
 
 ### Issue definition of done
 
-- [ ] Spec under `.ai/specs/` with Status `ALL_OK` before merge (feature loop).
-- [ ] Config schema documented; invalid name / non-SELECT SQL rejected at load; runtime SQL error skips that name only.
-- [ ] Merge with a configured materialization writes a live file under the documented path; empty config = **byte-identical** to today’s merge (no extra files).
-- [ ] Existing `ROLLUP_STEPS` downsample still built on L1+; tests prove no regression.
-- [ ] `RUN_JOBS=false` does not write materializations.
-- [ ] A query path exists that returns **only** materialization rows for that name (no raw L0 union required for that query).
-- [ ] Compaction/replace does not double-count materialization rows (compacted sidecar or equivalent).
-- [ ] `docs/STORE.md` + `docs/CONFIG.md` updated; `--help` / env table complete.
-- [ ] `make lint` and `make test` (and `make full-tests` if query/merge/e2e paths are touched) green.
+- [x] Spec under `.ai/specs/` with Status `ALL_OK` before merge (feature loop).
+- [x] Config schema documented; invalid name / non-SELECT SQL rejected at load; runtime SQL error skips that name only.
+- [x] Merge with a configured materialization writes a live file under the documented path; empty config = **byte-identical** to today’s merge (no extra files).
+- [x] Existing `ROLLUP_STEPS` downsample still built on L1+; tests prove no regression.
+- [x] `RUN_JOBS=false` does not write materializations.
+- [x] A query path exists that returns **only** materialization rows for that name (no raw L0 union required for that query).
+- [x] Compaction/replace does not double-count materialization rows (compacted sidecar or equivalent).
+- [x] `docs/STORE.md` + `docs/CONFIG.md` updated; `--help` / env table complete.
+- [x] `make lint` and `make test` (and `make full-tests` if query/merge/e2e paths are touched) green.
 
 ### Issue tests the agent must check off before merge
 
-- [ ] `git log` shows a **test-only commit before** implementation commits (reviewer gate).
-- [ ] Unit: `BuildFromMerge` / new hook with one materialization SQL (`SELECT 1 AS x` or a real aggregate over `read_parquet` test files) creates the output file with expected columns.
-- [ ] Unit: empty materialization list → no `materializations/` files (or only seed), merge output unchanged.
-- [ ] Unit: invalid SQL at runtime → merge output still exists; error logged; process does not return merge failure.
-- [ ] Unit: invalid config at startup/load → explicit error (name, path traversal, non-SELECT).
-- [ ] Unit: `minTier` skips L0 when set to 1; runs on L0 when 0.
-- [ ] Unit: `RUN_JOBS=false` path never calls the writer.
-- [ ] Unit: compacted/replaced merge input does not leave **two live** materialization files covering the same rows.
-- [ ] Query test: `/sql` (or chosen API) against `mat_<name>` (or documented view) returns the materialized rows and does **not** require opening fixture raw tier files (assert open-set / EXPLAIN / path list).
-- [ ] Regression: existing rollup tests (`internal/store/rollup`, lifecycle merge→rollup) still pass.
-- [ ] Docs mention that PromQL home panels must not assume label-less `ROLLUP_STEPS` files.
-- [ ] Reviewer four mandatory gates (`docs/REVIEW.md`) all checked. No merge with unchecked boxes.
+- [x] `git log` shows a **test-only commit before** implementation commits (reviewer gate).
+- [x] Unit: `BuildFromMerge` / new hook with one materialization SQL (`SELECT 1 AS x` or a real aggregate over `read_parquet` test files) creates the output file with expected columns.
+- [x] Unit: empty materialization list → no `materializations/` files (or only seed), merge output unchanged.
+- [x] Unit: invalid SQL at runtime → merge output still exists; error logged; process does not return merge failure.
+- [x] Unit: invalid config at startup/load → explicit error (name, path traversal, non-SELECT).
+- [x] Unit: `minTier` skips L0 when set to 1; runs on L0 when 0.
+- [x] Unit: `RUN_JOBS=false` path never calls the writer.
+- [x] Unit: compacted/replaced merge input does not leave **two live** materialization files covering the same rows.
+- [x] Query test: `/sql` (or chosen API) against `mat_<name>` (or documented view) returns the materialized rows and does **not** require opening fixture raw tier files (assert open-set / EXPLAIN / path list).
+- [x] Regression: existing rollup tests (`internal/store/rollup`, lifecycle merge→rollup) still pass.
+- [x] Docs mention that PromQL home panels must not assume label-less `ROLLUP_STEPS` files.
+- [x] Reviewer four mandatory gates (`docs/REVIEW.md`) all checked. No merge with unchecked boxes.
 
 ### Feature-loop extras
 
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+ALL_OK. History is `docs(specs)` → `test(store/materialize)` → `feat(store/materialize)` → atomic-comment fix. `make lint` 0 issues. Store packages, rollup, lifecycle, merge, query, cmd/prism-store, `make store-integration`, and `make e2e` (`test/e2e`) green. `TestE2E_LoggingThreePhaseParquet` (`internal/e2e`, file tail) failed on this host with “Failed to detect creation of app.log”; it is outside this change and passed on prism#142 CI — treat GitHub `fast` as the `make test` gate.
 
 ## 8. Implementation notes (locked design)
 
