@@ -801,6 +801,7 @@ see [`STORE.md`](STORE.md).
 | `MAX_OPEN_TENANTS` | int | `32` | LRU cap on concurrently open per-tenant DuckDB engines (`engine.duckdb`). |
 | `MAX_SEGMENT_BYTES` | int64 (bytes) | `2147483648` | Segment seal threshold (2 GiB); sealed segments (`Bytes ≥` this) are never merge inputs for metrics tiers **or** logs landing/tiers. Once a merge is triggered, unsealed candidates pack toward this budget. |
 | `MAX_TIER` | int | `8` | Highest tier directory scanned (`L0`…`L8`). |
+| `MATERIALIZATIONS_FILE` | path | _(empty)_ | YAML list of named merge-time SQL materializations. Unset/empty = off (byte-identical merge). Invalid name or non-SELECT SQL fails start. Runtime SQL errors skip that name. See [`STORE.md`](STORE.md#merge-time-materializations-internalstorematerialize). |
 | `MERGE_TICK_SECONDS` | int (seconds) | `60` | Tier merge ticker interval. |
 | `METRICS_ENABLED` | bool | `true` | Prometheus exporter. When `false`, no collectors are registered and the scrape path returns `404`. |
 | `METRICS_PATH` | string | `/metrics` | Scrape path, mounted on every HTTP plane next to `/healthz`. A value that is not an absolute path falls back to the default. |
@@ -819,7 +820,7 @@ see [`STORE.md`](STORE.md).
 | `RETENTION_DAYS` | int | `15` | Delete metrics tier segments, rollups, and log windows strictly older than this window. Empty/corrupt rollups are deleted without aborting the tick; per-tenant errors are logged and skipped. |
 | `RETENTION_TICK_HOURS` | int (hours) | `1` | Retention ticker interval when `RETENTION_TICK_SECONDS` is unset. |
 | `RETENTION_TICK_SECONDS` | int (seconds) | _(unset)_ | Retention ticker in seconds; overrides hours when set to a positive integer. |
-| `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. |
+| `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. Label-less; PromQL and `/sql` do not read them. Use `MATERIALIZATIONS_FILE` for Grafana-queryable merge-time SQL. |
 | `ROUTE_PREFIX` | string | _(empty)_ | Optional path prefix for ingest/query/SQL routes (e.g. `/prism-proxy`). |
 | `RUN_JOBS` | bool | `true` | When `false`, skip background maintenance (snapshot, flush, merge, rollups, retention). Ingest/query still run. |
 | `SEGMENTS_PER_TIER` | int | `6` | Minimum **unsealed** live segments at a tier (or logs landing) before merge compaction **starts** (trigger only). Once triggered, the planner packs toward `MAX_SEGMENT_BYTES` (up to a derived max-merge-at-once ≈ max/floor), shrinking the candidate set when the sum would exceed the seal budget. For logs landing this is the count arm of the refresh trigger; `LOGS_REFRESH_INTERVAL` is the age arm, and whichever fires first wins. |

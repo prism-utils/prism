@@ -164,6 +164,16 @@ func PurgeCompacted(dataDir, tenant string, maxTier int, now time.Time) (int, er
 			dirs = append(dirs, layout.LogsTierDir(dataDir, tenant, artifact, tier))
 		}
 	}
+	matRoot := filepath.Join(dataDir, tenant, "materializations")
+	if ents, err := os.ReadDir(matRoot); err == nil {
+		for _, e := range ents {
+			if e.IsDir() {
+				dirs = append(dirs, filepath.Join(matRoot, e.Name()))
+			}
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
 	purged := 0
 	for _, dir := range dirs {
 		n, err := purgeCompactedDir(dir, now)

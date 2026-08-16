@@ -33,6 +33,9 @@
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
 // Grafana print-view-sql is unaffected.
+// Merge-time materializations: MATERIALIZATIONS_FILE points at a YAML list of
+// named SELECT queries run after each merge (see docs/STORE.md). Unset = off.
+// Invalid file/SQL at load fails start; a runtime SQL error skips that name.
 //
 // Deployment MODE (default standalone):
 //   - standalone — self-contained store (engine, ingest, jobs).
@@ -67,6 +70,7 @@ import (
 	"github.com/prism-utils/prism/internal/store/engine"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	"github.com/prism-utils/prism/internal/store/lifecycle"
+	"github.com/prism-utils/prism/internal/store/materialize"
 	"github.com/prism-utils/prism/internal/store/metrics"
 	"github.com/prism-utils/prism/internal/store/query"
 	"github.com/prism-utils/prism/internal/store/queue"
@@ -176,7 +180,9 @@ type serverConfig struct {
 	// metricsReg is the process-wide exporter. Both HTTP planes share one
 	// registry so a scrape reports the whole process, not one listener's slice
 	// of it.
-	metricsReg *metrics.Registry
+	metricsReg           *metrics.Registry
+	materializationsFile string
+	materializations     materialize.File
 }
 
 func loadConfig() serverConfig {
@@ -229,6 +235,7 @@ func loadConfig() serverConfig {
 		hotSegmentFormat:     strings.ToLower(envOr("HOT_SEGMENT_FORMAT", "parquet")),
 		mergeSegmentFormat:   strings.ToLower(envOr("MERGE_SEGMENT_FORMAT", "parquet")),
 		duckdbStorageVersion: envOr("DUCKDB_STORAGE_VERSION", segformat.DefaultStorageVersion),
+		materializationsFile: strings.TrimSpace(os.Getenv("MATERIALIZATIONS_FILE")),
 		metrics: metrics.Config{
 			Enabled:   envBool("METRICS_ENABLED", true),
 			Path:      envOr("METRICS_PATH", metrics.DefaultPath),
@@ -466,16 +473,17 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 
 		if cfg.sqlAPIEnabled {
 			sqlCfg := &query.SQLConfig{
-				DataDir:      cfg.dataDir,
-				RoutePrefix:  cfg.routePrefix,
-				MaxRows:      cfg.sqlAPIMaxRows,
-				Timeout:      cfg.sqlAPITimeout,
-				MemoryLimit:  cfg.duckdbMemoryLimit,
-				Threads:      cfg.queryThreads(),
-				MaxBodyBytes: cfg.sqlAPIMaxBodyBytes,
-				HotOnly:      cfg.queryHotOnly,
-				RunJobs:      cfg.runJobs,
-				HotWindow:    cfg.hotWindow,
+				DataDir:              cfg.dataDir,
+				RoutePrefix:          cfg.routePrefix,
+				MaxRows:              cfg.sqlAPIMaxRows,
+				Timeout:              cfg.sqlAPITimeout,
+				MemoryLimit:          cfg.duckdbMemoryLimit,
+				Threads:              cfg.queryThreads(),
+				MaxBodyBytes:         cfg.sqlAPIMaxBodyBytes,
+				HotOnly:              cfg.queryHotOnly,
+				RunJobs:              cfg.runJobs,
+				HotWindow:            cfg.hotWindow,
+				MaterializationNames: cfg.materializations.Names(),
 			}
 			h := query.SQLHandler(sqlCfg, eng, logger)
 			h = queue.Middleware(sqlLimiter, h)
@@ -682,6 +690,15 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		return err
 	}
 
+	mats, err := materialize.Load(cfg.materializationsFile)
+	if err != nil {
+		return err
+	}
+	if err := mats.Validate(); err != nil {
+		return err
+	}
+	cfg.materializations = mats
+
 	flightMode, err := flightIngestAuthMode(cfg)
 	if err != nil {
 		return fmt.Errorf("auth mode: %w", err)
@@ -732,6 +749,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		DuckDBStorageVersion:  cfg.duckdbStorageVersion,
 		Logger:                logger,
 		Recorder:              cfg.metricsReg,
+		Materializations:      cfg.materializations,
 	}, eng, now)
 
 	if cfg.runJobs {

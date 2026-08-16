@@ -19,16 +19,16 @@ import (
 func TestRunWritesParquetWithExpectedColumn(t *testing.T) {
 	dataDir, tenant, dest := mergeFixture(t)
 	cfg := RunConfig{
-		DataDir:   dataDir,
-		Tenant:    tenant,
-		DestPath:  dest,
-		DestTier:  0,
-		RunJobs:   true,
-		Now:       time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC),
-		Items:     []Item{{Name: "last_events", SQL: "SELECT 1 AS x FROM merge_output", On: "metrics"}},
-		Logger:    slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		DataDir:  dataDir,
+		Tenant:   tenant,
+		DestPath: dest,
+		DestTier: 0,
+		RunJobs:  true,
+		Now:      time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC),
+		Items:    []Item{{Name: "last_events", SQL: "SELECT 1 AS x FROM merge_output", On: "metrics"}},
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
-	if err := Run(context.Background(), cfg); err != nil {
+	if err := Run(context.Background(), &cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	dir := layout.MaterializationDir(dataDir, tenant, "last_events")
@@ -61,7 +61,7 @@ func TestRunEmptyItemsCreatesNoMaterializationsDir(t *testing.T) {
 		RunJobs:  true,
 		Now:      time.Now().UTC(),
 	}
-	if err := Run(context.Background(), cfg); err != nil {
+	if err := Run(context.Background(), &cfg); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	after, err := os.ReadDir(filepath.Join(dataDir, tenant))
@@ -89,7 +89,7 @@ func TestRunRuntimeSQLErrorDoesNotFailMerge(t *testing.T) {
 		Items:    []Item{{Name: "broken", SQL: "SELECT nosuchcolumn FROM merge_output"}},
 		Logger:   slog.New(slog.NewTextHandler(&buf, nil)),
 	}
-	if err := Run(context.Background(), cfg); err != nil {
+	if err := Run(context.Background(), &cfg); err != nil {
 		t.Fatalf("Run must not fail merge: %v", err)
 	}
 	if _, err := os.Stat(dest); err != nil {
@@ -119,7 +119,7 @@ func TestRunMinTierSkipsL0WhenOne(t *testing.T) {
 		Now:      time.Now().UTC(),
 		Items:    []Item{item},
 	}
-	if err := Run(context.Background(), cfg); err != nil {
+	if err := Run(context.Background(), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	files, err := LiveFiles(layout.MaterializationDir(dataDir, tenant, "gated"))
@@ -130,7 +130,7 @@ func TestRunMinTierSkipsL0WhenOne(t *testing.T) {
 		t.Fatalf("minTier=1 must skip L0, got %v", files)
 	}
 	cfg.DestTier = 1
-	if err := Run(context.Background(), cfg); err != nil {
+	if err := Run(context.Background(), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	files, err = LiveFiles(layout.MaterializationDir(dataDir, tenant, "gated"))
@@ -153,7 +153,7 @@ func TestRunJobsFalseWritesNothing(t *testing.T) {
 		Now:      time.Now().UTC(),
 		Items:    []Item{{Name: "last_events", SQL: "SELECT 1 AS x FROM merge_output"}},
 	}
-	if err := Run(context.Background(), cfg); err != nil {
+	if err := Run(context.Background(), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, tenant, "materializations")); !os.IsNotExist(err) {
@@ -165,7 +165,7 @@ func TestRunCompactsSourceBasename(t *testing.T) {
 	dataDir, tenant, dest1 := mergeFixture(t)
 	item := Item{Name: "last_events", SQL: "SELECT 1 AS x FROM merge_output"}
 	now := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
-	if err := Run(context.Background(), RunConfig{
+	if err := Run(context.Background(), &RunConfig{
 		DataDir: dataDir, Tenant: tenant, DestPath: dest1, DestTier: 0, RunJobs: true, Now: now, Items: []Item{item},
 	}); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestRunCompactsSourceBasename(t *testing.T) {
 	l1 := filepath.Join(dataDir, tenant, "tiers", "L1")
 	dest2 := filepath.Join(l1, "222-bbbbbbbb.parquet")
 	testparquet.WriteSegmentWithTs(t, dest2, now, "up", 2)
-	if err := Run(context.Background(), RunConfig{
+	if err := Run(context.Background(), &RunConfig{
 		DataDir:     dataDir,
 		Tenant:      tenant,
 		DestPath:    dest2,
@@ -204,7 +204,7 @@ func TestRunCompactsSourceBasename(t *testing.T) {
 
 func TestRunSkipsLogsItemOnMetricsPlane(t *testing.T) {
 	dataDir, tenant, dest := mergeFixture(t)
-	if err := Run(context.Background(), RunConfig{
+	if err := Run(context.Background(), &RunConfig{
 		DataDir:  dataDir,
 		Tenant:   tenant,
 		DestPath: dest,

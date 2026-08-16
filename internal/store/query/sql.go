@@ -19,6 +19,7 @@ import (
 	"github.com/prism-utils/prism/internal/store/engine"
 	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/materialize"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
@@ -63,6 +64,9 @@ type SQLConfig struct {
 	// HotWindow is the process hot-window duration, used only when snapshot
 	// min/max stats are missing so auto-hot still has a coverage estimate.
 	HotWindow time.Duration
+	// MaterializationNames are sandbox views mat_<name> bound from
+	// materializations/<name>/ (never raw tiers or hot).
+	MaterializationNames []string
 }
 
 // SQLRoutePattern returns the ServeMux pattern for POST /{ns}/sql.
@@ -227,6 +231,7 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		}, sandboxLimits{
 			MemoryLimit: cfg.MemoryLimit,
 			Threads:     cfg.Threads,
+			MatNames:    cfg.MaterializationNames,
 		})
 		if err != nil {
 			writeSQLErr(w, ctx, err, logger, ns, "sql sandbox")
@@ -325,11 +330,32 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpe
 		cleanup()
 		return nil, nil, wrapSandboxErr(fmt.Errorf("create logs view: %w", err))
 	}
+	if err := bindMaterializationViews(ctx, conn, tenantRoot, limits.MatNames); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
 	if err := lockSandbox(ctx, conn); err != nil {
 		cleanup()
 		return nil, nil, err
 	}
 	return conn, cleanup, nil
+}
+
+func bindMaterializationViews(ctx context.Context, conn *sql.Conn, tenantRoot string, names []string) error {
+	for _, name := range names {
+		dir := filepath.Join(tenantRoot, "materializations", name)
+		files, err := materialize.LiveFiles(dir)
+		if err != nil {
+			return err
+		}
+		viewSQL := materialize.ViewSQL(files)
+		//nolint:gosec // G202: name is Validate()'d [a-z][a-z0-9_]*; viewSQL is listing-built.
+		q := "CREATE VIEW mat_" + name + " AS " + viewSQL
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("create mat_%s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, opts *metricsOpenOpts) (hotPins, error) {
@@ -438,6 +464,7 @@ func openSandboxConn(ctx context.Context, tenantRoot string, limits sandboxLimit
 type sandboxLimits struct {
 	MemoryLimit string
 	Threads     int
+	MatNames    []string
 }
 
 func applySandboxBootstrap(ctx context.Context, conn *sql.Conn, tenantRoot string, limits sandboxLimits) error {

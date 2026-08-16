@@ -58,6 +58,10 @@ func TestSQLMatViewReadsOnlyMaterializationFiles(t *testing.T) {
 		if v != 7 {
 			t.Fatalf("row = %#v, want 7", out.Rows[0][0])
 		}
+	case string:
+		if v != "7" {
+			t.Fatalf("row = %#v, want 7", out.Rows[0][0])
+		}
 	default:
 		t.Fatalf("row = %#v, want 7", out.Rows[0][0])
 	}
