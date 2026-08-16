@@ -4,12 +4,12 @@
   Loop state for prism#141. Process: .ai/workflows/feature-loop.md
 -->
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/metrics-openset-prune-baa6`
 - **Issue:** [prism#141](https://github.com/prism-utils/prism/issues/141)
-- **Owner phase:** developer
+- **Owner phase:** reviewer
 - **PLAN phase(s):** store query / merge (Phase 4-adjacent; query open-set)
 
 ## 1. Task
@@ -80,7 +80,7 @@ Copied from prism#141 (homelab-follow-up items marked N/A this PR).
 - [x] Homelab `docs/solutions/` pointer — **N/A this PR** (after apps wiring PR).
 - [x] Spec Decision Log records option 1+5 (and why 2/3/4/6 were rejected: tenant query CPU / billing).
 - [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
 
 ### Prune
 
