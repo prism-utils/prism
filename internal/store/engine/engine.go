@@ -22,6 +22,7 @@ import (
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/duckdbfile"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/metrics"
 	"github.com/prism-utils/prism/internal/store/metricsmeta"
 	"github.com/prism-utils/prism/internal/store/segformat"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
@@ -519,11 +520,11 @@ func (e *Engine) open(tenant string) (*tenantEntry, error) {
 		return nil, err
 	}
 	if err := e.importLegacyMetricsRaw(tenant); err != nil {
-		_ = ent.db.Close()
+		closeTenantDB(ent)
 		return nil, err
 	}
 	if err := ent.ensureHotCurrent(); err != nil {
-		_ = ent.db.Close()
+		closeTenantDB(ent)
 		return nil, err
 	}
 	e.lru.add(tenant, ent)
@@ -589,6 +590,7 @@ func openTenant(dataDir, tenant string, cfg Config) (*tenantEntry, error) { //no
 	// routing statements across pooled connections lets a reader observe a
 	// catalog snapshot from before a committed write on another connection.
 	db.SetMaxOpenConns(1)
+	metrics.DuckDBOpen(metrics.RoleEngine)
 	return &tenantEntry{db: db, path: path}, nil
 }
 
@@ -728,9 +730,18 @@ func (l *tenantLRU) evictOldest() {
 		return
 	}
 	item := el.Value.(*lruItem)
-	_ = item.entry.db.Close()
+	closeTenantDB(item.entry)
 	delete(l.items, item.tenant)
 	l.order.Remove(el)
+}
+
+func closeTenantDB(te *tenantEntry) {
+	if te == nil || te.db == nil {
+		return
+	}
+	_ = te.db.Close()
+	te.db = nil
+	metrics.DuckDBClose(metrics.RoleEngine)
 }
 
 func (l *tenantLRU) closeAll() error {

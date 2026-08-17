@@ -123,3 +123,23 @@ func parseByteSize(s string) (int64, error) {
 	}
 	return int64(val * mult), nil
 }
+
+// ParseByteSize parses a human size ("1638MB" decimal, "1433MiB" binary, or a
+// plain byte count). Empty input is 0.
+func ParseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	return parseByteSize(s)
+}
+
+// ParseByteSizeOrZero parses a human size and returns 0 for empty input,
+// garbage, or sentinels so a bad env value cannot fail process start.
+func ParseByteSizeOrZero(s string) int64 {
+	n, err := ParseByteSize(s)
+	if err != nil {
+		return 0
+	}
+	return n
+}

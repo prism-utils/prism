@@ -863,7 +863,11 @@ counters (HTTP status classes, reason-tagged queue sheds, lifecycle tick
 failures), and latency as histograms. `METRICS_ENABLED` defaults **on**,
 `METRICS_PATH` defaults `/metrics`, and `METRICS_PER_TENANT` defaults **on**
 because the product ask is per-tenant load with ALL derived as
-`sum without (tenant)`.
+`sum without (tenant)`. `MEMORY_OBSERVE` defaults **off**. When it is on and
+metrics are enabled, the same scrape adds cgroup v2 memory files, parsed
+`GOMEMLIMIT` / `DUCKDB_MEMORY_LIMIT`, live DuckDB instance counts on a closed
+`role` set, and per-lifecycle-job RSS / heap / cgroup snapshots. It does not
+duplicate `go_*` or `process_*`.
 
 The endpoint sits on the same listener as the health probes on every plane —
 including the `MODE=cluster` coordinator, which exports the runtime view even

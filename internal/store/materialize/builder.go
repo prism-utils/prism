@@ -14,6 +14,7 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/metrics"
 )
 
 // RunConfig is one merge's materialization pass.
@@ -93,6 +94,7 @@ func newBuilder(ctx context.Context, cfg *RunConfig) (*builder, error) {
 	if err != nil {
 		return nil, err
 	}
+	metrics.DuckDBOpen(metrics.RoleMaterialize)
 	return &builder{db: sql.OpenDB(connector), connector: connector}, nil
 }
 
@@ -107,6 +109,7 @@ func (b *builder) Close() error {
 			err = cerr
 		}
 		b.connector = nil
+		metrics.DuckDBClose(metrics.RoleMaterialize)
 	}
 	return err
 }

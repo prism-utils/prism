@@ -144,6 +144,8 @@ spec:
               value: "/metrics"
             - name: METRICS_PER_TENANT
               value: "true"
+            - name: MEMORY_OBSERVE
+              value: "false"
           livenessProbe:
             httpGet:
               path: /healthz

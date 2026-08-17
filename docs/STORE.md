@@ -332,7 +332,7 @@ Notable groups:
 - **DuckDB governance:** `DUCKDB_THREADS`, `DUCKDB_MEMORY_LIMIT`, `MAX_OPEN_TENANTS`
 - **RBAC:** `AUTHZ_POLICY_FILE`, `OIDC_*`, `AUTHZ_RELOAD_SECONDS`
 - **Legacy admin token:** `ADMIN_TOKEN` (RBAC off only)
-- **Observability:** `METRICS_ENABLED`, `METRICS_PATH`, `METRICS_PER_TENANT`
+- **Observability:** `METRICS_ENABLED`, `METRICS_PATH`, `METRICS_PER_TENANT`, `MEMORY_OBSERVE`
 
 ---
 
@@ -383,13 +383,30 @@ Runtime and process series come from the standard collectors (`go_*`,
 | `prism_store_log_landing_files` | gauge | `tenant`, `artifact` | Landing depth vs the cap |
 | `prism_store_log_landing_files_limit` | gauge | — | `MAX_LOG_FILES` (`0` = off) |
 | `prism_store_compaction_cpu_seconds_total` | counter | `tenant` | Compaction cost per tenant |
+| `prism_store_memory_observe` | gauge | — | **Opt-in** (`MEMORY_OBSERVE=true`): 1 while extra memory series are registered |
+| `prism_store_cgroup_memory_bytes` | gauge | `kind` ∈ `current`,`peak`,`max` | cgroup v2 (kind omitted if the file is missing) |
+| `prism_store_gomemlimit_bytes` | gauge | — | Parsed `GOMEMLIMIT` (`0` if unset) |
+| `prism_store_duckdb_memory_limit_bytes` | gauge | — | Parsed `DUCKDB_MEMORY_LIMIT` (`0` if unset) |
+| `prism_store_duckdb_open` | gauge | `role` | Live DuckDB instances (`engine`,`merge`,`rollup`,`materialize`,`sql`,`promql`,`loki`,`bounds`,`stat`) |
+| `prism_store_job_rss_bytes` | gauge | `job`,`phase` ∈ `start`,`end` | RSS at the last lifecycle pass boundary |
+| `prism_store_job_cgroup_current_bytes` | gauge | `job`,`phase` | cgroup `memory.current` at the last pass boundary (omitted without cgroup) |
+| `prism_store_job_heap_alloc_bytes` | gauge | `job`,`phase` | `HeapAlloc` at the last pass boundary |
 
 `job` is one of `hot_snapshot`, `flush`, `merge`, `retention`.
 
-**A scrape never touches disk.** File gauges are refreshed from scans the
-lifecycle ticks already performed for their own work, so scrape cost is
-independent of how many segments exist. A store with `RUN_JOBS=false` therefore
-reports no file gauges — it runs no ticks.
+The memory-observe families (`prism_store_memory_observe` and the cgroup /
+DuckDB-open / job RSS-heap gauges) are **absent** unless `MEMORY_OBSERVE=true`
+and metrics are enabled. They do not duplicate `go_*` or `process_*`. A job
+that finishes while observe is on also emits one slog line
+`msg="memory observe job"` with `job`, `duration_ms`, `rss_bytes`,
+`heap_alloc_bytes`, and `cgroup_current_bytes` when cgroup is available.
+
+**A scrape never touches the data directory.** File gauges are refreshed from
+scans the lifecycle ticks already performed for their own work, so scrape cost
+is independent of how many segments exist. A store with `RUN_JOBS=false`
+therefore reports no file gauges — it runs no ticks. When `MEMORY_OBSERVE=true`,
+a scrape additionally reads the process cgroup memory files (small, not tenant
+data).
 
 ### Cardinality
 

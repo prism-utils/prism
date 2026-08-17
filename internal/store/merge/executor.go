@@ -10,6 +10,7 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/metrics"
 	"github.com/prism-utils/prism/internal/store/metricsmeta"
 	"github.com/prism-utils/prism/internal/store/segformat"
 )
@@ -51,6 +52,7 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) { //nolint:gocritic // C
 	if err != nil {
 		return nil, err
 	}
+	metrics.DuckDBOpen(metrics.RoleMerge)
 	return &Executor{cfg: cfg, db: sql.OpenDB(connector), connector: connector}, nil
 }
 
@@ -66,6 +68,7 @@ func (x *Executor) Close() error {
 			err = cerr
 		}
 		x.connector = nil
+		metrics.DuckDBClose(metrics.RoleMerge)
 	}
 	return err
 }
@@ -238,7 +241,11 @@ func StatSegment(path string, tier int, caps DuckDBCaps) (Segment, error) {
 	if err != nil {
 		return Segment{}, err
 	}
-	defer func() { _ = connector.Close() }()
+	metrics.DuckDBOpen(metrics.RoleStat)
+	defer func() {
+		_ = connector.Close()
+		metrics.DuckDBClose(metrics.RoleStat)
+	}()
 	db := sql.OpenDB(connector)
 	defer func() { _ = db.Close() }()
 

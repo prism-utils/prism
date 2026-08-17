@@ -20,6 +20,7 @@ import (
 	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	"github.com/prism-utils/prism/internal/store/materialize"
+	"github.com/prism-utils/prism/internal/store/metrics"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
@@ -280,7 +281,7 @@ func prepareMetricsSandboxConn(ctx context.Context, tenantRoot string, hotOnly b
 }
 
 func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts *metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
-	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
+	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits, metrics.RolePromQL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -299,7 +300,7 @@ func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts *metrics
 
 // prepareSandboxConn opens the /sql sandbox: metrics + logs views.
 func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
-	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
+	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits, metrics.RoleSQL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -434,29 +435,33 @@ func queryJSON(ctx context.Context, conn *sql.Conn, userSQL string, rowCap int) 
 	return out, nil
 }
 
-func openSandboxConn(ctx context.Context, tenantRoot string, limits sandboxLimits) (*sql.Conn, func(), error) {
+func openSandboxConn(ctx context.Context, tenantRoot string, limits sandboxLimits, role string) (*sql.Conn, func(), error) {
 	connector, err := duckdb.NewConnector(":memory:", nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query: duckdb connector: %w", err)
 	}
+	metrics.DuckDBOpen(role)
 	db := sql.OpenDB(connector)
 	db.SetMaxOpenConns(1)
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		_ = db.Close()
 		_ = connector.Close()
+		metrics.DuckDBClose(role)
 		return nil, nil, fmt.Errorf("query: sandbox conn: %w", err)
 	}
 	if err := applySandboxBootstrap(ctx, conn, tenantRoot, limits); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		_ = connector.Close()
+		metrics.DuckDBClose(role)
 		return nil, nil, err
 	}
 	cleanup := func() {
 		_ = conn.Close()
 		_ = db.Close()
 		_ = connector.Close()
+		metrics.DuckDBClose(role)
 	}
 	return conn, cleanup, nil
 }

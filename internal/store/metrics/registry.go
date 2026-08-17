@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -39,6 +40,15 @@ type Registry struct {
 	compactionCPU *prometheus.CounterVec
 
 	tenants *tenantLabeller
+
+	observe     bool
+	cgroupRoot  string
+	goMemLimit  float64
+	duckdbLimit float64
+	log         *slog.Logger
+	jobRSS      *prometheus.GaugeVec
+	jobCgroup   *prometheus.GaugeVec
+	jobHeap     *prometheus.GaugeVec
 }
 
 // New builds an exporter. A disabled Config yields an inert Registry that
@@ -53,16 +63,14 @@ func New(cfg Config) *Registry {
 		cfg:     cfg,
 		reg:     prometheus.NewRegistry(),
 		tenants: newTenantLabeller(MaxTenantLabelValues),
+		log:     slog.Default(),
 	}
 	r.buildHTTP()
 	r.buildQuery()
 	r.buildQueue()
 	r.buildLifecycle()
 
-	// Registration can only fail on a duplicate or inconsistent descriptor,
-	// which is a coding error in this file and is caught by this package's own
-	// tests on the first construction.
-	r.reg.MustRegister(
+	collectorsToRegister := []prometheus.Collector{
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		r.httpRequests, r.httpDuration, r.queries, r.queryErrors,
@@ -70,7 +78,19 @@ func New(cfg Config) *Registry {
 		r.queueRejected, r.queueWait,
 		r.ticks, r.tickErrors, r.tickDuration, r.tickSuccess,
 		r.tierSegments, r.landingFiles, r.landingLimit, r.compactionCPU,
-	)
+	}
+	if cfg.Observe {
+		r.buildObserve()
+		collectorsToRegister = append(collectorsToRegister,
+			r.jobRSS, r.jobCgroup, r.jobHeap,
+			&observeCollector{r: r},
+		)
+	}
+
+	// Registration can only fail on a duplicate or inconsistent descriptor,
+	// which is a coding error in this file and is caught by this package's own
+	// tests on the first construction.
+	r.reg.MustRegister(collectorsToRegister...)
 	return r
 }
 
@@ -109,4 +129,16 @@ func (r *Registry) Handler() http.Handler {
 		return http.NotFoundHandler()
 	}
 	return promhttp.HandlerFor(r.reg, promhttp.HandlerOpts{ErrorHandling: promhttp.ContinueOnError})
+}
+
+// SetLogger installs the logger used for memory-observe job lines. A nil logger
+// resets to slog.Default.
+func (r *Registry) SetLogger(log *slog.Logger) {
+	if r == nil {
+		return
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	r.log = log
 }

@@ -806,6 +806,7 @@ see [`STORE.md`](STORE.md).
 | `METRICS_ENABLED` | bool | `true` | Prometheus exporter. When `false`, no collectors are registered and the scrape path returns `404`. |
 | `METRICS_PATH` | string | `/metrics` | Scrape path, mounted on every HTTP plane next to `/healthz`. A value that is not an absolute path falls back to the default. |
 | `METRICS_PER_TENANT` | bool | `true` | Adds the `tenant` label to query, error, lifecycle file, and query-plane RED request/duration series. `false` drops the older per-tenant USE families entirely and omits the `tenant` label from query RED (series stay, label does not); route-level HTTP and `query_inflight` are unaffected. See the series budget in [`STORE.md`](STORE.md#observability--prometheus-metrics). |
+| `MEMORY_OBSERVE` | bool | `false` | Extra memory-debug series on `/metrics` (cgroup v2, DuckDB open counts by role, per-job RSS/heap snapshots) plus one slog line per lifecycle job. Independent of `METRICS_ENABLED`; inert when metrics are off (no scrape). Default scrape is unchanged when this is false. |
 | `MODE` | string | `standalone` | Deployment role: `standalone`, `client`, or `cluster`. |
 | `OIDC_AUDIENCE` | string (comma-separated) | _(required when RBAC on)_ | Accepted JWT `aud` values. |
 | `OIDC_ISSUER` | string | _(required when RBAC on)_ | OIDC issuer URL; discovery fetches JWKS when JWKS file/URL unset. |
