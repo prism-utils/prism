@@ -136,6 +136,9 @@ metrics:
   enabled: "true"
   path: "/metrics"
   perTenant: "true"
+  # Extra cgroup / DuckDB-role / per-job RSS series. Off by default; the scrape
+  # stays cheap until an operator turns this on for a soak.
+  memoryObserve: "false"
   serviceMonitor:
     # Requires the Prometheus Operator CRDs; off by default so the chart
     # installs on a cluster that has none.

@@ -22,6 +22,15 @@ type Config struct {
 	// free switch. When false, query RED series stay registered but drop the
 	// tenant label rather than emitting an empty one.
 	PerTenant bool
+	// Observe registers extra memory-debug series and job slog. Default off.
+	Observe bool
+	// GoMemLimitBytes is the parsed GOMEMLIMIT (0 if unset or unparseable).
+	GoMemLimitBytes int64
+	// DuckDBMemoryLimitBytes is the parsed DUCKDB_MEMORY_LIMIT (0 if unset).
+	DuckDBMemoryLimitBytes int64
+	// CgroupRoot is the directory holding cgroup v2 memory files. Empty uses
+	// the default unified hierarchy mount.
+	CgroupRoot string
 }
 
 func (c Config) normalized() Config {

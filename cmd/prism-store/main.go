@@ -28,7 +28,9 @@
 // plane, unauthenticated, so a scraper needs no credential and no second port
 // (restrict it with a NetworkPolicy). Disable with METRICS_ENABLED=false, move
 // it with METRICS_PATH, and drop the tenant dimension from query, error, and
-// file series with METRICS_PER_TENANT=false.
+// file series with METRICS_PER_TENANT=false. Extra memory-debug series (cgroup,
+// DuckDB open counts by role, per-job RSS/heap snapshots) are off by default;
+// set MEMORY_OBSERVE=true while metrics are enabled to register them.
 // Background jobs: set RUN_JOBS=false to skip all lifecycle maintenance
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
@@ -65,6 +67,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prism-utils/prism/internal/config"
 	"github.com/prism-utils/prism/internal/store/admin"
 	"github.com/prism-utils/prism/internal/store/cluster"
 	"github.com/prism-utils/prism/internal/store/engine"
@@ -237,9 +240,12 @@ func loadConfig() serverConfig {
 		duckdbStorageVersion: envOr("DUCKDB_STORAGE_VERSION", segformat.DefaultStorageVersion),
 		materializationsFile: strings.TrimSpace(os.Getenv("MATERIALIZATIONS_FILE")),
 		metrics: metrics.Config{
-			Enabled:   envBool("METRICS_ENABLED", true),
-			Path:      envOr("METRICS_PATH", metrics.DefaultPath),
-			PerTenant: envBool("METRICS_PER_TENANT", true),
+			Enabled:                envBool("METRICS_ENABLED", true),
+			Path:                   envOr("METRICS_PATH", metrics.DefaultPath),
+			PerTenant:              envBool("METRICS_PER_TENANT", true),
+			Observe:                envBool("MEMORY_OBSERVE", false),
+			GoMemLimitBytes:        config.ParseByteSizeOrZero(os.Getenv("GOMEMLIMIT")),
+			DuckDBMemoryLimitBytes: config.ParseByteSizeOrZero(os.Getenv("DUCKDB_MEMORY_LIMIT")),
 		},
 	}
 	c.rbac = loadRBACConfig()
@@ -592,6 +598,7 @@ var startBackgroundLoop backgroundLoopStartFunc = defaultBackgroundLoopStart
 
 func runStore(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
 	cfg.metricsReg = metrics.New(cfg.metrics)
+	cfg.metricsReg.SetLogger(logger)
 	rbac, err := buildRBACStack(ctx, cfg.rbac, logger)
 	if err != nil {
 		return err

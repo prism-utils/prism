@@ -18,6 +18,7 @@ import (
 	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	"github.com/prism-utils/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/metrics"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
 )
 
@@ -310,7 +311,7 @@ func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimit
 	recordAppliedSandboxThreads(effective)
 	limits.Threads = effective
 
-	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits)
+	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits, metrics.RoleLoki)
 	if err != nil {
 		return nil, nil, err
 	}

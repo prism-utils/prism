@@ -9,6 +9,7 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/metrics"
 	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
@@ -38,10 +39,12 @@ func openBoundsDB(ctx context.Context) (*sql.DB, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	metrics.DuckDBOpen(metrics.RoleBounds)
 	db := sql.OpenDB(connector)
 	cleanup := func() {
 		_ = db.Close()
 		_ = connector.Close()
+		metrics.DuckDBClose(metrics.RoleBounds)
 	}
 	if _, err := db.ExecContext(ctx, "SET memory_limit='"+boundsDuckDBMemoryLimit+"'"); err != nil { //nolint:gosec // G201: constant memory cap.
 		cleanup()

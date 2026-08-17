@@ -12,6 +12,7 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/metrics"
 )
 
 // Step is a downsampling interval (e.g. 1m, 5m, 1h).
@@ -76,6 +77,7 @@ func NewBuilder(dataDir, tenant string, steps []Step, cfg BuilderConfig) (*Build
 	if err != nil {
 		return nil, err
 	}
+	metrics.DuckDBOpen(metrics.RoleRollup)
 	if len(steps) == 0 {
 		steps = ParseSteps("")
 	}
@@ -100,6 +102,7 @@ func (b *Builder) Close() error {
 			err = cerr
 		}
 		b.connector = nil
+		metrics.DuckDBClose(metrics.RoleRollup)
 	}
 	return err
 }

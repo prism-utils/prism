@@ -7,7 +7,9 @@
 // utilization and saturation as gauges (queue occupancy, resident tenant
 // handles, landing-file depth), errors and work as counters, and latency as
 // histograms — plus a query-plane RED family (requests, duration, inflight)
-// under a closed api label set (promql | loki | sql).
+// under a closed api label set (promql | loki | sql). An opt-in memory-observe
+// collector adds cgroup, DuckDB-open-by-role, and per-job RSS/heap series
+// without duplicating the standard Go and process collectors.
 //
 // Two rules govern every label produced here. HTTP route labels and query api
 // labels come from a closed set supplied by the caller and are never derived

@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -59,12 +60,24 @@ func (r *Registry) buildLifecycle() {
 	}, []string{"tenant"})
 }
 
+// ObserveTickStart snapshots RSS, heap, and cgroup current before a pass.
+func (r *Registry) ObserveTickStart(job string) {
+	if r.off() || !r.observe {
+		return
+	}
+	r.recordJobSample(job, "start")
+}
+
 // ObserveTick records one completed maintenance pass. The success timestamp
 // only advances on a clean pass, so a stalled job shows as a growing age even
 // while it keeps erroring on schedule.
 func (r *Registry) ObserveTick(job string, d time.Duration, err error) {
 	if r.off() {
 		return
+	}
+	if r.observe {
+		s := r.recordJobSample(job, "end")
+		r.logObserveJob(job, d, err, s)
 	}
 	r.ticks.WithLabelValues(job).Inc()
 	r.tickDuration.WithLabelValues(job).Observe(d.Seconds())
@@ -73,6 +86,38 @@ func (r *Registry) ObserveTick(job string, d time.Duration, err error) {
 		return
 	}
 	r.tickSuccess.WithLabelValues(job).SetToCurrentTime()
+}
+
+func (r *Registry) recordJobSample(job, phase string) memSample {
+	s := sampleMem(r.cgroupRoot)
+	if s.rssOK {
+		r.jobRSS.WithLabelValues(job, phase).Set(s.rss)
+	}
+	r.jobHeap.WithLabelValues(job, phase).Set(s.heap)
+	if s.cgOK {
+		r.jobCgroup.WithLabelValues(job, phase).Set(s.cg)
+	}
+	return s
+}
+
+func (r *Registry) logObserveJob(job string, d time.Duration, err error, s memSample) {
+	log := r.log
+	if log == nil {
+		log = slog.Default()
+	}
+	attrs := []any{
+		"job", job,
+		"duration_ms", d.Milliseconds(),
+		"rss_bytes", int64(s.rss),
+		"heap_alloc_bytes", int64(s.heap),
+	}
+	if s.cgOK {
+		attrs = append(attrs, "cgroup_current_bytes", int64(s.cg))
+	}
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+	log.Info("memory observe job", attrs...)
 }
 
 // ObserveTierSegments records the live metrics segment count a pass just

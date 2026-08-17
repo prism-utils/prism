@@ -144,6 +144,8 @@ spec:
               value: {{ .Values.metrics.path | quote }}
             - name: METRICS_PER_TENANT
               value: {{ .Values.metrics.perTenant | quote }}
+            - name: MEMORY_OBSERVE
+              value: {{ .Values.metrics.memoryObserve | quote }}
             {{- if .Values.secrets.existingSecret }}
             - name: INGEST_TOKEN
               valueFrom:

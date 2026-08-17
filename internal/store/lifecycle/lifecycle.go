@@ -32,6 +32,7 @@ const (
 // walks the data directory at scrape time. Implementations must not block.
 type Recorder interface {
 	ObserveTick(job string, d time.Duration, err error)
+	ObserveTickStart(job string)
 	ObserveTierSegments(tenant string, files int)
 	ObserveLogLandingFiles(tenant, artifact string, files int)
 	ObserveCompactionSeconds(tenant string, seconds float64)
@@ -41,6 +42,7 @@ type Recorder interface {
 type nopRecorder struct{}
 
 func (nopRecorder) ObserveTick(string, time.Duration, error)   {}
+func (nopRecorder) ObserveTickStart(string)                    {}
 func (nopRecorder) ObserveTierSegments(string, int)            {}
 func (nopRecorder) ObserveLogLandingFiles(string, string, int) {}
 func (nopRecorder) ObserveCompactionSeconds(string, float64)   {}
@@ -114,6 +116,7 @@ func NewRunner(cfg *Config, eng *engine.Engine, now func() time.Time) *Runner {
 // from the wall clock rather than the injected clock so a test clock that never
 // advances still yields honest durations.
 func (r *Runner) observed(job string, pass func() error) error {
+	r.rec.ObserveTickStart(job)
 	start := time.Now()
 	err := pass()
 	r.rec.ObserveTick(job, time.Since(start), err)
