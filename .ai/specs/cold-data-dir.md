@@ -39,8 +39,11 @@ Mirrored from the homelab spec — answer there; copy the A: line here.
 - [ ] Q4: logs L1+ cold; rollups/mats/manifest stay hot? — A: PENDING
 - [ ] Q5: prod host path (apps/gitops, not this repo) — A: N/A here
 - [ ] Q6: migrate existing hot L1+ via promote? — A: PENDING
-- [ ] Q7: Grafana dual glob (apps) vs engine path rewrite — A: PENDING (engine
-      must still resolve files on both roots for HTTP query)
+- [ ] Q7: Grafana dual glob vs per-tier bind-mount — A: PENDING
+  (“worse promote” on bind-mount = merge COPY writes L1 straight to HDD;
+  no SSD canonical file to checksum/retry-copy from. Dual glob keeps two
+  roots so promote can copy SSD→HDD. Engine HTTP query still unions both
+  roots either way.)
 - [ ] Q8: SHA-256 + parquet open before unlink source? — A: PENDING
 - [ ] Q9: two `t.TempDir()`s in tests; no k3d requirement — A: PENDING
 - [ ] Q10: POSIX local now; network FS = same loop later — A: PENDING
