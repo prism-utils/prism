@@ -2,8 +2,11 @@ package metrics_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +41,21 @@ func TestObserveSeriesAbsentWhenFlagOff(t *testing.T) {
 	t.Cleanup(metrics.ResetObserveForTest)
 	body := scrape(t, metrics.New(enabledConfig()))
 	assertAbsent(t, body, observeNames()...)
+}
+
+func TestObserveInertWhenMetricsDisabled(t *testing.T) {
+	t.Cleanup(metrics.ResetObserveForTest)
+	reg := metrics.New(metrics.Config{Enabled: false, Observe: true, Path: metrics.DefaultPath})
+	metrics.DuckDBOpen(metrics.RoleEngine)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
+	reg.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("scrape status = %d, want 404 when metrics are off", rec.Code)
+	}
+	if rec.Body.Len() > 0 && strings.Contains(rec.Body.String(), "prism_store_memory_observe") {
+		t.Fatalf("disabled scrape leaked observe series: %s", rec.Body.String())
+	}
 }
 
 func TestObserveSeriesPresentWhenFlagOn(t *testing.T) {
