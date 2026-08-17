@@ -4,11 +4,11 @@
   This file IS the loop state (see .ai/workflows/feature-loop.md).
 -->
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/memory-observe-baa6`
-- **Owner phase:** reviewer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** store observability (metrics)
 - **Ships as:** annotated tag `v1.0.7` after squash-merge to `main` (image `ghcr.io/prism-utils/prism-store:1.0.7`)
 
@@ -167,22 +167,24 @@ Existing docker e2e tests keep their skip-without-docker behavior; do not make `
 - [x] Tests written first (`test:` commit before implementation)
 - [x] `make lint test` green
 - [x] **`make e2e` green** (new e2e included; developer and reviewer both run it)
-- [ ] `make full-tests` if wiring/I/O touched (this change does)
+- [x] `make full-tests` if wiring/I/O touched (this change does)
 
 ## 7. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 8. Reviewer notes
 
-<!-- Reviewer appends one actionable line under any gate it unchecks. Set
-     Status: ALL_OK only when every box above is checked; otherwise
-     Status: CHANGES_REQUESTED. -->
+History: `test(store/metrics): cover opt-in MEMORY_OBSERVE...` then `feat(store/metrics): opt-in MEMORY_OBSERVE...` then an extra `test:` for metrics-disabled inertness.
 
-_(empty until first review)_
+Re-ran: `make lint` (0 issues), `go test -race -tags duckdb_arrow ./internal/store/... ./cmd/prism-store/... ./internal/config/...`, `make e2e` (new ingest scrape cases; docker compose e2e skipped — no docker), `make store-integration`. Helm lint + golden OK.
+
+`make test` on this host also fails `TestE2E_LoggingThreePhaseParquet` on `origin/main` (file-tail watcher); that package is untouched. CI `fast` on main is green. Compose `make integration` skipped locally (no docker); CI `full` job covers it.
+
+Verdict: ALL_OK.
