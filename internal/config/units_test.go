@@ -80,3 +80,22 @@ func TestByteSize_UnmarshalJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestParseByteSizeOrZero(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want int64
+	}{
+		{"", 0},
+		{"off", 0},
+		{"1638MB", 1638_000_000},
+		{"1433MiB", 1433 << 20},
+		{"512", 512},
+	}
+	for _, c := range cases {
+		if got := config.ParseByteSizeOrZero(c.in); got != c.want {
+			t.Errorf("ParseByteSizeOrZero(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}

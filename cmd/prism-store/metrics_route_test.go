@@ -174,6 +174,9 @@ func TestMetricsConfigDefaultsOn(t *testing.T) {
 	if cfg.metrics.Path != metrics.DefaultPath {
 		t.Fatalf("METRICS_PATH default = %q, want %q", cfg.metrics.Path, metrics.DefaultPath)
 	}
+	if cfg.metrics.Observe {
+		t.Fatal("MEMORY_OBSERVE default = true, want false")
+	}
 }
 
 func TestMetricsConfigReadsEnvOverrides(t *testing.T) {
@@ -181,6 +184,9 @@ func TestMetricsConfigReadsEnvOverrides(t *testing.T) {
 	t.Setenv("METRICS_ENABLED", "false")
 	t.Setenv("METRICS_PER_TENANT", "false")
 	t.Setenv("METRICS_PATH", "/internal/metrics")
+	t.Setenv("MEMORY_OBSERVE", "true")
+	t.Setenv("GOMEMLIMIT", "1638MB")
+	t.Setenv("DUCKDB_MEMORY_LIMIT", "1433MiB")
 	cfg := loadConfig()
 
 	if cfg.metrics.Enabled {
@@ -191,6 +197,15 @@ func TestMetricsConfigReadsEnvOverrides(t *testing.T) {
 	}
 	if cfg.metrics.Path != "/internal/metrics" {
 		t.Fatalf("METRICS_PATH = %q, want /internal/metrics", cfg.metrics.Path)
+	}
+	if !cfg.metrics.Observe {
+		t.Fatal("MEMORY_OBSERVE=true was not honored")
+	}
+	if cfg.metrics.GoMemLimitBytes != 1638_000_000 {
+		t.Fatalf("GOMEMLIMIT parsed = %d, want 1638000000", cfg.metrics.GoMemLimitBytes)
+	}
+	if cfg.metrics.DuckDBMemoryLimitBytes != 1433<<20 {
+		t.Fatalf("DUCKDB_MEMORY_LIMIT parsed = %d, want %d", cfg.metrics.DuckDBMemoryLimitBytes, 1433<<20)
 	}
 }
 

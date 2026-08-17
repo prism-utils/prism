@@ -43,6 +43,8 @@ func (s *spyRecorder) ObserveTick(job string, _ time.Duration, err error) {
 	s.ticks = append(s.ticks, tickRecord{job: job, err: err})
 }
 
+func (s *spyRecorder) ObserveTickStart(string) {}
+
 func (s *spyRecorder) ObserveTierSegments(tenant string, files int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
