@@ -6,9 +6,15 @@
 # DuckDB links against libstdc++ at runtime; the process runs as uid 472 with
 # /data as the writable data root.
 FROM debian:trixie-slim
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
- && rm -rf /var/lib/apt/lists/*
+# libblkid1 2.41-5 is CVE-2026-53615 HIGH; trixie-security ships 2.41.5-0+deb13u1.
+RUN set -eux; \
+    if ! grep -Rqs trixie-security /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then \
+      echo 'deb http://deb.debian.org/debian-security trixie-security main' > /etc/apt/sources.list.d/debian-security.list; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates libstdc++6 libblkid1; \
+    apt-get upgrade -y; \
+    rm -rf /var/lib/apt/lists/*
 COPY prism-store /usr/local/bin/prism-store
 RUN mkdir -p /data && chown 472:472 /data
 USER 472:472
