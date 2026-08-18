@@ -3,6 +3,8 @@
 package e2e_test
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/testparquet"
 	"github.com/stretchr/testify/require"
 )
@@ -112,6 +115,57 @@ compact:
 		}
 		return d0Compacted >= 2 && d1Live >= 2
 	}, 60*time.Second, 2*time.Second, "bucket=day must pack the oldest UTC day first")
+}
+
+func TestCompactSkipsOversizedMiddleL0(t *testing.T) {
+	requireDocker(t)
+	dataDir := t.TempDir()
+	require.NoError(t, os.Chmod(dataDir, 0o777))
+	policy := filepath.Join(t.TempDir(), "compact.yaml")
+	body := []byte(`
+compact:
+  policies:
+    - name: skippy
+      tier: 0
+      olderThan: 15m
+      maxSources: 32
+      maxBytes: 16KiB
+      every: 1s
+      bucket: none
+`)
+	require.NoError(t, os.WriteFile(policy, body, 0o644))
+	compactComposeUp(t, dataDir, "false", "/etc/prism/compact.yaml", policy)
+	t.Cleanup(func() {
+		if t.Failed() {
+			dumpCompactComposeLogs(t)
+		}
+		compactComposeDown(t)
+	})
+
+	aged := time.Now().UTC().Add(-20 * time.Minute)
+	l0 := filepath.Join(dataDir, compactTenant, "tiers", "L0")
+	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "small-a.parquet"), aged, "up", 1)
+	writeWideAgedParquet(t, filepath.Join(l0, "large.parquet"), aged.Add(time.Minute), 8000)
+	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "small-b.parquet"), aged.Add(2*time.Minute), "up", 2)
+	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "small-c.parquet"), aged.Add(3*time.Minute), "up", 3)
+	require.NoError(t, chmodTree(dataDir, 0o777))
+
+	largeInfo, err := os.Stat(filepath.Join(l0, "large.parquet"))
+	require.NoError(t, err)
+	require.Greater(t, largeInfo.Size(), int64(16<<10), "fixture large.parquet must exceed policy maxBytes")
+
+	require.Eventually(t, func() bool {
+		if countParquet(t, filepath.Join(dataDir, compactTenant, "tiers", "L1")) < 1 {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(l0, "large.parquet.compacted")); err == nil {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(l0, "large.parquet")); err != nil {
+			return false
+		}
+		return countSidecars(t, l0) >= 2
+	}, 60*time.Second, 2*time.Second, "small L0s must compact; oversized middle file must stay live")
 }
 
 func compactComposeUp(t *testing.T, dataDir, catchup, compactFile, policyHost string) {
@@ -219,4 +273,26 @@ func chmodTree(root string, mode os.FileMode) error {
 		}
 		return os.Chmod(path, mode)
 	})
+}
+
+func writeWideAgedParquet(t *testing.T, path string, ts time.Time, rows int) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o777))
+	connector, err := duckdb.NewConnector("", nil)
+	require.NoError(t, err)
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	tsStr := ts.UTC().Format("2006-01-02 15:04:05.999999")
+	tmp := path + ".tmp"
+	q := fmt.Sprintf(`
+		COPY (
+			SELECT 'up' AS "__name__", '{}' AS labels, 1.0 AS value, 0 AS timestamp_ms,
+			       CAST('%s' AS TIMESTAMP) AS ts
+			FROM range(%d)
+		) TO '%s' (FORMAT parquet)
+	`, tsStr, rows, filepath.ToSlash(tmp))
+	_, err = db.ExecContext(context.Background(), q)
+	require.NoError(t, err)
+	require.NoError(t, os.Rename(tmp, path))
 }

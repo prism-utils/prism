@@ -14,6 +14,7 @@ import (
 
 	"github.com/prism-utils/prism/internal/store/engine"
 	"github.com/prism-utils/prism/internal/store/lifecycle"
+	"github.com/prism-utils/prism/internal/store/merge"
 	"github.com/prism-utils/prism/internal/version"
 	"go.uber.org/goleak"
 )
@@ -213,6 +214,9 @@ func TestLoadConfigCompactCatchupDefaultOn(t *testing.T) {
 	if cfg.compactFile != "" {
 		t.Fatalf("COMPACT_FILE default = %q, want empty", cfg.compactFile)
 	}
+	if cfg.compactCatchupBytes != merge.DefaultCatchupMaxBytes {
+		t.Fatalf("catch-up maxBytes = %d, want default %d", cfg.compactCatchupBytes, merge.DefaultCatchupMaxBytes)
+	}
 }
 
 func TestLoadConfigCompactCatchupDisabled(t *testing.T) {
@@ -225,6 +229,15 @@ func TestLoadConfigCompactCatchupDisabled(t *testing.T) {
 	}
 	if cfg.compactFile != "/etc/prism/compact.yaml" {
 		t.Fatalf("compactFile = %q", cfg.compactFile)
+	}
+}
+
+func TestLoadConfigCompactCatchupMaxBytes(t *testing.T) {
+	clearStoreEnv(t)
+	t.Setenv("COMPACT_AGE_CATCHUP_MAX_BYTES", "32Mi")
+	cfg := loadConfig()
+	if cfg.compactCatchupBytes != 32<<20 {
+		t.Fatalf("catch-up maxBytes = %d, want 32Mi", cfg.compactCatchupBytes)
 	}
 }
 
@@ -276,7 +289,7 @@ func clearStoreEnv(t *testing.T) {
 		"HOT_SEGMENT_FORMAT", "MERGE_SEGMENT_FORMAT", "DUCKDB_STORAGE_VERSION",
 		"LOGS_REFRESH_INTERVAL", "LOGS_REFRESH_MAX_ACTIONS", "LOGS_DELETE_GRACE_SECONDS",
 		"COLD_DATA_DIR", "COLD_AFTER",
-		"MATERIALIZATIONS_FILE", "COMPACT_FILE", "COMPACT_AGE_CATCHUP",
+		"MATERIALIZATIONS_FILE", "COMPACT_FILE", "COMPACT_AGE_CATCHUP", "COMPACT_AGE_CATCHUP_MAX_BYTES",
 		"MEMORY_OBSERVE", "GOMEMLIMIT",
 		"METRICS_ENABLED", "METRICS_PATH", "METRICS_PER_TENANT",
 	} {
