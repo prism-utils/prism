@@ -132,6 +132,32 @@ func TestSelectCompactMaxBytesStopsPrefix(t *testing.T) {
 	}
 }
 
+func TestSelectCompactSkipsOversizedMiddleFile(t *testing.T) {
+	now := fixtureBase.Add(time.Hour)
+	segs := []Segment{
+		seg(0, "small-a", 80, 0, time.Minute),
+		seg(0, "large", 200, 2*time.Minute, 3*time.Minute),
+		seg(0, "small-b", 80, 4*time.Minute, 5*time.Minute),
+	}
+	spec := catchupSpec()
+	spec.MaxBytes = 160
+	action, ok := SelectCompact(segs, now, spec)
+	if !ok {
+		t.Fatal("want compact of small files around the oversized middle")
+	}
+	if len(action.Sources) != 2 {
+		t.Fatalf("sources = %d, want 2 small files", len(action.Sources))
+	}
+	for _, s := range action.Sources {
+		if s.Path == "large" {
+			t.Fatal("oversized middle file must be skipped")
+		}
+	}
+	if action.Sources[0].Path != "small-a" || action.Sources[1].Path != "small-b" {
+		t.Fatalf("want small-a then small-b, got %+v", action.Sources)
+	}
+}
+
 func TestSelectCompactSealedExcluded(t *testing.T) {
 	now := fixtureBase.Add(time.Hour)
 	sealed := seg(0, "sealed", 200, 0, time.Minute)

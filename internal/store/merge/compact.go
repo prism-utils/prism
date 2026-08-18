@@ -137,6 +137,8 @@ func utcBucket(ts time.Time, bucket Bucket) time.Time {
 	}
 }
 
+// takePrefix packs min-ts-sorted files up to maxSources and maxBytes.
+// A file that does not fit the remaining byte budget is skipped.
 func takePrefix(sorted []Segment, maxSources int, maxBytes int64) []Segment {
 	picked := make([]Segment, 0, min(maxSources, len(sorted)))
 	var sum int64
@@ -145,7 +147,7 @@ func takePrefix(sorted []Segment, maxSources int, maxBytes int64) []Segment {
 			break
 		}
 		if sum+sorted[i].Bytes > maxBytes {
-			break
+			continue
 		}
 		picked = append(picked, sorted[i])
 		sum += sorted[i].Bytes
