@@ -89,6 +89,9 @@ type Config struct {
 	Materializations materialize.File
 	// CompactAgeCatchup packs fully-aged unsealed files when Lucene finds none.
 	CompactAgeCatchup bool
+	// CompactAgeCatchupMaxBytes overrides the built-in 256Mi catch-up pack cap.
+	// Zero uses DefaultCatchupMaxBytes.
+	CompactAgeCatchupMaxBytes int64
 	// CompactFile holds named compact policies loaded at start. Empty is a no-op.
 	CompactFile merge.File
 	// Logger records per-tenant / per-file errors; nil uses slog.Default.
@@ -247,6 +250,9 @@ func (r *Runner) pickMetricsMerge(tenant string, planner *merge.Planner, segs []
 	if r.cfg.CompactAgeCatchup {
 		spec := merge.DefaultCatchupSpec()
 		spec.SealBytes = r.cfg.MaxSegmentBytes
+		if r.cfg.CompactAgeCatchupMaxBytes > 0 {
+			spec.MaxBytes = r.cfg.CompactAgeCatchupMaxBytes
+		}
 		if r.cfg.MaxSegmentBytes > 0 && spec.MaxBytes > r.cfg.MaxSegmentBytes {
 			spec.MaxBytes = r.cfg.MaxSegmentBytes
 		}

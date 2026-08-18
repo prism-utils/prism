@@ -198,6 +198,7 @@ type serverConfig struct {
 	materializations     materialize.File
 	compactFile          string
 	compactAgeCatchup    bool
+	compactCatchupBytes  int64
 	compact              merge.File
 	compactor            admin.Compactor
 }
@@ -257,6 +258,7 @@ func loadConfig() serverConfig {
 		materializationsFile: strings.TrimSpace(os.Getenv("MATERIALIZATIONS_FILE")),
 		compactFile:          strings.TrimSpace(os.Getenv("COMPACT_FILE")),
 		compactAgeCatchup:    envBool("COMPACT_AGE_CATCHUP", true),
+		compactCatchupBytes:  compactCatchupMaxBytesFromEnv(),
 		metrics: metrics.Config{
 			Enabled:                envBool("METRICS_ENABLED", true),
 			Path:                   envOr("METRICS_PATH", metrics.DefaultPath),
@@ -389,6 +391,18 @@ func envBool(key string, def bool) bool {
 		}
 	}
 	return def
+}
+
+func compactCatchupMaxBytesFromEnv() int64 {
+	raw := strings.TrimSpace(os.Getenv("COMPACT_AGE_CATCHUP_MAX_BYTES"))
+	if raw == "" {
+		return merge.DefaultCatchupMaxBytes
+	}
+	n, err := config.ParseByteSize(raw)
+	if err != nil || n <= 0 {
+		return merge.DefaultCatchupMaxBytes
+	}
+	return n
 }
 
 func (c *serverConfig) ingestConfig(mode storeingest.AuthMode) storeingest.Config {
@@ -785,28 +799,29 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	}
 
 	runner := lifecycle.NewRunner(&lifecycle.Config{
-		DataDir:               cfg.dataDir,
-		ColdDir:               cfg.coldDir,
-		ColdAfter:             cfg.coldAfter,
-		SegmentsPerTier:       cfg.segmentsPerTier,
-		MaxSegmentBytes:       cfg.maxSegmentBytes,
-		FloorBytes:            lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
-		RetentionDays:         cfg.retentionDays,
-		MaxLogFiles:           cfg.maxLogFiles,
-		LogsRefreshInterval:   cfg.logsRefreshInterval,
-		LogsRefreshMaxActions: cfg.logsRefreshMaxActs,
-		DeleteGrace:           cfg.deleteGrace,
-		RollupSteps:           cfg.rollupSteps,
-		MaxTier:               cfg.maxTier,
-		Threads:               cfg.duckdbThreads,
-		MemoryLimit:           cfg.duckdbMemoryLimit,
-		MergeSegmentFormat:    cfg.parsedMergeFormat(),
-		DuckDBStorageVersion:  cfg.duckdbStorageVersion,
-		Logger:                logger,
-		Recorder:              cfg.metricsReg,
-		Materializations:      cfg.materializations,
-		CompactAgeCatchup:     cfg.compactAgeCatchup,
-		CompactFile:           cfg.compact,
+		DataDir:                   cfg.dataDir,
+		ColdDir:                   cfg.coldDir,
+		ColdAfter:                 cfg.coldAfter,
+		SegmentsPerTier:           cfg.segmentsPerTier,
+		MaxSegmentBytes:           cfg.maxSegmentBytes,
+		FloorBytes:                lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),
+		RetentionDays:             cfg.retentionDays,
+		MaxLogFiles:               cfg.maxLogFiles,
+		LogsRefreshInterval:       cfg.logsRefreshInterval,
+		LogsRefreshMaxActions:     cfg.logsRefreshMaxActs,
+		DeleteGrace:               cfg.deleteGrace,
+		RollupSteps:               cfg.rollupSteps,
+		MaxTier:                   cfg.maxTier,
+		Threads:                   cfg.duckdbThreads,
+		MemoryLimit:               cfg.duckdbMemoryLimit,
+		MergeSegmentFormat:        cfg.parsedMergeFormat(),
+		DuckDBStorageVersion:      cfg.duckdbStorageVersion,
+		Logger:                    logger,
+		Recorder:                  cfg.metricsReg,
+		Materializations:          cfg.materializations,
+		CompactAgeCatchup:         cfg.compactAgeCatchup,
+		CompactAgeCatchupMaxBytes: cfg.compactCatchupBytes,
+		CompactFile:               cfg.compact,
 	}, eng, now)
 
 	cfg.compactor = runner
