@@ -4,7 +4,7 @@ Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/l0-window-compact-baa6`
-- **Owner phase:** developer
+- **Owner phase:** reviewer
 - **PLAN phase(s):** Store merge compaction (follow-on to prod soak vs Lucene adjacency)
 - **Ships as:** git tag `v1.0.10` → `ghcr.io/prism-utils/prism-store:1.0.10` then homelab pin
 - **Depends on:** `main` includes `COLD_DATA_DIR` (#147). Merge still writes L1 on
