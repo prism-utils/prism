@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -120,12 +121,7 @@ func compactComposeUp(t *testing.T, dataDir, catchup, compactFile, policyHost st
 		policyHost = filepath.Join("..", "..", "deploy", "compact-e2e-empty.yaml")
 	}
 	cmd := exec.Command("docker", "compose", "-p", compactComposeProject, "-f", compactComposeFile, "up", "-d", "--build", "--wait")
-	cmd.Env = append(os.Environ(),
-		"COMPACT_DATA_DIR="+dataDir,
-		"COMPACT_AGE_CATCHUP="+catchup,
-		"COMPACT_FILE="+compactFile,
-		"COMPACT_POLICY_FILE="+policyHost,
-	)
+	cmd.Env = append(os.Environ(), compactComposeEnv(dataDir, catchup, compactFile, policyHost)...)
 	cmd.Stdout = testWriter{t}
 	cmd.Stderr = testWriter{t}
 	if err := cmd.Run(); err != nil {
@@ -135,18 +131,35 @@ func compactComposeUp(t *testing.T, dataDir, catchup, compactFile, policyHost st
 	}
 }
 
+func compactComposeEnv(dataDir, catchup, compactFile, policyHost string) []string {
+	if policyHost == "" {
+		policyHost = filepath.Join("..", "..", "deploy", "compact-e2e-empty.yaml")
+	}
+	if dataDir == "" {
+		dataDir = os.TempDir()
+	}
+	return []string{
+		"COMPACT_DATA_DIR=" + dataDir,
+		"COMPACT_AGE_CATCHUP=" + catchup,
+		"COMPACT_FILE=" + compactFile,
+		"COMPACT_POLICY_FILE=" + policyHost,
+		"COMPACT_UID=" + strconv.Itoa(os.Getuid()),
+		"COMPACT_GID=" + strconv.Itoa(os.Getgid()),
+	}
+}
+
 func compactComposeDown(t *testing.T) {
 	t.Helper()
 	cmd := exec.Command("docker", "compose", "-p", compactComposeProject, "-f", compactComposeFile, "down", "-v", "--remove-orphans")
-	cmd.Env = append(os.Environ(), "COMPACT_DATA_DIR=/tmp", "COMPACT_POLICY_FILE="+filepath.Join("..", "..", "deploy", "compact-e2e-empty.yaml"))
+	cmd.Env = append(os.Environ(), compactComposeEnv(os.TempDir(), "true", "", "")...)
 	_ = cmd.Run()
 }
 
 func dumpCompactComposeLogs(t *testing.T) {
 	t.Helper()
-	cmd := exec.Command("docker", "compose", "-p", compactComposeProject, "-f", compactComposeFile, "logs", "--no-color")
+	cmd := exec.Command("docker", "logs", "--tail", "200", "prism-compact-lifecycle-prism-store-1")
 	out, _ := cmd.CombinedOutput()
-	t.Logf("compose logs:\n%s", out)
+	t.Logf("store logs:\n%s", out)
 }
 
 func countParquet(t *testing.T, dir string) int {

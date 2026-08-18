@@ -18,6 +18,7 @@ services:
       HOT_SNAPSHOT_SECONDS: "30"
       FLUSH_TICK_SECONDS: "30"
       HOT_WINDOW_SECONDS: "30"
+    user: "${COMPACT_UID:-472}:${COMPACT_GID:-472}"
     volumes:
       - ${COMPACT_DATA_DIR}:/data
       - ${COMPACT_POLICY_FILE:-./compact-e2e-empty.yaml}:/etc/prism/compact.yaml:ro
