@@ -1,6 +1,6 @@
 # Spec: Bounded L0 window compact (age catch-up + named policies)
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/l0-window-compact-baa6`
@@ -110,26 +110,26 @@ L0 count drops.
 
 ### Prism
 
-- [ ] Selector unit tests: fully-aged vs overlap; `maxSources` / `maxBytes`
+- [x] Selector unit tests: fully-aged vs overlap; `maxSources` / `maxBytes`
       shrink; sealed files excluded; `<2` sources ⇒ no action; `bucket: day`
       emits one UTC day per call (oldest eligible day first); large + small
       files in one pack when sum ≤ `maxBytes`.
-- [ ] Lucene `FindMerges` unchanged for young files (existing planner tests pass).
-- [ ] Catch-up on merge tick when Lucene returns empty (Lucene first, else
+- [x] Lucene `FindMerges` unchanged for young files (existing planner tests pass).
+- [x] Catch-up on merge tick when Lucene returns empty (Lucene first, else
       catch-up, else due named policy). Default ON.
-- [ ] `COMPACT_FILE` load/validate (name regex, duration parse, required caps,
+- [x] `COMPACT_FILE` load/validate (name regex, duration parse, required caps,
       duplicate names fail start). Empty path = no named policies.
-- [ ] `POST /admin/tenants/{ns}/compact` dry-run JSON; non-dry-run 202 enqueue;
+- [x] `POST /admin/tenants/{ns}/compact` dry-run JSON; non-dry-run 202 enqueue;
       `RUN_JOBS=false` 204; unknown tenant 404; bearer/RBAC same as ensure.
-- [ ] Enqueue is per-tenant, consumed on the next merge tick as the single
+- [x] Enqueue is per-tenant, consumed on the next merge tick as the single
       action (takes priority over catch-up that tick).
-- [ ] Executor path identical to Lucene packs (dest tier+1 on **hot** data dir,
+- [x] Executor path identical to Lucene packs (dest tier+1 on **hot** data dir,
       grace, materialize hook already on `ExecuteMerge`).
-- [ ] Docker e2e: aged L0s → L1 + compacted sidecars; `bucket: day` isolates
+- [x] Docker e2e: aged L0s → L1 + compacted sidecars; `bucket: day` isolates
       days. `requireDocker` + compose (follow `format_matrix_e2e_test.go`).
-- [ ] Tests written first (a `test:` commit precedes implementation)
-- [ ] `make lint test` green; `make e2e` covers the new compact tests
-- [ ] `STORE.md` + `CONFIG.md` document catch-up knobs, YAML schema, admin route
+- [x] Tests written first (a `test:` commit precedes implementation)
+- [x] `make lint test` green; `make e2e` covers the new compact tests
+- [x] `STORE.md` + `CONFIG.md` document catch-up knobs, YAML schema, admin route
 
 ### Homelab (after `v1.0.10` image exists — may be a follow-up PR on the same
 branch name in homelab-apps / homelab-gitops)
