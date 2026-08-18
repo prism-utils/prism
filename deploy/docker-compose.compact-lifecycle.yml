@@ -1,0 +1,30 @@
+# Compact lifecycle: aged L0 window pack with Lucene disabled (SEGMENTS_PER_TIER
+# high). Bind-mount a host data dir so tests can plant parquet under L0.
+services:
+  prism-store:
+    build:
+      context: ..
+      dockerfile: Dockerfile.store.build
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9090"
+      DATA_DIR: "/data"
+      ALLOWED_ARTIFACTS: "metrics-raw"
+      AUTH_MODE: "none"
+      RUN_JOBS: "true"
+      MERGE_TICK_SECONDS: "2"
+      SEGMENTS_PER_TIER: "100"
+      COMPACT_AGE_CATCHUP: "${COMPACT_AGE_CATCHUP:-true}"
+      COMPACT_FILE: "${COMPACT_FILE:-}"
+      HOT_SNAPSHOT_SECONDS: "30"
+      FLUSH_TICK_SECONDS: "30"
+      HOT_WINDOW_SECONDS: "30"
+    volumes:
+      - ${COMPACT_DATA_DIR}:/data
+      - ${COMPACT_POLICY_FILE:-./compact-e2e-empty.yaml}:/etc/prism/compact.yaml:ro
+    ports:
+      - "19094:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 40

@@ -42,6 +42,8 @@
 // Merge-time materializations: MATERIALIZATIONS_FILE points at a YAML list of
 // named SELECT queries run after each merge (see docs/STORE.md). Unset = off.
 // Invalid file/SQL at load fails start; a runtime SQL error skips that name.
+// Window compact: COMPACT_AGE_CATCHUP (default true) packs fully-aged L0s when
+// Lucene finds none; COMPACT_FILE is optional named policies.
 //
 // Deployment MODE (default standalone):
 //   - standalone — self-contained store (engine, ingest, jobs).
@@ -78,6 +80,7 @@ import (
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
 	"github.com/prism-utils/prism/internal/store/lifecycle"
 	"github.com/prism-utils/prism/internal/store/materialize"
+	"github.com/prism-utils/prism/internal/store/merge"
 	"github.com/prism-utils/prism/internal/store/metrics"
 	"github.com/prism-utils/prism/internal/store/query"
 	"github.com/prism-utils/prism/internal/store/queue"
@@ -193,6 +196,10 @@ type serverConfig struct {
 	metricsReg           *metrics.Registry
 	materializationsFile string
 	materializations     materialize.File
+	compactFile          string
+	compactAgeCatchup    bool
+	compact              merge.File
+	compactor            admin.Compactor
 }
 
 func loadConfig() serverConfig {
@@ -248,6 +255,8 @@ func loadConfig() serverConfig {
 		mergeSegmentFormat:   strings.ToLower(envOr("MERGE_SEGMENT_FORMAT", "parquet")),
 		duckdbStorageVersion: envOr("DUCKDB_STORAGE_VERSION", segformat.DefaultStorageVersion),
 		materializationsFile: strings.TrimSpace(os.Getenv("MATERIALIZATIONS_FILE")),
+		compactFile:          strings.TrimSpace(os.Getenv("COMPACT_FILE")),
+		compactAgeCatchup:    envBool("COMPACT_AGE_CATCHUP", true),
 		metrics: metrics.Config{
 			Enabled:                envBool("METRICS_ENABLED", true),
 			Path:                   envOr("METRICS_PATH", metrics.DefaultPath),
@@ -481,6 +490,10 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		ensureHandler := admin.EnsureHandler(adminCfg, eng, logger)
 		mux.Handle(admin.EnsureRoutePattern(), reg.Instrument(metrics.RouteAdminEnsure,
 			protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapEnsure, ensureHandler)))
+
+		compactHandler := admin.CompactHandler(adminCfg, cfg.compactor, logger)
+		mux.Handle(admin.CompactRoutePattern(), reg.Instrument(metrics.RouteAdminCompact,
+			protectAdminRoute(rbac, adminCfg.AdminToken, rbac.wrapEnsure, compactHandler)))
 
 		statsHandler := admin.StatsHandler(adminCfg, eng)
 		mux.Handle(admin.StatsRoutePattern(), reg.Instrument(metrics.RouteStats,
@@ -729,6 +742,15 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	}
 	cfg.materializations = mats
 
+	compacts, err := merge.LoadCompact(cfg.compactFile)
+	if err != nil {
+		return err
+	}
+	if err := compacts.Validate(cfg.maxSegmentBytes); err != nil {
+		return err
+	}
+	cfg.compact = compacts
+
 	flightMode, err := flightIngestAuthMode(cfg)
 	if err != nil {
 		return fmt.Errorf("auth mode: %w", err)
@@ -783,7 +805,11 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 		Logger:                logger,
 		Recorder:              cfg.metricsReg,
 		Materializations:      cfg.materializations,
+		CompactAgeCatchup:     cfg.compactAgeCatchup,
+		CompactFile:           cfg.compact,
 	}, eng, now)
+
+	cfg.compactor = runner
 
 	if cfg.runJobs {
 		startBackgroundLoop(ctx, runner, cfg, logger)

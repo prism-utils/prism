@@ -414,7 +414,7 @@ Two rules keep the series count bounded:
 
 - **Route labels are a closed set** chosen by the wiring (`healthz`, `readyz`,
   `metrics`, `ingest`, `query`, `sql`, `promql`, `loki`, `stats`,
-  `admin_queue`, `admin_ensure`) and are **never** derived from a request path.
+  `admin_queue`, `admin_ensure`, `admin_compact`) and are **never** derived from a request path.
   A tenant id can never appear in a route label. Query-plane RED uses a separate
   closed `api` label (`promql` \| `loki` \| `sql`) with the same rule.
 - **Tenant labels are opt-in and capped.** `METRICS_PER_TENANT=true` (default)
@@ -603,7 +603,31 @@ connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store conf
 - **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs (metrics tiers **and** logs landing / log tiers).
 - **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, compaction may start. `SEGMENTS_PER_TIER` is the trigger only — not the pack size. Logs landing has a second, age-based trigger (`LOGS_REFRESH_INTERVAL`, below).
 - **Pack:** once triggered, the planner packs as many time-ordered unsealed candidates as fit under `MAX_SEGMENT_BYTES` (capped by a derived `MaxMergeAtOnce` ≈ `MAX_SEGMENT_BYTES / floor`, never below `SEGMENTS_PER_TIER`), then shrinks the set down to 1 if needed so summed bytes ≤ `MAX_SEGMENT_BYTES`. Metrics tiers group by size level (floor-rounded log scale) and require a time-adjacent contiguous run (gap ≤ one segment span). Logs landing uses the same seal exclusion and fill-toward-max / shrink-to-fit rule without size-level grouping.
-- **One action per tick (metrics):** no cascade — at most one merge per tenant per merge tick, lowest tier first.
+- **One action per tick (metrics):** no cascade — at most one merge per tenant per merge tick, lowest tier first. After purging expired `.compacted` holds, the tick picks **one** of: an admin-enqueued compact, else Lucene `FindMerges` (young files, size-level + time-adjacency), else built-in **age catch-up** (default on), else the first named `COMPACT_FILE` policy whose `every` has elapsed.
+- **Age catch-up:** when Lucene returns nothing, fully-aged unsealed files (`max_ts ≤ now − 15m`) pack without adjacency, up to 32 sources or 256 MiB (including a large file that still fits). Disable with `COMPACT_AGE_CATCHUP=false`. Destination is `L{n+1}` on `DATA_DIR` (hot); catch-up never writes into `COLD_DATA_DIR`.
+- **Named window policies (`COMPACT_FILE`):** YAML `compact.policies[]` with `olderThan` / `newerThan` / optional UTC `bucket: day|hour|none`, `maxSources`, `maxBytes`, and `every`. Empty path = no named policies. Invalid names, duplicate names, or missing caps fail start. `POST /admin/tenants/{ns}/compact` dry-runs a plan (`dryRun: true` → 200) or enqueues for the next tick (202). `RUN_JOBS=false` is 204. RBAC action is `ensure`.
+
+```yaml
+compact:
+  policies:
+    - name: recent
+      tier: 0
+      olderThan: 15m
+      newerThan: 1h
+      maxSources: 32
+      maxBytes: 256Mi
+      every: 45m
+      bucket: none
+    - name: daily
+      tier: 0
+      bucket: day
+      olderThan: 1d
+      newerThan: 3d
+      maxSources: 64
+      maxBytes: 512Mi
+      every: 1h
+```
+
 - **Logs:** one tick may run up to `LOGS_REFRESH_MAX_ACTIONS` landing→L0 refreshes per artifact plus one cold-tier pack (time-ordered fill toward `MAX_SEGMENT_BYTES`, no Lucene adjacency — L0 files from merge ticks are often minutes apart). Refreshes are planned oldest-first and before the cold pack, so searchable lag stays bounded while tier catch-up still progresses.
 - **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are released only after the output is atomically renamed.
 - **Delete grace:** releasing a source does not unlink it. For `LOGS_DELETE_GRACE_SECONDS` (default 120, `0` = unlink at once) its bytes stay at the exact path they were found at, marked by a `<segment>.compacted` sidecar holding the delete deadline; the merge tick unlinks segment and marker once that deadline passes. The window exists for readers that resolve a path and open it later — a Grafana `read_parquet('…/tiers/**/*.parquet')` glob is bound before execution and DuckDB cannot skip a file that vanished, so it fails the whole panel. A held segment is not live: log landing/tier scans, metrics tier scans, the manifest, the logs catalog, and the metrics view all skip it, so it is never a merge input twice and prism's own queries never double-count its rows. A client reading the tree by glob has no such marker to consult and can see those rows twice until the purge, which is the accepted cost of the window.

@@ -1,2 +1,2 @@
-// Package admin serves tenant provisioning and billing metering HTTP endpoints.
+// Package admin serves tenant provisioning, window compact, and billing metering HTTP endpoints.
 package admin

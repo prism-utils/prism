@@ -26,7 +26,7 @@ type fakeCompactor struct {
 	lastSpec   merge.CompactSpec
 }
 
-func (f *fakeCompactor) PlanCompact(tenant string, spec merge.CompactSpec) (merge.MergeAction, bool, error) {
+func (f *fakeCompactor) PlanCompact(tenant string, spec merge.CompactSpec) (merge.MergeAction, bool, error) { //nolint:gocritic // matches Compactor
 	f.lastTenant = tenant
 	f.lastSpec = spec
 	return f.plan, f.planOK, f.planErr

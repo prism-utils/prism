@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prism-utils/prism/internal/store/engine"
@@ -86,6 +87,10 @@ type Config struct {
 	ColdAfter time.Duration
 	// Materializations are named merge-time SQL artifacts. Empty is a no-op.
 	Materializations materialize.File
+	// CompactAgeCatchup packs fully-aged unsealed files when Lucene finds none.
+	CompactAgeCatchup bool
+	// CompactFile holds named compact policies loaded at start. Empty is a no-op.
+	CompactFile merge.File
 	// Logger records per-tenant / per-file errors; nil uses slog.Default.
 	Logger *slog.Logger
 	// Recorder receives tick outcomes and file counts; nil discards them.
@@ -99,6 +104,11 @@ type Runner struct {
 	clock func() time.Time
 	log   *slog.Logger
 	rec   Recorder
+
+	enqueueMu  sync.Mutex
+	enqueue    map[string]merge.MergeAction
+	policyMu   sync.Mutex
+	policyLast map[string]time.Time
 }
 
 // NewRunner builds a lifecycle runner.
@@ -121,7 +131,15 @@ func NewRunner(cfg *Config, eng *engine.Engine, now func() time.Time) *Runner {
 	if rec == nil {
 		rec = nopRecorder{}
 	}
-	return &Runner{cfg: c, eng: eng, clock: now, log: log, rec: rec}
+	return &Runner{
+		cfg:        c,
+		eng:        eng,
+		clock:      now,
+		log:        log,
+		rec:        rec,
+		enqueue:    map[string]merge.MergeAction{},
+		policyLast: map[string]time.Time{},
+	}
 }
 
 // observed runs one maintenance pass and reports how it went. Wall time is read
@@ -205,11 +223,57 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 		return err
 	}
 	r.rec.ObserveTierSegments(tenant, len(segs))
-	actions := planner.FindMerges(segs)
-	if len(actions) == 0 {
+	action, policy, ok := r.pickMetricsMerge(tenant, planner, segs)
+	if !ok {
 		return nil
 	}
-	action := actions[0]
+	r.log.Info("compact",
+		"tenant", tenant,
+		"policy", policy,
+		"sources", len(action.Sources),
+		"bytes", mergeSourceBytes(action.Sources),
+	)
+	return r.executeMetricsMerge(tenant, action)
+}
+
+func (r *Runner) pickMetricsMerge(tenant string, planner *merge.Planner, segs []merge.Segment) (merge.MergeAction, string, bool) {
+	if action, ok := r.takeEnqueue(tenant); ok {
+		return action, "admin", true
+	}
+	if actions := planner.FindMerges(segs); len(actions) > 0 {
+		return actions[0], "lucene", true
+	}
+	now := r.clock()
+	if r.cfg.CompactAgeCatchup {
+		spec := merge.DefaultCatchupSpec()
+		spec.SealBytes = r.cfg.MaxSegmentBytes
+		if r.cfg.MaxSegmentBytes > 0 && spec.MaxBytes > r.cfg.MaxSegmentBytes {
+			spec.MaxBytes = r.cfg.MaxSegmentBytes
+		}
+		if action, ok := merge.SelectCompact(segs, now, spec); ok {
+			return action, "catchup", true
+		}
+	}
+	for i := range r.cfg.CompactFile.Policies {
+		p := &r.cfg.CompactFile.Policies[i]
+		if !r.policyDue(tenant, p, now) {
+			continue
+		}
+		spec, err := p.Spec()
+		if err != nil {
+			r.log.Error("compact policy spec", "tenant", tenant, "policy", p.Name, "err", err)
+			continue
+		}
+		spec.SealBytes = r.cfg.MaxSegmentBytes
+		if action, ok := merge.SelectCompact(segs, now, spec); ok {
+			r.markPolicyRun(tenant, p.Name, now)
+			return action, p.Name, true
+		}
+	}
+	return merge.MergeAction{}, "", false
+}
+
+func (r *Runner) executeMetricsMerge(tenant string, action merge.MergeAction) error {
 	x, err := merge.NewExecutor(merge.ExecutorConfig{
 		DataDir:              r.cfg.DataDir,
 		ColdDir:              r.cfg.ColdDir,
@@ -250,6 +314,81 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 		}
 	}
 	return r.runMaterialize(tenant, out.Path, sourcePaths(action), action.DestTier, materialize.PlaneMetrics, now)
+}
+
+// EnqueueCompact stores one merge for the next tick of this tenant, replacing
+// any previous queued action.
+func (r *Runner) EnqueueCompact(tenant string, action merge.MergeAction) {
+	r.enqueueMu.Lock()
+	defer r.enqueueMu.Unlock()
+	r.enqueue[tenant] = action
+}
+
+// PlanCompact scans live tiers and returns the compact action for spec, if any.
+func (r *Runner) PlanCompact(tenant string, spec merge.CompactSpec) (merge.MergeAction, bool, error) { //nolint:gocritic // selector bag copied once per HTTP plan
+	if spec.SealBytes <= 0 {
+		spec.SealBytes = r.cfg.MaxSegmentBytes
+	}
+	caps := merge.DuckDBCaps{Threads: r.cfg.Threads, MemoryLimit: r.cfg.MemoryLimit}
+	segs, err := merge.ScanAllTiersRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, r.cfg.MaxTier, caps)
+	if err != nil {
+		return merge.MergeAction{}, false, err
+	}
+	action, ok := merge.SelectCompact(segs, r.clock(), spec)
+	return action, ok, nil
+}
+
+// CompactPolicy looks up a named policy loaded at start.
+func (r *Runner) CompactPolicy(name string) (merge.CompactSpec, bool) {
+	p, ok := r.cfg.CompactFile.Lookup(name)
+	if !ok {
+		return merge.CompactSpec{}, false
+	}
+	spec, err := p.Spec()
+	if err != nil {
+		return merge.CompactSpec{}, false
+	}
+	return spec, true
+}
+
+func (r *Runner) takeEnqueue(tenant string) (merge.MergeAction, bool) {
+	r.enqueueMu.Lock()
+	defer r.enqueueMu.Unlock()
+	action, ok := r.enqueue[tenant]
+	if !ok {
+		return merge.MergeAction{}, false
+	}
+	delete(r.enqueue, tenant)
+	return action, true
+}
+
+func (r *Runner) policyDue(tenant string, p *merge.Policy, now time.Time) bool {
+	interval := p.Interval()
+	if interval <= 0 {
+		return false
+	}
+	key := tenant + "/" + p.Name
+	r.policyMu.Lock()
+	defer r.policyMu.Unlock()
+	last, ok := r.policyLast[key]
+	if !ok {
+		return true
+	}
+	return !now.Before(last.Add(interval))
+}
+
+func (r *Runner) markPolicyRun(tenant, name string, now time.Time) {
+	r.policyMu.Lock()
+	defer r.policyMu.Unlock()
+	r.policyLast[tenant+"/"+name] = now
+}
+
+func mergeSourceBytes(sources []merge.Segment) int64 {
+	var n int64
+	for i := range sources {
+		n += sources[i].Bytes
+	}
+	return n
 }
 
 func sourcePaths(action merge.MergeAction) []string {
