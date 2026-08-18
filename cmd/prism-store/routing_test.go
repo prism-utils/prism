@@ -105,4 +105,10 @@ func TestCombinedMuxServesAllRoutes(t *testing.T) {
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("combined mux must serve /admin/tenants/{ns}/ensure")
 	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/tenants/user-6f3a9c2b-apps/compact", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("combined mux must serve /admin/tenants/{ns}/compact")
+	}
 }
