@@ -81,20 +81,6 @@ middle L0 plus small neighbors and asserts the smalls compact to L1.
 ## 7. Reviewer notes
 
 Docker `TestCompact*` e2e green (catch-up, bucket:day, skip oversized middle).
-`make lint` 0 issues. `make test` failed only on pre-existing
-`TestE2E_LoggingThreePhaseParquet` (tmp file watcher; unrelated). Merge selector
-+ lifecycle + cmd/prism-store tests green.
-
-Status: ALL_OK
-
-## 6. Mandatory review gates  (reviewer owns)
-
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
-
-## 7. Reviewer notes
-
-_(empty until first review)_
+`make lint` 0 issues. Merge selector + lifecycle + cmd/prism-store tests green.
+`TestE2E_LoggingThreePhaseParquet` failed on a tmp-file watcher (pre-existing,
+unrelated to compact).
