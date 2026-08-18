@@ -204,6 +204,30 @@ func TestLoadConfigQueryHotOnlyFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadConfigCompactCatchupDefaultOn(t *testing.T) {
+	clearStoreEnv(t)
+	cfg := loadConfig()
+	if !cfg.compactAgeCatchup {
+		t.Fatal("COMPACT_AGE_CATCHUP must default true")
+	}
+	if cfg.compactFile != "" {
+		t.Fatalf("COMPACT_FILE default = %q, want empty", cfg.compactFile)
+	}
+}
+
+func TestLoadConfigCompactCatchupDisabled(t *testing.T) {
+	clearStoreEnv(t)
+	t.Setenv("COMPACT_AGE_CATCHUP", "false")
+	t.Setenv("COMPACT_FILE", "/etc/prism/compact.yaml")
+	cfg := loadConfig()
+	if cfg.compactAgeCatchup {
+		t.Fatal("COMPACT_AGE_CATCHUP=false must disable catch-up")
+	}
+	if cfg.compactFile != "/etc/prism/compact.yaml" {
+		t.Fatalf("compactFile = %q", cfg.compactFile)
+	}
+}
+
 func TestLoadConfigFromEnv(t *testing.T) {
 	clearStoreEnv(t)
 	t.Setenv("LISTEN_ADDR", ":9090")
@@ -252,7 +276,8 @@ func clearStoreEnv(t *testing.T) {
 		"HOT_SEGMENT_FORMAT", "MERGE_SEGMENT_FORMAT", "DUCKDB_STORAGE_VERSION",
 		"LOGS_REFRESH_INTERVAL", "LOGS_REFRESH_MAX_ACTIONS", "LOGS_DELETE_GRACE_SECONDS",
 		"COLD_DATA_DIR", "COLD_AFTER",
-		"MATERIALIZATIONS_FILE", "MEMORY_OBSERVE", "GOMEMLIMIT",
+		"MATERIALIZATIONS_FILE", "COMPACT_FILE", "COMPACT_AGE_CATCHUP",
+		"MEMORY_OBSERVE", "GOMEMLIMIT",
 		"METRICS_ENABLED", "METRICS_PATH", "METRICS_PER_TENANT",
 	} {
 		t.Setenv(k, "")

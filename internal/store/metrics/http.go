@@ -14,17 +14,18 @@ import (
 // request path: a path-derived label would mint one series per tenant, per
 // artifact, and per crafted URL.
 const (
-	RouteHealthz     = "healthz"
-	RouteReadyz      = "readyz"
-	RouteMetrics     = "metrics"
-	RouteIngest      = "ingest"
-	RouteQuery       = "query"
-	RouteSQL         = "sql"
-	RoutePromQL      = "promql"
-	RouteLoki        = "loki"
-	RouteStats       = "stats"
-	RouteAdminQueue  = "admin_queue"
-	RouteAdminEnsure = "admin_ensure"
+	RouteHealthz      = "healthz"
+	RouteReadyz       = "readyz"
+	RouteMetrics      = "metrics"
+	RouteIngest       = "ingest"
+	RouteQuery        = "query"
+	RouteSQL          = "sql"
+	RoutePromQL       = "promql"
+	RouteLoki         = "loki"
+	RouteStats        = "stats"
+	RouteAdminQueue   = "admin_queue"
+	RouteAdminEnsure  = "admin_ensure"
+	RouteAdminCompact = "admin_compact"
 )
 
 // MaxTenantLabelValues caps how many distinct tenants may appear in tenant
