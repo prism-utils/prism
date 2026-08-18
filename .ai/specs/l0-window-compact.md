@@ -1,10 +1,10 @@
 # Spec: Bounded L0 window compact (age catch-up + named policies)
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/l0-window-compact-baa6`
-- **Owner phase:** reviewer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** Store merge compaction (follow-on to prod soak vs Lucene adjacency)
 - **Ships as:** git tag `v1.0.10` → `ghcr.io/prism-utils/prism-store:1.0.10` then homelab pin
 - **Depends on:** `main` includes `COLD_DATA_DIR` (#147). Merge still writes L1 on
@@ -143,15 +143,24 @@ branch name in homelab-apps / homelab-gitops)
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Verdict: **ALL_OK** (prism merge gate). Homelab pin/chart items stay unchecked on purpose — follow-up after `v1.0.10`.
+
+**History:** `test(store/merge)` `a55e9d3` precedes `feat(store/merge)` `8797857`. Branch is current vs `origin/main`.
+
+**Checks run (this review, not trusted from developer):**
+- `make lint test` — golangci-lint 0 issues; `go test -race -tags duckdb_arrow ./...` ok
+- uncached: `go test -race -count=1 -tags duckdb_arrow` on merge/admin/lifecycle/cmd/prism-store — ok
+- `go test -tags e2e,duckdb_arrow -count=1 -timeout 10m -run TestCompact ./test/e2e/` — ok (45.147s)
+
+**Extra product checks:** Lucene `planner.go` / `executor.go` untouched (dest L1 = `layout.TierDir(DataDir, …)`); tick order enqueue → FindMerges → catch-up → named, one action; fully-aged `max_ts`; large+small when sum ≤ maxBytes; UTC day/hour buckets; admin dryRun 200 / enqueue 202 / RUN_JOBS=false 204; e2e compose `SEGMENTS_PER_TIER=100` so catch-up (not Lucene) packs, asserts L1 + `.compacted`. Comments describe local intent only (§3.8).
 
 ## 8. Behavior
 
