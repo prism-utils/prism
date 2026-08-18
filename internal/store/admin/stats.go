@@ -77,7 +77,7 @@ func BuildStatsResponse(cfg *Config, eng *engine.Engine, ns string) StatsRespons
 		resp.TotalWindows += st.Windows
 	}
 	if ns != "" {
-		if b, err := stats.TenantOnDiskBytes(cfg.DataDir, ns); err == nil {
+		if b, err := stats.TenantOnDiskBytesRoots(cfg.DataDir, cfg.ColdDir, ns); err == nil {
 			resp.OnDiskBytes = b
 		}
 		if s, err := stats.CompactionCPUSeconds(cfg.DataDir, ns); err == nil {

@@ -29,6 +29,10 @@ const emptyLokiLogsViewSQL = `SELECT ` +
 // sandboxLokiLogsSQL builds the Loki logs relation: shared list read_parquet plus
 // ingest-time column, optionally time-pruned and optionally without message.
 func sandboxLokiLogsSQL(tenantRoot string, startNs, endNs int64, omitMessage bool, recentLookback time.Duration) (string, []logFileMeta, error) {
+	return sandboxLokiLogs(tenantRoot, startNs, endNs, omitMessage, recentLookback, "")
+}
+
+func sandboxLokiLogs(tenantRoot string, startNs, endNs int64, omitMessage bool, recentLookback time.Duration, coldDir string) (string, []logFileMeta, error) {
 	opts := logsCatalogOpts{
 		StartNs:        startNs,
 		EndNs:          endNs,
@@ -37,6 +41,7 @@ func sandboxLokiLogsSQL(tenantRoot string, startNs, endNs int64, omitMessage boo
 		RecentOnly:     recentLookback > 0 && endNs <= startNs,
 		RecentLookback: recentLookback,
 		Now:            time.Now().UTC(),
+		ColdDir:        coldDir,
 	}
 	// When start is omitted (0), a configured lookback raises the open-set floor
 	// so label browsers default to recent segments. Explicit start>0 keeps cold

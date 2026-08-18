@@ -774,6 +774,8 @@ see [`STORE.md`](STORE.md).
 | `AUTHZ_RELOAD_SECONDS` | int (seconds) | `15` | Policy file reload poll interval. |
 | `CLIENT_TENANTS` | string (comma-separated) | _(empty)_ | Owned tenant namespaces in `client` mode; **required** when `MODE=client`. |
 | `CLUSTER_CLIENTS` | string | _(empty)_ | Static `tenant=http://host:port,...` map for `cluster` mode; **required** when `MODE=cluster`. |
+| `COLD_AFTER` | duration | `12h` | Age ruler for promote: a compacted L1+ file may leave `DATA_DIR` when its catalog/footer `max_ts` is at least this old. Go duration (`12h`, `6h`). Unmerged L0 never leaves, even when older. Ignored when `COLD_DATA_DIR` is empty. Zero/unparsable values keep the default. |
+| `COLD_DATA_DIR` | string | _(empty — off)_ | Second store root for compacted L1+ metrics and logs. Hot snapshots, L0, rollups, materializations, and manifests stay on `DATA_DIR`. Empty/unset is today's single-root layout. The writer (`RUN_JOBS=true`) copies eligible files crash-safely (`*.promote.tmp`, fsync, SHA-256, parquet magic, same-FS rename) and never unlinks the hot source until dest verifies. Read replicas (`RUN_JOBS=false`) only **read** both roots. |
 | `DATA_DIR` | string | `/data` | Shared data root for all tenants. |
 | `DUCKDB_MEMORY_LIMIT` | string | _(empty)_ | DuckDB `memory_limit` for tenant engines, `/sql` sandboxes, merge, and rollup workers when set. Unset ⇒ DuckDB default (~80% RAM per instance). |
 | `DUCKDB_THREADS` | int | `0` (unset) | DuckDB `threads` when `> 0` on **merge/lifecycle** (and query when `QUERY_DUCKDB_THREADS` unset). Unset ⇒ DuckDB default. Keep at `1` on small memory envelopes. |

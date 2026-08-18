@@ -58,6 +58,32 @@ func (r *Registry) buildLifecycle() {
 		Name:      "compaction_cpu_seconds_total",
 		Help:      "Wall seconds spent compacting segments, per tenant.",
 	}, []string{"tenant"})
+
+	r.promoteAttempts = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "promote_attempts_total",
+		Help:      "Compacted segments a promote pass tried to copy to the cold root.",
+	})
+	r.promoteSuccesses = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "promote_successes_total",
+		Help:      "Compacted segments verified on the cold root.",
+	})
+	r.promoteRetries = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "promote_retries_total",
+		Help:      "Promote copies that replaced a broken cold dest or will be retried.",
+	})
+	r.promoteBytes = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "promote_bytes_total",
+		Help:      "Bytes copied to the cold root after dest verification.",
+	})
+	r.promoteTmp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "promote_tmp_files",
+		Help:      "Unfinished promote temps seen at the start of the latest pass.",
+	})
 }
 
 // ObserveTickStart snapshots RSS, heap, and cgroup current before a pass.
@@ -144,6 +170,27 @@ func (r *Registry) ObserveCompactionSeconds(tenant string, seconds float64) {
 		return
 	}
 	r.compactionCPU.WithLabelValues(r.tenants.label(tenant)).Add(seconds)
+}
+
+// ObservePromote records one promote pass: files attempted, verified, retried,
+// bytes landed, and leftover temps seen before crash GC.
+func (r *Registry) ObservePromote(attempts, successes, retries int, bytes int64, tmpFiles int) {
+	if r.off() {
+		return
+	}
+	if attempts > 0 {
+		r.promoteAttempts.Add(float64(attempts))
+	}
+	if successes > 0 {
+		r.promoteSuccesses.Add(float64(successes))
+	}
+	if retries > 0 {
+		r.promoteRetries.Add(float64(retries))
+	}
+	if bytes > 0 {
+		r.promoteBytes.Add(float64(bytes))
+	}
+	r.promoteTmp.Set(float64(tmpFiles))
 }
 
 // SetLogLandingLimit publishes the configured landing-zone cap so the depth

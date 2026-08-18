@@ -79,7 +79,7 @@ func safeTenantSegmentFile(absTenantRoot, path string) (bool, error) {
 	return safeTenantParquetFile(absTenantRoot, path)
 }
 
-func listLogSegmentFiles(tenantRoot string) ([]logFileMeta, error) {
+func listLogSegmentFiles(tenantRoot, coldDir string) ([]logFileMeta, error) {
 	absRoot, err := filepath.Abs(tenantRoot)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func listLogSegmentFiles(tenantRoot string) ([]logFileMeta, error) {
 		absRoot = resolved
 	}
 	absRoot = filepath.Clean(absRoot)
-	return globalLogsMetaCache.getOrScan(absRoot)
+	return globalLogsMetaCache.getOrScan(absRoot, coldDir)
 }
 
 func attachLogsDuckDB(ctx context.Context, conn *sql.Conn, files []logFileMeta) error {

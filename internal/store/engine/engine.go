@@ -56,6 +56,7 @@ const (
 // Config holds per-tenant DuckDB engine settings.
 type Config struct {
 	DataDir              string
+	ColdDir              string
 	HotWindow            time.Duration
 	MaxOpenTenants       int
 	RowGroupSize         int
@@ -397,7 +398,7 @@ func (e *Engine) flushTenant(tenant string) error {
 		return fmt.Errorf("engine: drop hot_prev: %w", err)
 	}
 	e.clearFlushSchedule(tenant)
-	if err := metricsmeta.SyncAfterChange(context.Background(), e.cfg.DataDir, tenant); err != nil {
+	if err := metricsmeta.SyncAfterChangeRoots(context.Background(), e.cfg.DataDir, e.cfg.ColdDir, tenant); err != nil {
 		return fmt.Errorf("engine: metrics catalog: %w", err)
 	}
 	return nil

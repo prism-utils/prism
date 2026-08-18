@@ -80,3 +80,16 @@ func TestTenantLifecycleSeriesAbsentWhenPerTenantDisabled(t *testing.T) {
 	// Job-scoped lifecycle health carries no tenant, so it stays on.
 	assertContains(t, body, `prism_store_lifecycle_ticks_total{job="merge"} 1`)
 }
+
+func TestObservePromoteCounts(t *testing.T) {
+	reg := metrics.New(enabledConfig())
+	reg.ObservePromote(3, 2, 1, 4096, 4)
+	body := scrape(t, reg)
+	assertContains(t, body,
+		`prism_store_promote_attempts_total 3`,
+		`prism_store_promote_successes_total 2`,
+		`prism_store_promote_retries_total 1`,
+		`prism_store_promote_bytes_total 4096`,
+		`prism_store_promote_tmp_files 4`,
+	)
+}

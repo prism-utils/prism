@@ -228,3 +228,40 @@ func TestTickRetentionSecondPassNoError(t *testing.T) {
 		t.Fatalf("second retention pass must tolerate already-removed targets: %v", err)
 	}
 }
+
+func TestTickMergePromotesEligibleL1LeavesL0(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-24 * time.Hour)
+	l0 := filepath.Join(layout.TierDir(hot, lifecycleTenant, 0), "old.parquet")
+	l1 := filepath.Join(layout.TierDir(hot, lifecycleTenant, 1), "old.parquet")
+	testparquet.WriteSegmentWithTs(t, l0, old, "up", 1)
+	testparquet.WriteSegmentWithTs(t, l1, old, "up", 1)
+
+	eng := engine.New(engine.Config{DataDir: hot, ColdDir: cold}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+	runner := NewRunner(&Config{
+		DataDir:         hot,
+		ColdDir:         cold,
+		ColdAfter:       12 * time.Hour,
+		SegmentsPerTier: 6,
+		MaxSegmentBytes: 1 << 30,
+		MaxTier:         8,
+		RetentionDays:   15,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickMerge(); err != nil {
+		t.Fatalf("TickMerge: %v", err)
+	}
+	if _, err := os.Stat(l0); err != nil {
+		t.Fatal("L0 must remain on hot")
+	}
+	if _, err := os.Stat(l1); !os.IsNotExist(err) {
+		t.Fatal("eligible L1 must leave hot after dest verifies")
+	}
+	dest := filepath.Join(layout.TierDir(cold, lifecycleTenant, 1), "old.parquet")
+	if _, err := os.Stat(dest); err != nil {
+		t.Fatalf("cold L1 missing: %v", err)
+	}
+}

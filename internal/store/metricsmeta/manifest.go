@@ -145,9 +145,18 @@ func isSegmentName(name string) bool {
 // RebuildManifest scans hot + live tiers and records min/max ts per file.
 // Files whose bounds cannot be read are omitted (fail closed).
 func RebuildManifest(ctx context.Context, dataDir, tenant string, version uint64) (Manifest, error) {
+	return RebuildManifestRoots(ctx, dataDir, "", tenant, version)
+}
+
+// RebuildManifestRoots also lists compacted L1+ that already live on coldDir.
+func RebuildManifestRoots(ctx context.Context, dataDir, coldDir, tenant string, version uint64) (Manifest, error) {
 	tenantRoot := filepath.Join(dataDir, tenant)
 	var files []ManifestFile
+	seen := map[string]struct{}{}
 	add := func(abs, rel string) error {
+		if _, dup := seen[rel]; dup {
+			return nil
+		}
 		fi, err := os.Stat(abs)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -159,6 +168,7 @@ func RebuildManifest(ctx context.Context, dataDir, tenant string, version uint64
 		if !ok {
 			return nil
 		}
+		seen[rel] = struct{}{}
 		files = append(files, ManifestFile{
 			Path:    filepath.ToSlash(rel),
 			MinTsNs: minNs,
@@ -174,27 +184,38 @@ func RebuildManifest(ctx context.Context, dataDir, tenant string, version uint64
 		}
 	}
 
-	for tier := 0; tier <= 8; tier++ {
-		dir := layout.TierDir(dataDir, tenant, tier)
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
+	scanTiers := func(root string, minTier int) error {
+		for tier := minTier; tier <= 8; tier++ {
+			dir := layout.TierDir(root, tenant, tier)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return err
 			}
-			return Manifest{}, err
+			retired := layout.CompactedSet(entries)
+			for _, e := range entries {
+				if e.IsDir() || !isSegmentName(e.Name()) || e.Name()[0] == '.' {
+					continue
+				}
+				if _, held := retired[e.Name()]; held {
+					continue
+				}
+				rel := filepath.ToSlash(filepath.Join("tiers", fmt.Sprintf("L%d", tier), e.Name()))
+				if err := add(filepath.Join(dir, e.Name()), rel); err != nil {
+					return err
+				}
+			}
 		}
-		retired := layout.CompactedSet(entries)
-		for _, e := range entries {
-			if e.IsDir() || !isSegmentName(e.Name()) || e.Name()[0] == '.' {
-				continue
-			}
-			if _, held := retired[e.Name()]; held {
-				continue
-			}
-			rel := filepath.ToSlash(filepath.Join("tiers", fmt.Sprintf("L%d", tier), e.Name()))
-			if err := add(filepath.Join(dir, e.Name()), rel); err != nil {
-				return Manifest{}, err
-			}
+		return nil
+	}
+	if err := scanTiers(dataDir, 0); err != nil {
+		return Manifest{}, err
+	}
+	if layout.ColdEnabled(coldDir) {
+		if err := scanTiers(coldDir, 1); err != nil {
+			return Manifest{}, err
 		}
 	}
 	return Manifest{Version: version, Files: files}, nil
@@ -215,8 +236,21 @@ func SyncManifest(ctx context.Context, dataDir, tenant string) error {
 
 // SyncAfterChange bumps the generation then rewrites the catalog.
 func SyncAfterChange(ctx context.Context, dataDir, tenant string) error {
+	return SyncAfterChangeRoots(ctx, dataDir, "", tenant)
+}
+
+// SyncAfterChangeRoots rebuilds the catalog across hot and cold roots.
+func SyncAfterChangeRoots(ctx context.Context, dataDir, coldDir, tenant string) error {
 	if err := Bump(dataDir, tenant); err != nil {
 		return err
 	}
-	return SyncManifest(ctx, dataDir, tenant)
+	gen, err := ReadGeneration(dataDir, tenant)
+	if err != nil {
+		return err
+	}
+	m, err := RebuildManifestRoots(ctx, dataDir, coldDir, tenant, gen)
+	if err != nil {
+		return err
+	}
+	return WriteManifest(dataDir, tenant, m)
 }

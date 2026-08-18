@@ -21,6 +21,7 @@ const (
 // PromQLConfig holds settings for the Prometheus-compatible read API.
 type PromQLConfig struct {
 	DataDir     string
+	ColdDir     string
 	RoutePrefix string
 	// MaxSamples bounds the samples a single query may load into memory.
 	MaxSamples int

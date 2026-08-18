@@ -35,6 +35,10 @@
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
 // Grafana print-view-sql is unaffected.
+// Cold tier: COLD_DATA_DIR names a second root for compacted L1+ parquet (L0
+// and hot stay on DATA_DIR). COLD_AFTER (Go duration, default 12h) is the
+// eligibility clock from each file's max timestamp. Empty COLD_DATA_DIR keeps
+// today's single-root layout. RUN_JOBS=false still reads both roots.
 // Merge-time materializations: MATERIALIZATIONS_FILE points at a YAML list of
 // named SELECT queries run after each merge (see docs/STORE.md). Unset = off.
 // Invalid file/SQL at load fails start; a runtime SQL error skips that name.
@@ -99,6 +103,7 @@ const (
 	// long enough for a dashboard that resolved the path over a glob to finish
 	// opening it, since such a reader cannot skip a file that disappeared.
 	defaultDeleteGraceSec    = 120
+	defaultColdAfter         = 12 * time.Hour
 	defaultMaxSegmentBytes   = 2147483648
 	defaultRetentionDays     = 15
 	defaultRollupSteps       = "1m,5m,1h"
@@ -133,6 +138,8 @@ type serverConfig struct {
 	adminListenAddr      string
 	flightAddr           string
 	dataDir              string
+	coldDir              string
+	coldAfter            time.Duration
 	allowedArtifacts     []string
 	maxBodyBytes         int64
 	ingestToken          string
@@ -195,6 +202,8 @@ func loadConfig() serverConfig {
 		adminToken:           os.Getenv("ADMIN_TOKEN"),
 		flightAddr:           os.Getenv("FLIGHT_ADDR"),
 		dataDir:              envOr("DATA_DIR", defaultDataDir),
+		coldDir:              strings.TrimSpace(os.Getenv("COLD_DATA_DIR")),
+		coldAfter:            envDuration("COLD_AFTER", defaultColdAfter),
 		maxBodyBytes:         defaultMaxBodyBytes,
 		ingestToken:          os.Getenv("INGEST_TOKEN"),
 		authMode:             envOr("AUTH_MODE", defaultAuthMode),
@@ -355,6 +364,15 @@ func envInt64(key string, def int64) int64 {
 	return def
 }
 
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
+}
+
 func envBool(key string, def bool) bool {
 	if v := os.Getenv(key); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -377,6 +395,7 @@ func (c *serverConfig) ingestConfig(mode storeingest.AuthMode) storeingest.Confi
 func (c *serverConfig) adminConfig() *admin.Config {
 	return &admin.Config{
 		DataDir:          c.dataDir,
+		ColdDir:          c.coldDir,
 		AllowedArtifacts: c.allowedArtifacts,
 		AdminToken:       c.adminToken,
 		RoutePrefix:      c.routePrefix,
@@ -443,6 +462,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 	adminCfg := cfg.adminConfig()
 	queryCfg := &query.Config{
 		DataDir:     cfg.dataDir,
+		ColdDir:     cfg.coldDir,
 		RoutePrefix: cfg.routePrefix,
 		ExposeSQL:   query.ExposeSQLFromEnv(),
 		HotOnly:     cfg.queryHotOnly,
@@ -480,6 +500,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		if cfg.sqlAPIEnabled {
 			sqlCfg := &query.SQLConfig{
 				DataDir:              cfg.dataDir,
+				ColdDir:              cfg.coldDir,
 				RoutePrefix:          cfg.routePrefix,
 				MaxRows:              cfg.sqlAPIMaxRows,
 				Timeout:              cfg.sqlAPITimeout,
@@ -503,6 +524,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 
 		if cfg.promqlAPIEnabled {
 			promqlCfg := query.PromQLConfigFromEnv(cfg.dataDir, cfg.routePrefix, cfg.duckdbMemoryLimit, cfg.queryThreads())
+			promqlCfg.ColdDir = cfg.coldDir
 			promqlCfg.HotOnly = cfg.queryHotOnly
 			promqlCfg.RunJobs = cfg.runJobs
 			promqlCfg.HotWindow = cfg.hotWindow
@@ -524,6 +546,7 @@ func newServeMux(cfg *serverConfig, eng *engine.Engine, logger *slog.Logger, pla
 		if cfg.lokiAPIEnabled {
 			lokiCfg := &query.LokiConfig{
 				DataDir:        cfg.dataDir,
+				ColdDir:        cfg.coldDir,
 				RoutePrefix:    cfg.routePrefix,
 				MaxEntries:     cfg.sqlAPIMaxRows,
 				Timeout:        cfg.sqlAPITimeout,
@@ -721,6 +744,7 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	})
 	eng := engine.New(engine.Config{
 		DataDir:              cfg.dataDir,
+		ColdDir:              cfg.coldDir,
 		HotWindow:            cfg.hotWindow,
 		Threads:              cfg.duckdbThreads,
 		MemoryLimit:          cfg.duckdbMemoryLimit,
@@ -740,6 +764,8 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 
 	runner := lifecycle.NewRunner(&lifecycle.Config{
 		DataDir:               cfg.dataDir,
+		ColdDir:               cfg.coldDir,
+		ColdAfter:             cfg.coldAfter,
 		SegmentsPerTier:       cfg.segmentsPerTier,
 		MaxSegmentBytes:       cfg.maxSegmentBytes,
 		FloorBytes:            lifecycle.FloorBytesFromHotWindow(cfg.hotWindow),

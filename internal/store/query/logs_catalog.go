@@ -40,6 +40,7 @@ type logsCatalogOpts struct {
 	RecentOnly     bool
 	RecentLookback time.Duration
 	Now            time.Time
+	ColdDir        string
 }
 
 // logsFileMetaCache is a process-local cache of log file metadata per tenant root.
@@ -68,37 +69,46 @@ func InvalidateLogsMetaCache(absTenantRoot string) {
 		return
 	}
 	root := filepath.Clean(absTenantRoot)
+	keys := []string{root, absTenantRoot}
 	if abs, err := filepath.Abs(root); err == nil {
-		root = abs
-		if resolved, err := filepath.EvalSymlinks(root); err == nil {
-			root = resolved
+		keys = append(keys, abs)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			keys = append(keys, resolved)
 		}
 	}
-	delete(globalLogsMetaCache.byRoot, root)
-	delete(globalLogsMetaCache.byRoot, filepath.Clean(absTenantRoot))
+	for k := range globalLogsMetaCache.byRoot {
+		for _, key := range keys {
+			clean := filepath.Clean(key)
+			if k == clean || strings.HasPrefix(k, clean+"\x00") {
+				delete(globalLogsMetaCache.byRoot, k)
+				break
+			}
+		}
+	}
 }
 
-func (c *logsFileMetaCache) getOrScan(absTenantRoot string) ([]logFileMeta, error) {
+func (c *logsFileMetaCache) getOrScan(absTenantRoot, coldDir string) ([]logFileMeta, error) {
 	root := filepath.Clean(absTenantRoot)
+	cacheKey := root + "\x00" + coldDir
 	gen, err := logmeta.Read(filepath.Dir(root), filepath.Base(root))
 	if err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
-	if e, ok := c.byRoot[root]; ok && e.version == gen {
+	if e, ok := c.byRoot[cacheKey]; ok && e.version == gen {
 		out := append([]logFileMeta(nil), e.files...)
 		c.mu.Unlock()
 		return out, nil
 	}
 	c.mu.Unlock()
 
-	files, err := scanLogParquetFiles(root)
+	files, err := scanLogParquetFiles(root, coldDir)
 	if err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
 	c.rescans++
-	c.byRoot[root] = logsCacheEntry{files: files, version: gen}
+	c.byRoot[cacheKey] = logsCacheEntry{files: files, version: gen}
 	out := append([]logFileMeta(nil), files...)
 	c.mu.Unlock()
 	return out, nil
@@ -116,7 +126,7 @@ func (c *logsFileMetaCache) rescanCount() int {
 // refresh packs them into a tier, so search results never depend on how deep
 // that buffer currently is. When manifests match the generation stamp they are
 // preferred over directory walks.
-func scanLogParquetFiles(absTenantRoot string) ([]logFileMeta, error) {
+func scanLogParquetFiles(absTenantRoot, coldDir string) ([]logFileMeta, error) {
 	dataDir := filepath.Dir(absTenantRoot)
 	tenant := filepath.Base(absTenantRoot)
 	gen, err := logmeta.Read(dataDir, tenant)
@@ -137,7 +147,7 @@ func scanLogParquetFiles(absTenantRoot string) ([]logFileMeta, error) {
 			continue
 		}
 		artifact := e.Name()
-		files, err := scanArtifactLogFiles(absTenantRoot, dataDir, tenant, artifact, gen)
+		files, err := scanArtifactLogFiles(absTenantRoot, dataDir, coldDir, tenant, artifact, gen)
 		if err != nil {
 			return nil, err
 		}
@@ -147,60 +157,75 @@ func scanLogParquetFiles(absTenantRoot string) ([]logFileMeta, error) {
 	return out, nil
 }
 
-func scanArtifactLogFiles(absTenantRoot, dataDir, tenant, artifact string, gen uint64) ([]logFileMeta, error) {
+func scanArtifactLogFiles(absTenantRoot, dataDir, coldDir, tenant, artifact string, gen uint64) ([]logFileMeta, error) {
 	mpath := logmeta.ManifestPath(dataDir, tenant, artifact)
 	if _, err := os.Stat(mpath); err == nil {
 		m, err := logmeta.ReadManifest(dataDir, tenant, artifact)
 		if err == nil && m.Version == gen {
-			if files, ok := manifestToLogFiles(absTenantRoot, dataDir, tenant, artifact, m); ok {
+			if files, ok := manifestToLogFiles(dataDir, coldDir, tenant, artifact, m); ok {
 				return files, nil
 			}
 		}
 	}
-	// Missing, stale, or corrupt manifest: rebuild listing from disk.
+	roots := layout.AllowedTenantRoots(dataDir, coldDir, tenant)
 	var out []logFileMeta
-	artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
-	tiersRoot := filepath.Join(artifactRoot, "tiers")
-	tierEntries, err := os.ReadDir(tiersRoot)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return out, nil
+	scanTiers := func(root string, skipL0 bool) error {
+		artifactRoot := layout.LogsLandingDir(root, tenant, artifact)
+		tiersRoot := filepath.Join(artifactRoot, "tiers")
+		tierEntries, err := os.ReadDir(tiersRoot)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
 		}
+		for _, te := range tierEntries {
+			if !te.IsDir() || !strings.HasPrefix(te.Name(), "L") {
+				continue
+			}
+			if skipL0 && te.Name() == "L0" {
+				continue
+			}
+			tierFiles, err := listParquetInDir(roots, filepath.Join(tiersRoot, te.Name()), artifact)
+			if err != nil {
+				return err
+			}
+			out = append(out, tierFiles...)
+		}
+		return nil
+	}
+	if err := scanTiers(dataDir, false); err != nil {
 		return nil, err
 	}
-	for _, te := range tierEntries {
-		if !te.IsDir() || !strings.HasPrefix(te.Name(), "L") {
-			continue
-		}
-		tierFiles, err := listParquetInDir(absTenantRoot, filepath.Join(tiersRoot, te.Name()), artifact)
-		if err != nil {
+	if layout.ColdEnabled(coldDir) {
+		if err := scanTiers(coldDir, true); err != nil {
 			return nil, err
 		}
-		out = append(out, tierFiles...)
 	}
 	return out, nil
 }
 
-func manifestToLogFiles(absTenantRoot, dataDir, tenant, artifact string, m logmeta.Manifest) ([]logFileMeta, bool) {
+func manifestToLogFiles(dataDir, coldDir, tenant, artifact string, m logmeta.Manifest) ([]logFileMeta, bool) {
 	if len(m.Files) == 0 {
 		return nil, true
 	}
-	artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
+	roots := layout.AllowedTenantRoots(dataDir, coldDir, tenant)
 	out := make([]logFileMeta, 0, len(m.Files))
 	for _, f := range m.Files {
 		if !isLogTierRelPath(f.Path) {
 			continue
 		}
-		abs := filepath.Join(artifactRoot, filepath.FromSlash(f.Path))
-		ok, err := safeTenantParquetFile(absTenantRoot, abs)
-		if err != nil || !ok {
+		rel := filepath.ToSlash(filepath.Join("logs", artifact, filepath.FromSlash(f.Path)))
+		abs, ok := layout.ResolveRel(dataDir, coldDir, tenant, rel)
+		if !ok {
 			return nil, false
 		}
-		fi, err := os.Stat(abs) //nolint:gosec // G703: path validated inside tenant root
+		allowed, err := safeTenantParquetInRoots(roots, abs)
+		if err != nil || !allowed {
+			return nil, false
+		}
+		fi, err := os.Stat(abs) //nolint:gosec // G703: path validated inside tenant roots
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, false
-			}
 			return nil, false
 		}
 		minNs, maxNs := f.MinTsNs, f.MaxTsNs
@@ -227,7 +252,7 @@ func isLogTierRelPath(rel string) bool {
 	return strings.HasPrefix(filepath.ToSlash(rel), "tiers/")
 }
 
-func listParquetInDir(absTenantRoot, dir, artifact string) ([]logFileMeta, error) {
+func listParquetInDir(roots []string, dir, artifact string) ([]logFileMeta, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -252,7 +277,7 @@ func listParquetInDir(absTenantRoot, dir, artifact string) ([]logFileMeta, error
 			continue
 		}
 		match := filepath.Join(dir, e.Name())
-		ok, err := safeTenantParquetFile(absTenantRoot, match)
+		ok, err := safeTenantParquetInRoots(roots, match)
 		if err != nil {
 			return nil, err
 		}
@@ -414,7 +439,7 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 	}
 	absRoot = filepath.Clean(absRoot)
 
-	files, err := globalLogsMetaCache.getOrScan(absRoot)
+	files, err := globalLogsMetaCache.getOrScan(absRoot, opts.ColdDir)
 	if err != nil {
 		return "", nil, err
 	}

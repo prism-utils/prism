@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/prism-utils/prism/internal/store/engine"
@@ -13,7 +14,9 @@ import (
 	"github.com/prism-utils/prism/internal/store/materialize"
 	"github.com/prism-utils/prism/internal/store/merge"
 	"github.com/prism-utils/prism/internal/store/metricsmeta"
+	"github.com/prism-utils/prism/internal/store/promote"
 	"github.com/prism-utils/prism/internal/store/rollup"
+	"github.com/prism-utils/prism/internal/store/seed"
 	"github.com/prism-utils/prism/internal/store/segformat"
 	"github.com/prism-utils/prism/internal/store/stats"
 )
@@ -24,6 +27,7 @@ const (
 	JobHotSnapshot = "hot_snapshot"
 	JobFlush       = "flush"
 	JobMerge       = "merge"
+	JobPromote     = "promote"
 	JobRetention   = "retention"
 )
 
@@ -36,6 +40,7 @@ type Recorder interface {
 	ObserveTierSegments(tenant string, files int)
 	ObserveLogLandingFiles(tenant, artifact string, files int)
 	ObserveCompactionSeconds(tenant string, seconds float64)
+	ObservePromote(attempts, successes, retries int, bytes int64, tmpFiles int)
 }
 
 // nopRecorder keeps every tick path free of nil checks.
@@ -46,6 +51,7 @@ func (nopRecorder) ObserveTickStart(string)                    {}
 func (nopRecorder) ObserveTierSegments(string, int)            {}
 func (nopRecorder) ObserveLogLandingFiles(string, string, int) {}
 func (nopRecorder) ObserveCompactionSeconds(string, float64)   {}
+func (nopRecorder) ObservePromote(int, int, int, int64, int)   {}
 
 // Config drives background merge and retention passes.
 type Config struct {
@@ -72,6 +78,12 @@ type Config struct {
 	// still live can finish opening it. Zero deletes as soon as the merge
 	// output is durable.
 	DeleteGrace time.Duration
+	// ColdDir is a second data root for compacted L1+ segments. Empty disables
+	// promote and dual-root scans.
+	ColdDir string
+	// ColdAfter is how old a compacted segment's max timestamp must be before
+	// it may leave the hot root. Zero means twelve hours.
+	ColdAfter time.Duration
 	// Materializations are named merge-time SQL artifacts. Empty is a no-op.
 	Materializations materialize.File
 	// Logger records per-tenant / per-file errors; nil uses slog.Default.
@@ -171,6 +183,11 @@ func (r *Runner) tickMerge() error {
 		if _, err := merge.PurgeCompacted(r.cfg.DataDir, tenant, r.cfg.MaxTier, now); err != nil {
 			r.log.Error("purge compacted sources", "tenant", tenant, "err", err)
 		}
+		if layout.ColdEnabled(r.cfg.ColdDir) {
+			if _, err := merge.PurgeCompacted(r.cfg.ColdDir, tenant, r.cfg.MaxTier, now); err != nil {
+				r.log.Error("purge compacted cold sources", "tenant", tenant, "err", err)
+			}
+		}
 		if err := r.mergeTenant(tenant, planner); err != nil {
 			r.log.Error("merge tenant", "tenant", tenant, "err", err)
 		}
@@ -178,12 +195,12 @@ func (r *Runner) tickMerge() error {
 			r.log.Error("merge logs tenant", "tenant", tenant, "err", err)
 		}
 	}
-	return nil
+	return r.tickPromote()
 }
 
 func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 	caps := merge.DuckDBCaps{Threads: r.cfg.Threads, MemoryLimit: r.cfg.MemoryLimit}
-	segs, err := merge.ScanAllTiers(r.cfg.DataDir, tenant, r.cfg.MaxTier, caps)
+	segs, err := merge.ScanAllTiersRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, r.cfg.MaxTier, caps)
 	if err != nil {
 		return err
 	}
@@ -195,6 +212,7 @@ func (r *Runner) mergeTenant(tenant string, planner *merge.Planner) error {
 	action := actions[0]
 	x, err := merge.NewExecutor(merge.ExecutorConfig{
 		DataDir:              r.cfg.DataDir,
+		ColdDir:              r.cfg.ColdDir,
 		Tenant:               tenant,
 		Threads:              r.cfg.Threads,
 		MemoryLimit:          r.cfg.MemoryLimit,
@@ -278,7 +296,7 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 			return err
 		}
 		r.rec.ObserveLogLandingFiles(tenant, artifact, len(landing))
-		tiers, err := merge.ScanLogTiers(r.cfg.DataDir, tenant, artifact, r.cfg.MaxTier)
+		tiers, err := merge.ScanLogTiersRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact, r.cfg.MaxTier)
 		if err != nil {
 			return err
 		}
@@ -287,6 +305,7 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 			action.Artifact = artifact
 			x, err := merge.NewExecutor(merge.ExecutorConfig{
 				DataDir:              r.cfg.DataDir,
+				ColdDir:              r.cfg.ColdDir,
 				Tenant:               tenant,
 				Threads:              r.cfg.Threads,
 				MemoryLimit:          r.cfg.MemoryLimit,
@@ -312,7 +331,7 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 			if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
 				return err
 			}
-			if err := logmeta.SyncManifest(r.cfg.DataDir, tenant, artifact); err != nil {
+			if err := logmeta.SyncManifestRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact); err != nil {
 				return err
 			}
 			// A refresh is what publishes buffered rows, so this is where their
@@ -350,7 +369,7 @@ func (r *Runner) tickRetention() error {
 	cutoff := now.Add(-time.Duration(retDays) * 24 * time.Hour)
 
 	for _, tenant := range tenants {
-		segs, err := merge.ScanAllTiers(r.cfg.DataDir, tenant, r.cfg.MaxTier, merge.DuckDBCaps{
+		segs, err := merge.ScanAllTiersRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, r.cfg.MaxTier, merge.DuckDBCaps{
 			Threads: r.cfg.Threads, MemoryLimit: r.cfg.MemoryLimit,
 		})
 		if err != nil {
@@ -362,7 +381,7 @@ func (r *Runner) tickRetention() error {
 					r.log.Error("retention delete segment", "tenant", tenant, "path", del.Segment.Path, "err", err)
 				}
 			}
-			if err := metricsmeta.SyncAfterChange(context.Background(), r.cfg.DataDir, tenant); err != nil {
+			if err := metricsmeta.SyncAfterChangeRoots(context.Background(), r.cfg.DataDir, r.cfg.ColdDir, tenant); err != nil {
 				r.log.Error("retention metrics catalog", "tenant", tenant, "err", err)
 			}
 		}
@@ -385,7 +404,7 @@ func (r *Runner) retainLogsTenant(tenant string, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		tiers, err := merge.ScanLogTiers(r.cfg.DataDir, tenant, artifact, r.cfg.MaxTier)
+		tiers, err := merge.ScanLogTiersRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact, r.cfg.MaxTier)
 		if err != nil {
 			return err
 		}
@@ -428,7 +447,7 @@ func (r *Runner) retainLogsTenant(tenant string, now time.Time) error {
 			return err
 		}
 		for _, artifact := range artifacts {
-			if err := logmeta.SyncManifest(r.cfg.DataDir, tenant, artifact); err != nil {
+			if err := logmeta.SyncManifestRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact); err != nil {
 				return err
 			}
 		}
@@ -492,6 +511,103 @@ func listTenants(dataDir string) ([]string, error) {
 		}
 	}
 	return tenants, nil
+}
+
+func (r *Runner) tickPromote() error {
+	if !promote.Enabled(r.cfg.ColdDir) {
+		return nil
+	}
+	return r.observed(JobPromote, r.promoteAll)
+}
+
+func (r *Runner) promoteAll() error {
+	tenants, err := listTenants(r.cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	cfg := r.promoteConfig()
+	var acc promote.Stats
+	var first error
+	for _, tenant := range tenants {
+		if err := seed.EnsureLogsLayoutForTenant(r.cfg.ColdDir, tenant); err != nil {
+			r.log.Error("seed cold logs layout", "tenant", tenant, "err", err)
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		st, err := promote.Tenant(&cfg, tenant)
+		acc.Attempts += st.Attempts
+		acc.Successes += st.Successes
+		acc.Retries += st.Retries
+		acc.Bytes += st.Bytes
+		acc.TmpFiles += st.TmpFiles
+		if err != nil {
+			r.log.Error("promote tenant", "tenant", tenant, "err", err)
+			if first == nil {
+				first = err
+			}
+		}
+	}
+	r.rec.ObservePromote(acc.Attempts, acc.Successes, acc.Retries, acc.Bytes, acc.TmpFiles)
+	return first
+}
+
+func (r *Runner) promoteConfig() promote.Config {
+	return promote.Config{
+		DataDir: r.cfg.DataDir,
+		ColdDir: r.cfg.ColdDir,
+		After:   r.cfg.ColdAfter,
+		MaxTier: r.cfg.MaxTier,
+		Grace:   r.cfg.DeleteGrace,
+		Now:     r.clock,
+		MaxTs:   r.fileMaxTs,
+		AfterPromote: func(tenant string) error {
+			return r.afterPromote(tenant)
+		},
+		HoldSource: merge.HoldPath,
+	}
+}
+
+func (r *Runner) fileMaxTs(path string) (time.Time, bool) {
+	if strings.Contains(filepath.ToSlash(path), "/logs/") {
+		seg, err := merge.StatLogSegment(path, 1)
+		if err != nil || seg.MaxTs.IsZero() {
+			return time.Time{}, false
+		}
+		return seg.MaxTs.UTC(), true
+	}
+	_, maxNs, ok := metricsmeta.FileBounds(context.Background(), path)
+	if !ok || maxNs == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, maxNs).UTC(), true
+}
+
+func (r *Runner) afterPromote(tenant string) error {
+	if err := metricsmeta.SyncAfterChangeRoots(context.Background(), r.cfg.DataDir, r.cfg.ColdDir, tenant); err != nil {
+		return err
+	}
+	if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
+		return err
+	}
+	seen := map[string]struct{}{}
+	for _, root := range []string{r.cfg.DataDir, r.cfg.ColdDir} {
+		artifacts, err := merge.ListLogArtifacts(root, tenant)
+		if err != nil {
+			return err
+		}
+		for _, artifact := range artifacts {
+			if _, ok := seen[artifact]; ok {
+				continue
+			}
+			seen[artifact] = struct{}{}
+			if err := logmeta.SyncManifestRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // FloorBytesFromHotWindow estimates Lucene floor segment bytes from flush cadence.

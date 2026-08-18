@@ -157,7 +157,7 @@ func (e *Engine) finishLogLand(tenant, artifact string) error {
 	if err := logmeta.Bump(e.cfg.DataDir, tenant); err != nil {
 		return err
 	}
-	if err := logmeta.SyncManifest(e.cfg.DataDir, tenant, artifact); err != nil {
+	if err := logmeta.SyncManifestRoots(e.cfg.DataDir, e.cfg.ColdDir, tenant, artifact); err != nil {
 		return err
 	}
 	return logmeta.CarryLabelIndex(e.cfg.DataDir, tenant, prevGen)

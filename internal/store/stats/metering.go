@@ -35,6 +35,27 @@ func TenantOnDiskBytes(dataDir, tenant string) (int64, error) {
 	return total, nil
 }
 
+// TenantOnDiskBytesRoots adds cold-root tenant bytes when coldDir is set.
+func TenantOnDiskBytesRoots(dataDir, coldDir, tenant string) (int64, error) {
+	hot, err := TenantOnDiskBytes(dataDir, tenant)
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(coldDir) == "" {
+		return hot, nil
+	}
+	root := filepath.Join(coldDir, tenant)
+	var extra int64
+	for _, rel := range []string{"tiers", "logs"} {
+		n, err := dirBytes(filepath.Join(root, rel))
+		if err != nil {
+			return 0, err
+		}
+		extra += n
+	}
+	return hot + extra, nil
+}
+
 // CompactionCPUSeconds returns cumulative compaction CPU-seconds for a tenant.
 func CompactionCPUSeconds(dataDir, tenant string) (float64, error) {
 	data, err := readMetering(dataDir, tenant)

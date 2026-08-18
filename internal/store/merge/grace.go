@@ -147,6 +147,12 @@ func purgeHeldSegment(segmentPath, markerPath string, now time.Time) (bool, erro
 	return segmentPresent, nil
 }
 
+// HoldPath records a delete-grace marker beside a live segment so readers that
+// already resolved its path can finish opening it.
+func HoldPath(path string, until time.Time) error {
+	return writeCompactedMarker(path, until)
+}
+
 // PurgeCompacted reclaims every expired hold of one tenant — metrics tiers,
 // log landing zones, and log tiers — and returns how many segments it deleted.
 func PurgeCompacted(dataDir, tenant string, maxTier int, now time.Time) (int, error) {

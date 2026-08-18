@@ -19,6 +19,7 @@ import (
 	"github.com/prism-utils/prism/internal/store/engine"
 	"github.com/prism-utils/prism/internal/store/httperr"
 	storeingest "github.com/prism-utils/prism/internal/store/ingest"
+	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/materialize"
 	"github.com/prism-utils/prism/internal/store/metrics"
 	storetenant "github.com/prism-utils/prism/internal/store/tenant"
@@ -49,6 +50,7 @@ var (
 // SQLConfig holds arbitrary SQL API settings.
 type SQLConfig struct {
 	DataDir      string
+	ColdDir      string
 	RoutePrefix  string
 	MaxRows      int
 	Timeout      time.Duration
@@ -229,10 +231,12 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			Start:     sqlWindowStart(r, req),
 			End:       sqlWindowEnd(r, req),
 			HotWindow: cfg.HotWindow,
+			ColdDir:   cfg.ColdDir,
 		}, sandboxLimits{
 			MemoryLimit: cfg.MemoryLimit,
 			Threads:     cfg.Threads,
 			MatNames:    cfg.MaterializationNames,
+			ColdDir:     cfg.ColdDir,
 		})
 		if err != nil {
 			writeSQLErr(w, ctx, err, logger, ns, "sql sandbox")
@@ -281,11 +285,17 @@ func prepareMetricsSandboxConn(ctx context.Context, tenantRoot string, hotOnly b
 }
 
 func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts *metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
+	if opts == nil {
+		opts = &metricsOpenOpts{}
+	}
+	if opts.ColdDir == "" {
+		opts.ColdDir = limits.ColdDir
+	}
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits, metrics.RolePromQL)
 	if err != nil {
 		return nil, nil, err
 	}
-	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, opts)
+	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, limits.ColdDir, opts)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -300,17 +310,23 @@ func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts *metrics
 
 // prepareSandboxConn opens the /sql sandbox: metrics + logs views.
 func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
+	if opts == nil {
+		opts = &metricsOpenOpts{}
+	}
+	if opts.ColdDir == "" {
+		opts.ColdDir = limits.ColdDir
+	}
 	conn, cleanup, err := openSandboxConn(ctx, tenantRoot, limits, metrics.RoleSQL)
 	if err != nil {
 		return nil, nil, err
 	}
-	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, opts)
+	pins, err := bindPinnedMetricsView(ctx, conn, tenantRoot, limits.ColdDir, opts)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
 	cleanup = withPinnedCleanup(cleanup, pins)
-	logFiles, err := listLogSegmentFiles(tenantRoot)
+	logFiles, err := listLogSegmentFiles(tenantRoot, limits.ColdDir)
 	if err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
@@ -359,7 +375,7 @@ func bindMaterializationViews(ctx context.Context, conn *sql.Conn, tenantRoot st
 	return nil
 }
 
-func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot string, opts *metricsOpenOpts) (hotPins, error) {
+func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot, coldDir string, opts *metricsOpenOpts) (hotPins, error) {
 	sources, err := collectMetricsSources(ctx, tenantRoot, opts)
 	if err != nil {
 		return hotPins{}, err
@@ -369,8 +385,14 @@ func bindPinnedMetricsView(ctx context.Context, conn *sql.Conn, tenantRoot strin
 		return hotPins{}, err
 	}
 	if pins.extraDir != "" {
-		q := fmt.Sprintf("SET allowed_directories=[%s, %s]",
-			quoteSQLPath(tenantRoot), quoteSQLPath(pins.extraDir))
+		quoted := []string{quoteSQLPath(tenantRoot), quoteSQLPath(pins.extraDir)}
+		if layout.ColdEnabled(coldDir) {
+			coldTenant := layout.TenantDir(coldDir, filepath.Base(tenantRoot))
+			if st, err := os.Stat(coldTenant); err == nil && st.IsDir() {
+				quoted = append(quoted, quoteSQLPath(coldTenant))
+			}
+		}
+		q := fmt.Sprintf("SET allowed_directories=[%s]", strings.Join(quoted, ", "))
 		if _, err := conn.ExecContext(ctx, q); err != nil {
 			pins.cleanup()
 			return hotPins{}, fmt.Errorf("allow pin dir: %w", err)
@@ -470,6 +492,7 @@ type sandboxLimits struct {
 	MemoryLimit string
 	Threads     int
 	MatNames    []string
+	ColdDir     string
 }
 
 func applySandboxBootstrap(ctx context.Context, conn *sql.Conn, tenantRoot string, limits sandboxLimits) error {
@@ -489,7 +512,15 @@ func applySandboxBootstrap(ctx context.Context, conn *sql.Conn, tenantRoot strin
 			return fmt.Errorf("query: sandbox bootstrap: %w", err)
 		}
 	}
-	dirSet := fmt.Sprintf("SET allowed_directories=[%s]", quoteSQLPath(tenantRoot))
+	quoted := make([]string, 0, 2)
+	quoted = append(quoted, quoteSQLPath(tenantRoot))
+	if layout.ColdEnabled(limits.ColdDir) {
+		coldTenant := layout.TenantDir(limits.ColdDir, filepath.Base(tenantRoot))
+		if st, err := os.Stat(coldTenant); err == nil && st.IsDir() {
+			quoted = append(quoted, quoteSQLPath(coldTenant))
+		}
+	}
+	dirSet := fmt.Sprintf("SET allowed_directories=[%s]", strings.Join(quoted, ", "))
 	if _, err := conn.ExecContext(ctx, dirSet); err != nil {
 		return fmt.Errorf("query: sandbox allowed_directories: %w", err)
 	}
@@ -774,7 +805,11 @@ func collectSafeParquetPaths(absTenantRoot, tenantRoot string, hotOnly bool) ([]
 }
 
 func safeTenantParquetFile(absTenantRoot, path string) (bool, error) {
-	fi, err := os.Lstat(path) //nolint:gosec // G703: path is collected from tenant-scoped globs under absTenantRoot
+	return safeTenantParquetInRoots([]string{absTenantRoot}, path)
+}
+
+func safeTenantParquetInRoots(roots []string, path string) (bool, error) {
+	fi, err := os.Lstat(path) //nolint:gosec // G703: path is collected from tenant-scoped listings
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -795,7 +830,7 @@ func safeTenantParquetFile(absTenantRoot, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !pathUnderTenantRoot(absTenantRoot, abs) {
+	if !layout.PathUnderAny(roots, abs) {
 		return false, nil
 	}
 	return true, nil
