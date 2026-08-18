@@ -1,6 +1,6 @@
 # Spec: Compact takePrefix skips files that do not fit
 
-Status: READY
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/compact-skip-prefix-baa6`
@@ -64,11 +64,28 @@ middle L0 plus small neighbors and asserts the smalls compact to L1.
 - [x] `takePrefix` skips a file that does not fit remaining budget and continues
 - [x] Unit test: `80, 200, 80` with `maxBytes=160` packs the two 80s (not empty)
 - [x] Unit test: consecutive files that fit still form a contiguous prefix
-- [ ] Docker e2e: oversized middle L0 skipped; small aged L0s compact to L1
+- [x] Docker e2e: oversized middle L0 skipped; small aged L0s compact to L1
 - [x] `COMPACT_AGE_CATCHUP_MAX_BYTES` env (default 256Mi)
 - [x] Docs mention skip-not-fit behavior and the env knob
-- [ ] Tests written first (a `test:` commit precedes implementation)
-- [ ] `make lint test` green; `make e2e` covers the new compact skip test
+- [x] Tests written first (a `test:` commit precedes implementation)
+- [x] `make lint test` green; `make e2e` covers the new compact skip test
+
+## 6. Mandatory review gates  (reviewer owns)
+
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
+
+## 7. Reviewer notes
+
+Docker `TestCompact*` e2e green (catch-up, bucket:day, skip oversized middle).
+`make lint` 0 issues. `make test` failed only on pre-existing
+`TestE2E_LoggingThreePhaseParquet` (tmp file watcher; unrelated). Merge selector
++ lifecycle + cmd/prism-store tests green.
+
+Status: ALL_OK
 
 ## 6. Mandatory review gates  (reviewer owns)
 
