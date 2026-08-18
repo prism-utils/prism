@@ -145,7 +145,7 @@ compact:
 	aged := time.Now().UTC().Add(-20 * time.Minute)
 	l0 := filepath.Join(dataDir, compactTenant, "tiers", "L0")
 	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "small-a.parquet"), aged, "up", 1)
-	writeWideAgedParquet(t, filepath.Join(l0, "large.parquet"), aged.Add(time.Minute), 8000)
+	writeWideAgedParquet(t, filepath.Join(l0, "large.parquet"), aged.Add(time.Minute), 20000)
 	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "small-b.parquet"), aged.Add(2*time.Minute), "up", 2)
 	testparquet.WriteSegmentWithTs(t, filepath.Join(l0, "small-c.parquet"), aged.Add(3*time.Minute), "up", 3)
 	require.NoError(t, chmodTree(dataDir, 0o777))
@@ -287,7 +287,10 @@ func writeWideAgedParquet(t *testing.T, path string, ts time.Time, rows int) {
 	tmp := path + ".tmp"
 	q := fmt.Sprintf(`
 		COPY (
-			SELECT 'up' AS "__name__", '{}' AS labels, 1.0 AS value, 0 AS timestamp_ms,
+			SELECT 'up' AS "__name__",
+			       '{"id":"' || range::VARCHAR || '"}' AS labels,
+			       range::DOUBLE AS value,
+			       0 AS timestamp_ms,
 			       CAST('%s' AS TIMESTAMP) AS ts
 			FROM range(%d)
 		) TO '%s' (FORMAT parquet)
