@@ -3,6 +3,7 @@ package admin
 // Config holds admin HTTP settings.
 type Config struct {
 	DataDir          string
+	ColdDir          string
 	AllowedArtifacts []string
 	AdminToken       string
 	RoutePrefix      string

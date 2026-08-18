@@ -111,9 +111,24 @@ func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) 
 
 // ScanLogTiers returns segments from L0..maxTier for one logs artifact.
 func ScanLogTiers(dataDir, tenant, artifact string, maxTier int) ([]Segment, error) {
+	return ScanLogTiersRoots(dataDir, "", tenant, artifact, maxTier)
+}
+
+// ScanLogTiersRoots unions hot and cold log tiers. L0 is only read from dataDir.
+func ScanLogTiersRoots(dataDir, coldDir, tenant, artifact string, maxTier int) ([]Segment, error) {
 	var all []Segment
 	for tier := 0; tier <= maxTier; tier++ {
 		segs, err := ScanLogTier(dataDir, tenant, artifact, tier)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, segs...)
+	}
+	if coldDir == "" {
+		return all, nil
+	}
+	for tier := 1; tier <= maxTier; tier++ {
+		segs, err := ScanLogTier(coldDir, tenant, artifact, tier)
 		if err != nil {
 			return nil, err
 		}

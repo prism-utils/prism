@@ -63,6 +63,8 @@ func (s *spyRecorder) ObserveCompactionSeconds(tenant string, seconds float64) {
 	s.compactions[tenant] += seconds
 }
 
+func (s *spyRecorder) ObservePromote(int, int, int, int64, int) {}
+
 func (s *spyRecorder) jobs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

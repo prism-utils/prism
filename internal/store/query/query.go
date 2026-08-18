@@ -39,6 +39,7 @@ const (
 // Builder constructs unified-view SQL without union_by_name or filename.
 type Builder struct {
 	DataDir   string
+	ColdDir   string
 	HotOnly   bool
 	HotWindow time.Duration
 }
@@ -76,6 +77,7 @@ func (b *Builder) buildSQL(ctx context.Context, req *Request, db *sql.DB) (strin
 			Start:     req.Start,
 			End:       req.End,
 			HotWindow: b.HotWindow,
+			ColdDir:   b.ColdDir,
 		})
 		if err != nil {
 			return "", nil, err

@@ -98,6 +98,30 @@ func TestTenantOnDiskBytesIgnoresLegacyMetricsRaw(t *testing.T) {
 	}
 }
 
+func TestTenantOnDiskBytesRootsAddsColdTiers(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	writeFile(t, filepath.Join(hot, testTenant, "tiers", "L0", "a.parquet"), []byte("hotl0"))
+	writeFile(t, filepath.Join(cold, testTenant, "tiers", "L1", "b.parquet"), []byte("coldl1"))
+	writeFile(t, filepath.Join(cold, testTenant, "logs", "logs-raw", "c.parquet"), []byte("log"))
+
+	got, err := TenantOnDiskBytesRoots(hot, cold, testTenant)
+	if err != nil {
+		t.Fatalf("bytes: %v", err)
+	}
+	want := int64(len("hotl0") + len("coldl1") + len("log"))
+	if got != want {
+		t.Fatalf("want %d on-disk bytes, got %d", want, got)
+	}
+	hotOnly, err := TenantOnDiskBytesRoots(hot, "", testTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hotOnly != int64(len("hotl0")) {
+		t.Fatalf("empty cold dir must match hot-only sum, got %d", hotOnly)
+	}
+}
+
 func writeFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {

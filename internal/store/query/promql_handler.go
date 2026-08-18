@@ -166,6 +166,7 @@ func (h *promQLHandler) withSandbox(w http.ResponseWriter, r *http.Request, fn f
 	conn, cleanup, err := prepareMetricsSandbox(ctx, absRoot, opts, sandboxLimits{
 		MemoryLimit: h.cfg.MemoryLimit,
 		Threads:     h.cfg.Threads,
+		ColdDir:     h.cfg.ColdDir,
 	})
 	if err != nil {
 		if apiErr := execErrorIfCtx(ctx, err); apiErr != nil {

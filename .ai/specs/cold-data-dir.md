@@ -1,6 +1,6 @@
 # Spec: Cold data dir (`COLD_DATA_DIR`) — promote L1+ off the hot disk
 
-Status: DRAFT
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 <!-- Phase 0: open questions live in the homelab-apps orchestrator spec. Do not implement until both specs are READY. -->
 
@@ -33,20 +33,20 @@ GC stale temps, never delete the hot source until the cold dest is verified.
 
 Mirrored from the homelab spec — answer there; copy the A: line here.
 
-- [ ] Q1: prism `COLD_DATA_DIR` in scope (vs Helm-only L1 bind-mount)? — A: PENDING
-- [ ] Q2: 12h clock = catalog `max_ts_ns`? — A: PENDING
-- [ ] Q3: merge still writes L1+ on hot, promote copies after? — A: PENDING
-- [ ] Q4: logs L1+ cold; rollups/mats/manifest stay hot? — A: PENDING
-- [ ] Q5: prod host path (apps/gitops, not this repo) — A: N/A here
-- [ ] Q6: migrate existing hot L1+ via promote? — A: PENDING
-- [ ] Q7: Grafana dual glob vs per-tier bind-mount — A: PENDING
+- [x] Q1: prism `COLD_DATA_DIR` in scope (vs Helm-only L1 bind-mount)? — A: yes
+- [x] Q2: 12h clock = catalog `max_ts_ns`? — A: yes
+- [x] Q3: merge still writes L1+ on hot, promote copies after? — A: yes
+- [x] Q4: logs L1+ cold; rollups/mats/manifest stay hot? — A: yes
+- [x] Q5: prod host path (apps/gitops, not this repo) — A: `/data/k8s/prism-store`
+- [x] Q6: migrate existing hot L1+ via promote? — A: yes
+- [x] Q7: Grafana dual glob vs per-tier bind-mount — A: two globs
   (“worse promote” on bind-mount = merge COPY writes L1 straight to HDD;
   no SSD canonical file to checksum/retry-copy from. Dual glob keeps two
   roots so promote can copy SSD→HDD. Engine HTTP query still unions both
   roots either way.)
-- [ ] Q8: SHA-256 + parquet open before unlink source? — A: PENDING
-- [ ] Q9: two `t.TempDir()`s in tests; no k3d requirement — A: PENDING
-- [ ] Q10: POSIX local now; network FS = same loop later — A: PENDING
+- [x] Q8: SHA-256 + parquet open before unlink source? — A: yes
+- [x] Q9: two `t.TempDir()`s in tests; no k3d requirement — A: yes
+- [x] Q10: POSIX local now; network FS = same loop later — A: yes
 
 ## 4. Decision log  (Decision Protocol — .ai/workflows/feature-loop.md)
 
@@ -61,19 +61,19 @@ Mirrored from the homelab spec — answer there; copy the A: line here.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `COLD_DATA_DIR` empty/unset: identical layout and query behavior to today
-- [ ] L0 never promoted, including when `max_ts` is older than `COLD_AFTER`
-- [ ] Eligible L1+ copied to cold with unique `*.promote.tmp`, fsync, checksum,
+- [x] `COLD_DATA_DIR` empty/unset: identical layout and query behavior to today
+- [x] L0 never promoted, including when `max_ts` is older than `COLD_AFTER`
+- [x] Eligible L1+ copied to cold with unique `*.promote.tmp`, fsync, checksum,
       same-FS rename; hot unlinked only after dest verifies (plus existing delete
       grace if still required for globbing clients)
-- [ ] Kill mid-copy: tmp GC’d; no truncated canonical dest; source intact; retry
-- [ ] Checksum mismatch / short write: dest not published; source kept
-- [ ] `ScanAllTiers` / logs scan / manifests union hot + cold
-- [ ] `RUN_JOBS=false` still **reads** cold (proxy); only jobs promote
-- [ ] Metrics: promote attempts, successes, retries, bytes, in-flight tmp count
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
-- [ ] CONFIG.md documents `COLD_DATA_DIR` and `COLD_AFTER`
+- [x] Kill mid-copy: tmp GC’d; no truncated canonical dest; source intact; retry
+- [x] Checksum mismatch / short write: dest not published; source kept
+- [x] `ScanAllTiers` / logs scan / manifests union hot + cold
+- [x] `RUN_JOBS=false` still **reads** cold (proxy); only jobs promote
+- [x] Metrics: promote attempts, successes, retries, bytes, in-flight tmp count
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] CONFIG.md documents `COLD_DATA_DIR` and `COLD_AFTER`
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 

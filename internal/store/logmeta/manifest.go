@@ -90,8 +90,14 @@ func isTierRelPath(rel string) bool {
 // RebuildManifest scans landing + tiers for one artifact and returns a manifest
 // tagged with version.
 func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest, error) {
+	return RebuildManifestRoots(dataDir, "", tenant, artifact, version)
+}
+
+// RebuildManifestRoots also lists log L1+ files that already live on coldDir.
+func RebuildManifestRoots(dataDir, coldDir, tenant, artifact string, version uint64) (Manifest, error) {
 	artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
 	var files []ManifestFile
+	seen := map[string]struct{}{}
 	walk := func(root, relPrefix string) error {
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -111,15 +117,19 @@ func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest
 			if _, held := retired[e.Name()]; held {
 				continue
 			}
+			rel := e.Name()
+			if relPrefix != "" {
+				rel = filepath.ToSlash(filepath.Join(relPrefix, e.Name()))
+			}
+			if _, dup := seen[rel]; dup {
+				continue
+			}
 			abs := filepath.Join(root, e.Name())
 			fi, err := os.Stat(abs)
 			if err != nil {
 				return err
 			}
-			rel := e.Name()
-			if relPrefix != "" {
-				rel = filepath.ToSlash(filepath.Join(relPrefix, e.Name()))
-			}
+			seen[rel] = struct{}{}
 			minNs, maxNs := fileTimeBounds(abs, fi.ModTime())
 			files = append(files, ManifestFile{
 				Path:    rel,
@@ -133,16 +143,30 @@ func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest
 	if err := walk(artifactRoot, ""); err != nil {
 		return Manifest{}, err
 	}
-	tiersRoot := filepath.Join(artifactRoot, "tiers")
-	tierEntries, err := os.ReadDir(tiersRoot)
-	if err != nil && !os.IsNotExist(err) {
+	walkTiers := func(root string) error {
+		tiersRoot := filepath.Join(layout.LogsLandingDir(root, tenant, artifact), "tiers")
+		tierEntries, err := os.ReadDir(tiersRoot)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		for _, te := range tierEntries {
+			if !te.IsDir() || !strings.HasPrefix(te.Name(), "L") {
+				continue
+			}
+			if root != dataDir && te.Name() == "L0" {
+				continue
+			}
+			if err := walk(filepath.Join(tiersRoot, te.Name()), filepath.Join("tiers", te.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walkTiers(dataDir); err != nil {
 		return Manifest{}, err
 	}
-	for _, te := range tierEntries {
-		if !te.IsDir() || !strings.HasPrefix(te.Name(), "L") {
-			continue
-		}
-		if err := walk(filepath.Join(tiersRoot, te.Name()), filepath.Join("tiers", te.Name())); err != nil {
+	if layout.ColdEnabled(coldDir) {
+		if err := walkTiers(coldDir); err != nil {
 			return Manifest{}, err
 		}
 	}
@@ -151,11 +175,16 @@ func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest
 
 // SyncManifest rebuilds and writes the manifest for one artifact at the current generation.
 func SyncManifest(dataDir, tenant, artifact string) error {
+	return SyncManifestRoots(dataDir, "", tenant, artifact)
+}
+
+// SyncManifestRoots rebuilds the artifact catalog across hot and cold roots.
+func SyncManifestRoots(dataDir, coldDir, tenant, artifact string) error {
 	gen, err := Read(dataDir, tenant)
 	if err != nil {
 		return err
 	}
-	m, err := RebuildManifest(dataDir, tenant, artifact, gen)
+	m, err := RebuildManifestRoots(dataDir, coldDir, tenant, artifact, gen)
 	if err != nil {
 		return err
 	}

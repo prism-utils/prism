@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/prism-utils/prism/internal/store/authz"
 	"github.com/prism-utils/prism/internal/store/engine"
@@ -53,6 +54,13 @@ func EnsureHandler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Ha
 			logger.Error("ensure logs layout", "ns", ns, "err", err)
 			http.Error(w, "ensure failed", http.StatusInternalServerError)
 			return
+		}
+		if strings.TrimSpace(cfg.ColdDir) != "" {
+			if err := seed.EnsureLogsLayoutForTenant(cfg.ColdDir, ns); err != nil {
+				logger.Error("ensure cold logs layout", "ns", ns, "err", err)
+				http.Error(w, "ensure failed", http.StatusInternalServerError)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

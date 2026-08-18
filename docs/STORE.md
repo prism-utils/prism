@@ -475,6 +475,12 @@ DATA_DIR/
     .metering.json         # on-disk usage / compaction metering (operator-facing)
 ```
 
+When `COLD_DATA_DIR` is set, compacted **L1+** metrics and logs are copied there after
+their max timestamp is older than `COLD_AFTER` (default 12h). L0, `hot/`, rollups,
+materializations, and `_manifest.json` stay on `DATA_DIR`. Query, PromQL, Loki, and
+`/sql` union both roots. Merge still writes new L1+ onto `DATA_DIR`, then the promote
+pass copies. Empty `COLD_DATA_DIR` is a no-op.
+
 Each new L0 flush is one hot-window of rows (default 10 minutes), catalogued with
 `min_ts_ns` / `max_ts_ns`. Existing large files stay until merge; planners skip
 any file whose `[min_ts, max_ts]` misses the query range. Grafana PromQL and
@@ -662,7 +668,7 @@ Tier segments with `MaxTs` **strictly before** `now − RETENTION_DAYS` are dele
 
 ### Metering (`internal/store/stats`)
 
-Per-tenant `.metering.json` tracks cumulative `compactionCpuSeconds` (JSON field name preserved for billing). Each merge tick adds the **wall-clock elapsed seconds** of the DuckDB COPY merge (single-threaded burst ≈ CPU for billing purposes). `TenantOnDiskBytes` sums `tiers/`, `rollups/`, `hot/`, and `engine.duckdb` (+ `.wal`); legacy `metrics-raw/` and dotfiles are excluded.
+Per-tenant `.metering.json` tracks cumulative `compactionCpuSeconds` (JSON field name preserved for billing). Each merge tick adds the **wall-clock elapsed seconds** of the DuckDB COPY merge (single-threaded burst ≈ CPU for billing purposes). `TenantOnDiskBytes` sums `tiers/`, `rollups/`, `hot/`, and `engine.duckdb` (+ `.wal`); when `COLD_DATA_DIR` is set, `/stats` also adds that tenant's cold `tiers/` and `logs/`. Legacy `metrics-raw/` and dotfiles are excluded.
 
 ---
 

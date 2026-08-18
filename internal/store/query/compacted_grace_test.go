@@ -55,7 +55,7 @@ func TestScanLogParquetFilesSkipsCompactedSegments(t *testing.T) {
 	writeGraceFixture(t, compacted)
 	markGraceCompacted(t, compacted)
 
-	files, err := scanLogParquetFiles(resolvedTenantRoot(t, dataDir, graceTenant))
+	files, err := scanLogParquetFiles(resolvedTenantRoot(t, dataDir, graceTenant), "")
 	if err != nil {
 		t.Fatalf("scanLogParquetFiles: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestScanLogParquetFilesIgnoresTheMarkerFile(t *testing.T) {
 	writeGraceFixture(t, compacted)
 	markGraceCompacted(t, compacted)
 
-	files, err := scanLogParquetFiles(resolvedTenantRoot(t, dataDir, graceTenant))
+	files, err := scanLogParquetFiles(resolvedTenantRoot(t, dataDir, graceTenant), "")
 	if err != nil {
 		t.Fatalf("scanLogParquetFiles: %v", err)
 	}

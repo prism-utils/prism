@@ -250,6 +250,7 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startN
 	conn, cleanup, err := openLokiSandbox(ctx, absRoot, sandboxLimits{
 		MemoryLimit: h.cfg.MemoryLimit,
 		Threads:     h.cfg.Threads,
+		ColdDir:     h.cfg.ColdDir,
 	}, startNs, endNs, omitMessage, h.cfg.RecentLookback)
 	if err != nil {
 		if apiErr := h.execErrorIfCtx(ctx, err); apiErr != nil {
@@ -303,7 +304,7 @@ func recordLokiSandbox(viewSQL string, openSet int, omitMsg bool) {
 // openLokiSandbox opens a locked-down :memory: DuckDB connection whose only
 // visible relation is the tenant's log windows, timestamped by landing time.
 func openLokiSandbox(ctx context.Context, tenantRoot string, limits sandboxLimits, startNs, endNs int64, omitMessage bool, recentLookback time.Duration) (*sql.Conn, func(), error) {
-	_, files, err := sandboxLokiLogsSQL(tenantRoot, startNs, endNs, omitMessage, recentLookback)
+	_, files, err := sandboxLokiLogs(tenantRoot, startNs, endNs, omitMessage, recentLookback, limits.ColdDir)
 	if err != nil {
 		return nil, nil, wrapSandboxErr(err)
 	}

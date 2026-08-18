@@ -39,6 +39,12 @@ type Registry struct {
 	landingLimit  prometheus.Gauge
 	compactionCPU *prometheus.CounterVec
 
+	promoteAttempts  prometheus.Counter
+	promoteSuccesses prometheus.Counter
+	promoteRetries   prometheus.Counter
+	promoteBytes     prometheus.Counter
+	promoteTmp       prometheus.Gauge
+
 	tenants *tenantLabeller
 
 	observe     bool
@@ -78,6 +84,7 @@ func New(cfg Config) *Registry {
 		r.queueRejected, r.queueWait,
 		r.ticks, r.tickErrors, r.tickDuration, r.tickSuccess,
 		r.tierSegments, r.landingFiles, r.landingLimit, r.compactionCPU,
+		r.promoteAttempts, r.promoteSuccesses, r.promoteRetries, r.promoteBytes, r.promoteTmp,
 	}
 	if cfg.Observe {
 		r.buildObserve()

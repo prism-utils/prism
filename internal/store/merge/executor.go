@@ -18,6 +18,7 @@ import (
 // ExecutorConfig holds merge execution parameters.
 type ExecutorConfig struct {
 	DataDir              string
+	ColdDir              string
 	Tenant               string
 	RowGroupSize         int
 	Threads              int
@@ -132,7 +133,7 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	if err := retireSources(action.Sources, now, x.cfg.DeleteGrace); err != nil {
 		return Segment{}, err
 	}
-	if err := metricsmeta.SyncAfterChange(context.Background(), x.cfg.DataDir, x.cfg.Tenant); err != nil {
+	if err := metricsmeta.SyncAfterChangeRoots(context.Background(), x.cfg.DataDir, x.cfg.ColdDir, x.cfg.Tenant); err != nil {
 		return Segment{}, fmt.Errorf("merge: metrics catalog: %w", err)
 	}
 	return seg, nil
@@ -317,9 +318,25 @@ func ScanTier(dataDir, tenant string, tier int, caps DuckDBCaps) ([]Segment, err
 
 // ScanAllTiers returns segments from L0..Lmax present on disk.
 func ScanAllTiers(dataDir, tenant string, maxTier int, caps DuckDBCaps) ([]Segment, error) {
+	return ScanAllTiersRoots(dataDir, "", tenant, maxTier, caps)
+}
+
+// ScanAllTiersRoots unions hot and cold tier listings. L0 is only read from
+// dataDir; coldDir is skipped when empty.
+func ScanAllTiersRoots(dataDir, coldDir, tenant string, maxTier int, caps DuckDBCaps) ([]Segment, error) {
 	var all []Segment
 	for tier := 0; tier <= maxTier; tier++ {
 		segs, err := ScanTier(dataDir, tenant, tier, caps)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, segs...)
+	}
+	if coldDir == "" {
+		return all, nil
+	}
+	for tier := 1; tier <= maxTier; tier++ {
+		segs, err := ScanTier(coldDir, tenant, tier, caps)
 		if err != nil {
 			return nil, err
 		}

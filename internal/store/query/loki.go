@@ -23,6 +23,7 @@ const (
 // LokiConfig holds settings for the Loki-compatible logs read API.
 type LokiConfig struct {
 	DataDir     string
+	ColdDir     string
 	RoutePrefix string
 	// MaxEntries caps the log entries a single query may return.
 	MaxEntries int

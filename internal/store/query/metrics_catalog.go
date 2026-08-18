@@ -19,6 +19,7 @@ type metricsOpenOpts struct {
 	End       time.Time
 	HotWindow time.Duration
 	Now       time.Time
+	ColdDir   string
 }
 
 // metricsFileMeta is one hot or tier segment the planners may open.
@@ -44,7 +45,7 @@ func collectMetricsSources(ctx context.Context, tenantRoot string, opts *metrics
 	}
 	absRoot = filepath.Clean(absRoot)
 
-	files, err := listMetricsFiles(ctx, absRoot)
+	files, err := listMetricsFiles(ctx, absRoot, opts.ColdDir)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +167,7 @@ func filterMetricsFiles(files []metricsFileMeta, startNs, endNs int64) []metrics
 	return out
 }
 
-func listMetricsFiles(ctx context.Context, absRoot string) ([]metricsFileMeta, error) {
+func listMetricsFiles(ctx context.Context, absRoot, coldDir string) ([]metricsFileMeta, error) {
 	dataDir := filepath.Dir(absRoot)
 	tenant := filepath.Base(absRoot)
 	gen, err := metricsmeta.ReadGeneration(dataDir, tenant)
@@ -178,31 +179,32 @@ func listMetricsFiles(ctx context.Context, absRoot string) ([]metricsFileMeta, e
 		return nil, err
 	}
 	if m.Version == gen && len(m.Files) > 0 {
-		if files, ok := manifestToMetricsFiles(absRoot, m); ok {
+		if files, ok := manifestToMetricsFiles(dataDir, coldDir, tenant, m); ok {
 			return files, nil
 		}
 	}
-	rebuilt, err := metricsmeta.RebuildManifest(ctx, dataDir, tenant, gen)
+	rebuilt, err := metricsmeta.RebuildManifestRoots(ctx, dataDir, coldDir, tenant, gen)
 	if err != nil {
 		return nil, err
 	}
 	_ = metricsmeta.WriteManifest(dataDir, tenant, rebuilt)
-	files, ok := manifestToMetricsFiles(absRoot, rebuilt)
+	files, ok := manifestToMetricsFiles(dataDir, coldDir, tenant, rebuilt)
 	if !ok {
-		return scanMetricsFiles(ctx, absRoot)
+		return scanMetricsFiles(ctx, dataDir, coldDir, tenant)
 	}
 	return files, nil
 }
 
-func manifestToMetricsFiles(absRoot string, m metricsmeta.Manifest) ([]metricsFileMeta, bool) {
+func manifestToMetricsFiles(dataDir, coldDir, tenant string, m metricsmeta.Manifest) ([]metricsFileMeta, bool) {
+	roots := layout.AllowedTenantRoots(dataDir, coldDir, tenant)
 	out := make([]metricsFileMeta, 0, len(m.Files))
 	for _, f := range m.Files {
-		abs := filepath.Join(absRoot, filepath.FromSlash(f.Path))
-		ok, err := safeTenantSegmentFile(absRoot, abs)
-		if err != nil || !ok {
+		abs, ok := layout.ResolveRel(dataDir, coldDir, tenant, f.Path)
+		if !ok {
 			return nil, false
 		}
-		if _, err := os.Stat(abs); err != nil { //nolint:gosec // G703: path validated inside tenant root
+		allowed, err := safeTenantParquetInRoots(roots, abs)
+		if err != nil || !allowed {
 			return nil, false
 		}
 		out = append(out, metricsFileMeta{
@@ -220,11 +222,13 @@ func isHotRel(rel string) bool {
 	return s == "hot/current.parquet" || s == "hot/current.duckdb"
 }
 
-func scanMetricsFiles(ctx context.Context, absRoot string) ([]metricsFileMeta, error) {
+func scanMetricsFiles(ctx context.Context, dataDir, coldDir, tenant string) ([]metricsFileMeta, error) {
+	absRoot := layout.TenantDir(dataDir, tenant)
+	roots := layout.AllowedTenantRoots(dataDir, coldDir, tenant)
 	var out []metricsFileMeta
 	for _, rel := range []string{"hot/current.parquet", "hot/current.duckdb"} {
 		p := filepath.Join(absRoot, filepath.FromSlash(rel))
-		ok, err := safeTenantSegmentFile(absRoot, p)
+		ok, err := safeTenantParquetInRoots(roots, p)
 		if err != nil {
 			return nil, err
 		}
@@ -237,40 +241,51 @@ func scanMetricsFiles(ctx context.Context, absRoot string) ([]metricsFileMeta, e
 		}
 		out = append(out, metricsFileMeta{Path: p, MinTsNs: minNs, MaxTsNs: maxNs, hot: true})
 	}
-	for tier := 0; tier < maxTier; tier++ {
-		dir := filepath.Join(absRoot, "tiers", fmt.Sprintf("L%d", tier))
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		retired := layout.CompactedSet(entries)
-		for _, e := range entries {
-			if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-				continue
-			}
-			ext := filepath.Ext(e.Name())
-			if ext != ".parquet" && ext != ".duckdb" {
-				continue
-			}
-			if _, held := retired[e.Name()]; held {
-				continue
-			}
-			p := filepath.Join(dir, e.Name())
-			ok, err := safeTenantSegmentFile(absRoot, p)
+	appendTier := func(root string, minTier int) error {
+		for tier := minTier; tier < maxTier; tier++ {
+			dir := filepath.Join(root, tenant, "tiers", fmt.Sprintf("L%d", tier))
+			entries, err := os.ReadDir(dir)
 			if err != nil {
-				return nil, err
+				if os.IsNotExist(err) {
+					continue
+				}
+				return err
 			}
-			if !ok {
-				continue
+			retired := layout.CompactedSet(entries)
+			for _, e := range entries {
+				if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+					continue
+				}
+				ext := filepath.Ext(e.Name())
+				if ext != ".parquet" && ext != ".duckdb" {
+					continue
+				}
+				if _, held := retired[e.Name()]; held {
+					continue
+				}
+				p := filepath.Join(dir, e.Name())
+				ok, err := safeTenantParquetInRoots(roots, p)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					continue
+				}
+				minNs, maxNs, bounded := metricsmeta.FileBounds(ctx, p)
+				if !bounded {
+					continue
+				}
+				out = append(out, metricsFileMeta{Path: p, MinTsNs: minNs, MaxTsNs: maxNs})
 			}
-			minNs, maxNs, bounded := metricsmeta.FileBounds(ctx, p)
-			if !bounded {
-				continue
-			}
-			out = append(out, metricsFileMeta{Path: p, MinTsNs: minNs, MaxTsNs: maxNs})
+		}
+		return nil
+	}
+	if err := appendTier(dataDir, 0); err != nil {
+		return nil, err
+	}
+	if layout.ColdEnabled(coldDir) {
+		if err := appendTier(coldDir, 1); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
