@@ -34,10 +34,11 @@ const (
 )
 
 type sqlResponse struct {
-	Columns   []string `json:"columns"`
-	Rows      [][]any  `json:"rows"`
-	RowCount  int      `json:"row_count"`
-	Truncated bool     `json:"truncated"`
+	Columns   []string         `json:"columns"`
+	Rows      [][]any          `json:"rows"`
+	Records   []map[string]any `json:"records"`
+	RowCount  int              `json:"row_count"`
+	Truncated bool             `json:"truncated"`
 }
 
 func sqlConfig(dataDir string, opts ...func(*query.SQLConfig)) *query.SQLConfig {
@@ -165,6 +166,29 @@ func execSQL(t *testing.T, srv *httptest.Server, tenant, sqlText string) (int, s
 		t.Fatal(err)
 	}
 	return code, out
+}
+
+func execSQLWindow(t *testing.T, srv *httptest.Server, tenant, sqlText, start, end string) (int, sqlResponse) {
+	t.Helper()
+	payload, err := json.Marshal(map[string]string{
+		"sql":   sqlText,
+		"start": start,
+		"end":   end,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := postSQLNoHelper(srv.URL+"/"+tenant+"/sql", string(payload))
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	var out sqlResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("decode: %v body=%s", err, body)
+	}
+	return resp.StatusCode, out
 }
 
 func execSQLResult(srv *httptest.Server, tenant, sqlText string) (int, sqlResponse, error) {

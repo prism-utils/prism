@@ -530,8 +530,8 @@ published file. Pins are unlinked when the sandbox connection closes. A
 read-only replica mount cannot create a sibling under `hot/`, so the pin is
 copied into a private temporary directory that the sandbox also allows.
 
-Grafana DuckDB datasources that `read_parquet` the published `current.parquet`
-path (`print-view-sql` / glob) can still race with export; metrics dashboards
+A Grafana plugin that `read_parquet`s the published `current.parquet` path
+can still race with export; that glob path is unsupported. Metrics dashboards
 use PromQL, which goes through the sandbox pin.
 
 Exports for one tenant are serialized: a writer store exports per query request
@@ -740,11 +740,13 @@ manifest), PromQL/`/sql`/`/query` open only that snapshot even without
 
 **Open-set prune:** PromQL, `/sql` (when `start`/`end` are supplied), and
 structured `/query` never `open()` a metrics file whose `[min_ts, max_ts]`
-misses `[start, end)` (`MaxTs < start || MinTs >= end`). Catalog bounds for
-Parquet come from footer column stats (`parquet_metadata` `ts` min/max), not a
-full `MIN(ts)` scan. Files whose bounds cannot be read are skipped and logged.
-Grafana `ViewSQL` (static DuckDB `initSQL`) remains a full live-set union — it
-has no per-query window.
+misses `[start, end)` (`MaxTs < start || MinTs >= end`). `/sql` applies the
+same window to **log** files via filename window id (`MinTsNs`/`MaxTsNs`).
+Catalog bounds for metrics Parquet come from footer column stats
+(`parquet_metadata` `ts` min/max), not a full `MIN(ts)` scan. Files whose
+bounds cannot be read are skipped and logged. Grafana must call `/sql`, Loki,
+or PromQL — a sidecar DuckDB `initSQL` glob has no per-query window and is
+not a supported read path.
 
 By default the structured query unions hot + overlapping tiers + rollups; the
 `/sql` sandbox unions hot + overlapping tiers only (never rollups — see "When
@@ -816,12 +818,10 @@ Rollups are metrics-only — logs never take the rollup path.
 
 ### Grafana view SQL
 
-`query.ViewSQL(dataDir, tenant)` emits `CREATE OR REPLACE VIEW prism_<tenant> AS …`
-unioning the tenant hot snapshot (`hot/current.parquet`) and present tier globs,
-path-scoped, same row projection, no `union_by_name`/`filename`.
-
-CLI: `prism-store print-view-sql --tenant <ns> [--data-dir <dir>]` prints the
-statement for DuckDB datasource `initSQL` wiring.
+Grafana panels must not `read_parquet` tenant files. Logs and events go through
+`POST /{ns}/sql` (Infinity or equivalent) with `start`/`end`; raw lines go
+through Loki; metrics through PromQL. `query.ViewSQL` / `print-view-sql` remain
+operator debug helpers for the metrics union only.
 
 ---
 
@@ -837,15 +837,19 @@ Read-only **arbitrary SQL** over a single tenant's metrics, RBAC-guarded
 
 Request JSON: `{"sql": "<single SELECT or WITH>", "max_rows": <optional int>, "start": "<optional RFC3339>", "end": "<optional RFC3339>"}`.
 `start` / `end` may also be query parameters (RFC3339 or Prometheus unix). When
-both are present, the `metrics` view opens only overlapping hot/tier files.
-When omitted, `/sql` does not time-prune (an unbounded `SELECT` is valid);
-`QUERY_HOT_ONLY` and request `hot_only` still apply.
+both are present, the `metrics` view opens only overlapping hot/tier files and
+log views open only overlapping log segments (filename window id). When omitted,
+`/sql` does not time-prune (an unbounded `SELECT` is valid); `QUERY_HOT_ONLY`
+and request `hot_only` still apply to metrics.
 
 Success `200 application/json`:
 
 ```json
-{"columns":["…"],"rows":[[…],…],"row_count":N,"truncated":false}
+{"columns":["…"],"rows":[[…],…],"records":[{…},…],"row_count":N,"truncated":false}
 ```
+
+`records` is the same result as objects keyed by column name (Grafana Infinity
+root selector).
 
 **Arrow IPC stream (optional):** send
 `Accept: application/vnd.apache.arrow.stream` to receive a streaming Arrow IPC
@@ -878,9 +882,14 @@ When **`SQL_API_ENABLED=false`** (default `true`), the route is not registered
 | Relation | Schema |
 |---|---|
 | `metrics` | `"__name__"`, `labels`, `value`, `timestamp_ms`, `ts` |
-| `logs` | `message`, `format` (guaranteed) + `__prism_ts_ns` (ingest/landing time, nanoseconds) + per-format/`template`/`count` columns (varies) |
+| `logs` | union of every log artifact; `message`, `format` (guaranteed) + `__prism_ts_ns` + `proxy_ts` + per-format/`template`/`count` columns (varies) |
+| `logs_raw` | `logs-raw` segments only |
+| `logs_template` | `logs-template` segments only |
+| `logs_summary` | `logs-summary` segments only |
 
-The **`logs`** relation unions the tenant's refreshed `logs-*/tiers/L*/*.parquet`
+Artifact views exist so a summary panel does not open raw files. `proxy_ts` is
+`make_timestamp(__prism_ts_ns // 1000)` (ingest time). The **`logs`** relation
+unions the tenant's refreshed `logs-*/tiers/L*/*.parquet`
 segments with `union_by_name=true` (variable per-format schemas; missing columns
 are NULL). Windows still sitting in the landing buffer are **not** part of it —
 they become visible once a refresh opens them into a tier (see "Refresh
@@ -916,7 +925,7 @@ The `metrics` relation is built from the tenant's **`hot/current.parquet`** (or
 `.duckdb`) snapshot plus **overlapping** live `tiers/L*` files when
 `QUERY_HOT_ONLY` is off. Directory-wide globs are not used. Auto-hot (query
 range inside snapshot coverage) and request `hot_only` restrict the view to the
-snapshot. Grafana static `ViewSQL` still unions the full live set.
+snapshot. Grafana must not glob those files; it calls this `/sql` sandbox.
 
 ### Sandbox guarantees
 

@@ -179,6 +179,103 @@ func TestSQLLogsExposesIngestTSAndTimeBoundedCount(t *testing.T) {
 	}
 }
 
+// TestSQLLogsStartEndPrunesFilesWithoutSQLWhere proves POST /sql start/end drop
+// log files whose filename window misses the range, even when the SQL has no
+// WHERE (Grafana cannot push a filter into DuckDB's open set).
+func TestSQLLogsStartEndPrunesFilesWithoutSQLWhere(t *testing.T) {
+	query.InvalidateLogsMetaCache("")
+	dataDir, eng := newLogsSQLFixture(t)
+	dir := filepath.Join(dataDir, tenantLogs, "logs", "logs-raw", "tiers", "L0")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	recentAt := now.Add(-30 * time.Minute)
+	oldAt := now.Add(-48 * time.Hour)
+	testparquet.WriteLogsRawFile(t, filepath.Join(dir, layout.SegmentName(recentAt)), []testparquet.LogRow{
+		{Message: "recent", Format: "none"},
+	})
+	testparquet.WriteLogsRawFile(t, filepath.Join(dir, layout.SegmentName(oldAt)), []testparquet.LogRow{
+		{Message: "old", Format: "none"},
+	})
+
+	srv := testSQLServer(t, dataDir, nil, eng)
+	start := now.Add(-time.Hour).Format(time.RFC3339)
+	end := now.Add(time.Minute).Format(time.RFC3339)
+	code, out := execSQLWindow(t, srv, tenantLogs, "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM logs", start, end)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if got := numericCell(t, out.Rows[0][0]); got != 1 {
+		t.Fatalf("windowed count = %v, want 1 (old file pruned before open)", got)
+	}
+}
+
+// TestSQLLogsArtifactViewsAreScoped proves /sql exposes logs_raw / logs_summary
+// so a summary panel does not union raw rows.
+func TestSQLLogsArtifactViewsAreScoped(t *testing.T) {
+	dataDir, eng := newLogsSQLFixture(t)
+	landLogsSummary(t, eng, dataDir, tenantLogs, []testparquet.LogSummaryRow{{Template: "t", Count: 9}})
+	landRawLog(t, eng, dataDir, tenantLogs, "hello world", "none")
+
+	srv := testSQLServer(t, dataDir, nil, eng)
+
+	code, out := execSQL(t, srv, tenantLogs, "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM logs_raw WHERE message IS NOT NULL")
+	if code != http.StatusOK {
+		t.Fatalf("logs_raw status = %d, want 200", code)
+	}
+	if got := numericCell(t, out.Rows[0][0]); got != 1 {
+		t.Fatalf("logs_raw count = %v, want 1", got)
+	}
+
+	code, out = execSQL(t, srv, tenantLogs, "SELECT CAST(sum(count) AS BIGINT) AS n FROM logs_summary WHERE template IS NOT NULL")
+	if code != http.StatusOK {
+		t.Fatalf("logs_summary status = %d, want 200", code)
+	}
+	if got := numericCell(t, out.Rows[0][0]); got != 9 {
+		t.Fatalf("logs_summary sum = %v, want 9", got)
+	}
+
+	code, out = execSQL(t, srv, tenantLogs, "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM logs_template")
+	if code != http.StatusOK {
+		t.Fatalf("logs_template status = %d, want 200", code)
+	}
+	if got := numericCell(t, out.Rows[0][0]); got != 0 {
+		t.Fatalf("logs_template count = %v, want 0 (empty artifact)", got)
+	}
+}
+
+func TestSQLLogsProxyTsAndRecords(t *testing.T) {
+	dataDir, eng := newLogsSQLFixture(t)
+	landRawLog(t, eng, dataDir, tenantLogs, "hello world", "none")
+	srv := testSQLServer(t, dataDir, nil, eng)
+
+	code, out := execSQL(t, srv, tenantLogs, "SELECT message, proxy_ts FROM logs_raw WHERE message IS NOT NULL")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (proxy_ts must exist on log views)", code)
+	}
+	if len(out.Rows) != 1 {
+		t.Fatalf("rows = %v, want 1", out.Rows)
+	}
+	found := false
+	for _, col := range out.Columns {
+		if col == "proxy_ts" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("columns = %v, want proxy_ts", out.Columns)
+	}
+	if len(out.Records) != 1 {
+		t.Fatalf("records = %d, want 1 object row for Grafana Infinity", len(out.Records))
+	}
+	if msg, _ := out.Records[0]["message"].(string); msg != "hello world" {
+		t.Fatalf("records[0].message = %v, want hello world", out.Records[0]["message"])
+	}
+}
+
 // landRawLog lands a logs-raw parquet (message, format columns) via the engine
 // and refreshes it into a tier so `/sql` can see the rows.
 func landRawLog(t *testing.T, eng *engine.Engine, dataDir, tenant, message, format string) {
