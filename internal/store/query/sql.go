@@ -26,13 +26,16 @@ import (
 )
 
 const (
-	defaultSQLMaxRows      = 100_000
-	defaultSQLTimeout      = 30 * time.Second
-	defaultSQLMaxBodyBytes = 1 << 20 // 1 MiB
-	sandboxMetricsView     = "metrics"
-	sandboxLogsView        = "logs"
-	arrowStreamMediaType   = "application/vnd.apache.arrow.stream"
-	truncatedTrailer       = "X-Prism-Truncated"
+	defaultSQLMaxRows       = 100_000
+	defaultSQLTimeout       = 30 * time.Second
+	defaultSQLMaxBodyBytes  = 1 << 20 // 1 MiB
+	sandboxMetricsView      = "metrics"
+	sandboxLogsView         = "logs"
+	sandboxLogsRawView      = "logs_raw"
+	sandboxLogsTemplateView = "logs_template"
+	sandboxLogsSummaryView  = "logs_summary"
+	arrowStreamMediaType    = "application/vnd.apache.arrow.stream"
+	truncatedTrailer        = "X-Prism-Truncated"
 )
 
 // DefaultSQLMaxBodyBytes is the default POST /sql JSON body cap.
@@ -91,10 +94,11 @@ type SQLRequest struct {
 
 // SQLResponse is the JSON success body for POST /{ns}/sql.
 type SQLResponse struct {
-	Columns   []string `json:"columns"`
-	Rows      [][]any  `json:"rows"`
-	RowCount  int      `json:"row_count"`
-	Truncated bool     `json:"truncated"`
+	Columns   []string         `json:"columns"`
+	Rows      [][]any          `json:"rows"`
+	Records   []map[string]any `json:"records"`
+	RowCount  int              `json:"row_count"`
+	Truncated bool             `json:"truncated"`
 }
 
 func sqlWindowStart(r *http.Request, req SQLRequest) time.Time {
@@ -331,21 +335,22 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpe
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
+	catalogOpts := logsCatalogOpts{WithIngestTS: true}
+	if !opts.Start.IsZero() {
+		catalogOpts.StartNs = opts.Start.UnixNano()
+	}
+	if !opts.End.IsZero() {
+		catalogOpts.EndNs = opts.End.UnixNano()
+	}
+	logFiles = filterLogFiles(logFiles, catalogOpts)
 	logFiles = filterExistingLogFiles(logFiles)
 	if err := attachLogsDuckDB(ctx, conn, logFiles); err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
-	// WithIngestTS matches the Loki path: expose __prism_ts_ns (ingest/landing
-	// time, nanoseconds) so /sql callers can time-bound counts and scans.
-	logsSQL, err := buildLogsRelationSQLMixed(logFiles, logsCatalogOpts{WithIngestTS: true})
-	if err != nil {
+	if err := bindLogsSandboxViews(ctx, conn, logFiles, catalogOpts); err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
-	}
-	if _, err := conn.ExecContext(ctx, "CREATE VIEW "+sandboxLogsView+" AS "+logsSQL); err != nil {
-		cleanup()
-		return nil, nil, wrapSandboxErr(fmt.Errorf("create logs view: %w", err))
 	}
 	if err := bindMaterializationViews(ctx, conn, tenantRoot, limits.MatNames); err != nil {
 		cleanup()
@@ -356,6 +361,43 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpe
 		return nil, nil, err
 	}
 	return conn, cleanup, nil
+}
+
+func wrapLogsProxyTs(body string) string {
+	return "SELECT *, make_timestamp(CAST(" + lokiTSColumn + " AS BIGINT) // 1000) AS proxy_ts FROM (" + body + ")"
+}
+
+func bindLogsSandboxViews(ctx context.Context, conn *sql.Conn, files []logFileMeta, opts logsCatalogOpts) error {
+	byArt := map[string][]logFileMeta{}
+	for _, f := range files {
+		byArt[f.Artifact] = append(byArt[f.Artifact], f)
+	}
+	views := []struct {
+		name string
+		art  string
+		all  bool
+	}{
+		{sandboxLogsRawView, "logs-raw", false},
+		{sandboxLogsTemplateView, "logs-template", false},
+		{sandboxLogsSummaryView, "logs-summary", false},
+		{sandboxLogsView, "", true},
+	}
+	for _, v := range views {
+		subset := files
+		if !v.all {
+			subset = byArt[v.art]
+		}
+		body, err := buildLogsRelationSQLMixed(subset, opts)
+		if err != nil {
+			return err
+		}
+		//nolint:gosec // G202: view names are package constants; body is listing-built SQL.
+		q := "CREATE VIEW " + v.name + " AS " + wrapLogsProxyTs(body)
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("create %s view: %w", v.name, err)
+		}
+	}
+	return nil
 }
 
 func bindMaterializationViews(ctx context.Context, conn *sql.Conn, tenantRoot string, names []string) error {
@@ -426,7 +468,7 @@ func queryJSON(ctx context.Context, conn *sql.Conn, userSQL string, rowCap int) 
 		return nil, wrapSandboxErr(err)
 	}
 
-	out := &SQLResponse{Columns: cols, Rows: [][]any{}}
+	out := &SQLResponse{Columns: cols, Rows: [][]any{}, Records: []map[string]any{}}
 	limit := rowCap + 1
 	for rows.Next() {
 		if len(out.Rows) >= limit {
@@ -442,16 +484,21 @@ func queryJSON(ctx context.Context, conn *sql.Conn, userSQL string, rowCap int) 
 			return nil, wrapSandboxErr(err)
 		}
 		row := make([]any, len(cols))
+		rec := make(map[string]any, len(cols))
 		for i, v := range vals {
-			row[i] = jsonCell(v)
+			cell := jsonCell(v)
+			row[i] = cell
+			rec[cols[i]] = cell
 		}
 		out.Rows = append(out.Rows, row)
+		out.Records = append(out.Records, rec)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, wrapSandboxErr(err)
 	}
 	if out.Truncated && len(out.Rows) > rowCap {
 		out.Rows = out.Rows[:rowCap]
+		out.Records = out.Records[:rowCap]
 	}
 	out.RowCount = len(out.Rows)
 	return out, nil

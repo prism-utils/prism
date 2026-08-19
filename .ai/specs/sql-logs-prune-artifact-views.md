@@ -1,6 +1,6 @@
 # Spec: /sql log prune + artifact views
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/sql-logs-prune-baa6`
 - **Owner phase:** orchestrator
@@ -37,13 +37,13 @@ Grafana must query logs and events only through prism (`POST /{ns}/sql`), never 
 
 ## 5. Acceptance checklist
 
-- [ ] `POST /sql` with `start`/`end` covering only a recent log file returns that file's rows from `logs` with no SQL `WHERE` (old filename window is not opened).
-- [ ] `logs_raw` / `logs_template` / `logs_summary` are queryable; a raw-only row does not appear in `logs_summary`.
-- [ ] `logs` remains the union of all artifacts (existing count tests).
-- [ ] Success JSON includes `records` objects keyed by column name.
-- [ ] `proxy_ts` is present on log views.
-- [ ] Tests written first (`test:` commit precedes implementation)
-- [ ] `make lint test` green locally
+- [x] `POST /sql` with `start`/`end` covering only a recent log file returns that file's rows from `logs` with no SQL `WHERE` (old filename window is not opened).
+- [x] `logs_raw` / `logs_template` / `logs_summary` are queryable; a raw-only row does not appear in `logs_summary`.
+- [x] `logs` remains the union of all artifacts (existing count tests).
+- [x] Success JSON includes `records` objects keyed by column name.
+- [x] `proxy_ts` is present on log views.
+- [x] Tests written first (`test:` commit precedes implementation)
+- [x] `make lint test` green locally
 
 ## 6. Mandatory review gates
 
