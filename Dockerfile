@@ -2,7 +2,7 @@
 # The artifact is CGO-free so it runs identically on bare metal and here.
 
 # --- build stage -----------------------------------------------------------
-FROM golang:1.25 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 
 # Cache modules first.

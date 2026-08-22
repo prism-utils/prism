@@ -1,6 +1,6 @@
 # CGO agent image for duckdb encoder e2e (go-duckdb). Production `make build`
 # stays CGO-free; release/goreleaser may ship CGO for duckdb support.
-FROM golang:1.25-bookworm AS build
+FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
