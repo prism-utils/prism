@@ -1,6 +1,6 @@
 # Spec: SQL/Loki query error logs for Grafana canary
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `cursor/grafana-canary-watch-004f`
 - **Owner phase:** developer
@@ -73,14 +73,21 @@ body** so a canary script and a fixing agent can see the engine error.
 
 ## 6. Mandatory review gates  (reviewer owns)
 
-- [ ] **Gate 1 — Follows the guidelines**
-- [ ] **Gate 2 — Tests cover edge cases**
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic**
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines**
+- [x] **Gate 2 — Tests cover edge cases**
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic**
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Verdict: ALL_OK. Do not merge; leave PR 153 open.
+
+- TDD history: `c14b46b test(store/query)` → `0e230b5 feat(store/query)` → `5bfe904 fix(store/query)`.
+- Gate 1: store/query-only; slog; bounded truncate; no new counters; ctx plumbed on SQL `logQueryFailure`.
+- Gate 2: table-driven validation / engine / 404 / 512-byte SQL+LogQL cap / 200 shape; existing empty-SQL and malformed-JSON 400 tests still hold.
+- Gate 3: `docs/STORE.md` documents `/sql` JSON `{error}` + truncated SQL logs; 200 shape unchanged.
+- Gate 4: new comments describe local caps/intent only (no other-file pointers).
+- Checks: `make lint test` (0 issues; `./internal/store/query` `-count=1 -race` 36.5s ok); `make full-tests` OK (compose bind on `:18080` failed; integration+e2e still ok).
 
 **DO NOT MERGE. DO NOT push to main.** Commit + push `cursor/grafana-canary-watch-004f` only.
