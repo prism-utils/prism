@@ -45,9 +45,6 @@ func logQueryFailure(ctx context.Context, logger *slog.Logger, level slog.Level,
 	if logger == nil {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	logger.Log(ctx, level, msg,
 		"ns", ns,
 		"status", status,
