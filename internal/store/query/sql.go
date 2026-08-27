@@ -48,6 +48,7 @@ var (
 	errSandboxExec      = errors.New("query: sandbox exec")
 	errNoParquetSources = errors.New("query: no segment sources")
 	errUnknownTenant    = errors.New("query: unknown tenant")
+	errBadRequest       = errors.New("query: bad request")
 )
 
 // SQLConfig holds arbitrary SQL API settings.
@@ -147,6 +148,7 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ns := r.PathValue("ns")
 		if !storeingest.ValidateTenant(ns) {
+			logger.Info("sql unknown tenant", "ns", ns, "status", http.StatusNotFound)
 			http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 			return
 		}
@@ -155,21 +157,12 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
 		dec := json.NewDecoder(body)
 		if err := dec.Decode(&req); err != nil {
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				http.Error(w, "bad query", http.StatusBadRequest)
-				return
-			}
-			http.Error(w, "bad query", http.StatusBadRequest)
+			writeSQLErr(w, r.Context(), fmt.Errorf("%w: %w", errBadRequest, err), logger, ns, "sql validation", "")
 			return
 		}
 		defer func() { _ = r.Body.Close() }()
-		if strings.TrimSpace(req.SQL) == "" {
-			http.Error(w, "bad query", http.StatusBadRequest)
-			return
-		}
 		if err := validateReadOnlySQL(req.SQL); err != nil {
-			http.Error(w, "bad query", http.StatusBadRequest)
+			writeSQLErr(w, r.Context(), err, logger, ns, "sql validation", req.SQL)
 			return
 		}
 
@@ -177,11 +170,11 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		absRoot, err := resolveSandboxTenantRoot(cfg.DataDir, tenantRoot)
 		if err != nil {
 			if errors.Is(err, errUnknownTenant) {
+				logger.Info("sql unknown tenant", "ns", ns, "status", http.StatusNotFound, "sql", truncateQuery(req.SQL, queryLogCap))
 				http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 				return
 			}
-			logger.Error("sql tenant root", "ns", ns, "err", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
+			writeSQLErr(w, r.Context(), err, logger, ns, "sql tenant root", req.SQL)
 			return
 		}
 
@@ -210,8 +203,7 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 		if cfg.RunJobs {
 			//nolint:contextcheck // snapshot export uses engine-internal context; request ctx applies to sandbox query below.
 			if err := eng.ExportHotSnapshot(ns); err != nil {
-				logger.Error("sql hot snapshot", "ns", ns, "err", err)
-				http.Error(w, "query failed", http.StatusInternalServerError)
+				writeSQLErr(w, ctx, err, logger, ns, "sql hot snapshot", req.SQL)
 				return
 			}
 			if httperr.IsCanceled(ctx.Err()) {
@@ -243,14 +235,14 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 			ColdDir:     cfg.ColdDir,
 		})
 		if err != nil {
-			writeSQLErr(w, ctx, err, logger, ns, "sql sandbox")
+			writeSQLErr(w, ctx, err, logger, ns, "sql sandbox", req.SQL)
 			return
 		}
 		defer cleanup()
 
 		if wantsArrowStream(r) {
 			if err := writeArrowResponse(ctx, w, conn, req.SQL, rowCap, logger); err != nil {
-				writeSQLErr(w, ctx, err, logger, ns, "sql arrow failed")
+				writeSQLErr(w, ctx, err, logger, ns, "sql arrow failed", req.SQL)
 				return
 			}
 			return
@@ -258,14 +250,13 @@ func SQLHandler(cfg *SQLConfig, eng *engine.Engine, logger *slog.Logger) http.Ha
 
 		result, err := queryJSON(ctx, conn, req.SQL, rowCap)
 		if err != nil {
-			writeSQLErr(w, ctx, err, logger, ns, "sql failed")
+			writeSQLErr(w, ctx, err, logger, ns, "sql failed", req.SQL)
 			return
 		}
 
 		payload, err := json.Marshal(result)
 		if err != nil {
-			logger.Error("sql encode", "ns", ns, "err", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
+			writeSQLErr(w, ctx, err, logger, ns, "sql encode", req.SQL)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -1022,24 +1013,33 @@ func wrapSandboxErr(err error) error {
 }
 
 // writeSQLErr maps a sandbox or user-SQL failure onto the HTTP status the
-// caller should see. A gone client is not a bad query.
-func writeSQLErr(w http.ResponseWriter, ctx context.Context, err error, logger *slog.Logger, ns, op string) {
+// caller should see. A gone client is not a bad query. 400/5xx bodies are
+// JSON {"error":"..."} so a canary (or in-pod curl) can read the engine text.
+// SQL in the log is truncated so a Grafana search box cannot dump unbounded lines.
+func writeSQLErr(w http.ResponseWriter, ctx context.Context, err error, logger *slog.Logger, ns, op, userSQL string) {
 	if httperr.IsCanceled(err) || httperr.IsCanceled(ctx.Err()) {
 		httperr.Write(w)
 		return
 	}
+	status := http.StatusInternalServerError
+	level := slog.LevelError
+	if isSQLClientErr(err) {
+		status = http.StatusBadRequest
+		level = slog.LevelWarn
+	}
+	logQueryFailure(ctx, logger, level, op, ns, "sql", userSQL, status, err)
+	writeJSONError(w, logger, ns, status, err.Error())
+}
+
+func isSQLClientErr(err error) bool {
 	if errors.Is(err, errSandboxExec) || errors.Is(err, errEmptySQL) ||
 		errors.Is(err, errNonSelect) || errors.Is(err, errMultiStatement) ||
-		errors.Is(err, errNoParquetSources) {
-		http.Error(w, "bad query", http.StatusBadRequest)
-		return
+		errors.Is(err, errNoParquetSources) || errors.Is(err, errBadRequest) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return true
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		http.Error(w, "bad query", http.StatusBadRequest)
-		return
-	}
-	logger.Error(op, "ns", ns, "err", err)
-	http.Error(w, "query failed", http.StatusInternalServerError)
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
 }
 
 func parsePositiveInt64(s string) (int64, error) {

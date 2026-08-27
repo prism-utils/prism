@@ -68,6 +68,7 @@ type lokiStreamJSON struct {
 type lokiError struct {
 	status int
 	msg    string
+	cause  error
 }
 
 // lokiHandler serves the Loki-compatible logs read API for one store.
@@ -112,22 +113,22 @@ func (h *lokiHandler) serve(w http.ResponseWriter, r *http.Request) {
 
 func (h *lokiHandler) handleQueryRange(w http.ResponseWriter, r *http.Request) {
 	if err := parseForm(w, r); err != nil {
-		h.writeError(w, &lokiError{status: http.StatusBadRequest, msg: "invalid request body"})
+		h.writeError(w, r, &lokiError{status: http.StatusBadRequest, msg: "invalid request body"})
 		return
 	}
 	q, apiErr := parseLokiSelector(r.Form.Get("query"))
 	if apiErr != nil {
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	startNs, endNs, apiErr := lokiQueryRange(r)
 	if apiErr != nil {
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	limit, apiErr := parseLokiLimit(r.Form.Get("limit"), h.cfg.MaxEntries)
 	if apiErr != nil {
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	direction := strings.TrimSpace(r.Form.Get("direction"))
@@ -136,7 +137,7 @@ func (h *lokiHandler) handleQueryRange(w http.ResponseWriter, r *http.Request) {
 		direction = lokiDirectionBackward
 	case lokiDirectionBackward, lokiDirectionForward:
 	default:
-		h.writeError(w, &lokiError{status: http.StatusBadRequest, msg: "invalid direction: want backward or forward"})
+		h.writeError(w, r, &lokiError{status: http.StatusBadRequest, msg: "invalid direction: want backward or forward"})
 		return
 	}
 
@@ -148,7 +149,7 @@ func (h *lokiHandler) handleQueryRange(w http.ResponseWriter, r *http.Request) {
 		}
 		streams, err := rel.queryStreams(ctx, pred.where, direction == lokiDirectionBackward, limit)
 		if err != nil {
-			return nil, h.execError("loki query_range", err)
+			return nil, h.execError(err)
 		}
 		data.Result = streams
 		return data, nil
@@ -157,17 +158,17 @@ func (h *lokiHandler) handleQueryRange(w http.ResponseWriter, r *http.Request) {
 
 func (h *lokiHandler) handleLabelNames(w http.ResponseWriter, r *http.Request) {
 	if err := parseForm(w, r); err != nil {
-		h.writeError(w, &lokiError{status: http.StatusBadRequest, msg: "invalid request body"})
+		h.writeError(w, r, &lokiError{status: http.StatusBadRequest, msg: "invalid request body"})
 		return
 	}
 	q, apiErr := parseLokiSelector(r.Form.Get("query"))
 	if apiErr != nil {
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	startNs, endNs, apiErr := lokiMetadataRange(r)
 	if apiErr != nil {
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	h.withSandbox(w, r, startNs, endNs, true, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
@@ -177,7 +178,7 @@ func (h *lokiHandler) handleLabelNames(w http.ResponseWriter, r *http.Request) {
 		}
 		names, err := rel.labelNames(ctx, pred.where)
 		if err != nil {
-			return nil, h.execError("loki labels", err)
+			return nil, h.execError(err)
 		}
 		return names, nil
 	})
@@ -186,21 +187,21 @@ func (h *lokiHandler) handleLabelNames(w http.ResponseWriter, r *http.Request) {
 func (h *lokiHandler) handleLabelValues(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !isValidLabelName(name) {
-		h.writeError(w, &lokiError{status: http.StatusBadRequest, msg: "invalid label name"})
+		h.writeError(w, r, &lokiError{status: http.StatusBadRequest, msg: "invalid label name"})
 		return
 	}
 	if err := parseForm(w, r); err != nil {
-		h.writeError(w, &lokiError{status: http.StatusBadRequest, msg: "invalid request body"})
+		h.writeError(w, r, &lokiError{status: http.StatusBadRequest, msg: "invalid request body"})
 		return
 	}
 	q, apiErr := parseLokiSelector(r.Form.Get("query"))
 	if apiErr != nil {
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	startNs, endNs, apiErr := lokiMetadataRange(r)
 	if apiErr != nil {
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	h.withSandbox(w, r, startNs, endNs, true, func(ctx context.Context, rel *lokiRelation) (any, *lokiError) {
@@ -213,7 +214,7 @@ func (h *lokiHandler) handleLabelValues(w http.ResponseWriter, r *http.Request) 
 		}
 		values, err := rel.labelValues(ctx, name, pred.where, h.cfg.MaxEntries, q)
 		if err != nil {
-			return nil, h.execError("loki label values", err)
+			return nil, h.execError(err)
 		}
 		return values, nil
 	})
@@ -227,12 +228,15 @@ func (h *lokiHandler) handleLabelValues(w http.ResponseWriter, r *http.Request) 
 func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startNs, endNs int64, omitMessage bool, fn func(ctx context.Context, rel *lokiRelation) (any, *lokiError)) {
 	ns := r.PathValue("ns")
 	if !storeingest.ValidateTenant(ns) {
+		h.log().Info("loki unknown tenant", "ns", ns, "status", http.StatusNotFound)
 		http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
 		return
 	}
 	absRoot, err := resolveSandboxTenantRoot(h.cfg.DataDir, filepath.Join(h.cfg.DataDir, ns))
 	if err != nil {
-		if !errors.Is(err, errUnknownTenant) {
+		if errors.Is(err, errUnknownTenant) {
+			h.log().Info("loki unknown tenant", "ns", ns, "status", http.StatusNotFound)
+		} else {
 			h.log().Error("loki tenant root", "ns", ns, "err", err)
 		}
 		http.Error(w, storetenant.UnknownTenantBody, http.StatusNotFound)
@@ -243,7 +247,7 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startN
 	defer cancel()
 
 	if err := ctx.Err(); err != nil {
-		h.writeError(w, h.execError("loki", err))
+		h.writeError(w, r, h.execError(err))
 		return
 	}
 
@@ -254,11 +258,10 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startN
 	}, startNs, endNs, omitMessage, h.cfg.RecentLookback)
 	if err != nil {
 		if apiErr := h.execErrorIfCtx(ctx, err); apiErr != nil {
-			h.writeError(w, apiErr)
+			h.writeError(w, r, apiErr)
 			return
 		}
-		h.log().Error("loki sandbox", "ns", ns, "err", err)
-		h.writeError(w, &lokiError{status: http.StatusInternalServerError, msg: "query failed"})
+		h.writeError(w, r, &lokiError{status: http.StatusInternalServerError, msg: "query failed", cause: err})
 		return
 	}
 	defer cleanup()
@@ -266,20 +269,19 @@ func (h *lokiHandler) withSandbox(w http.ResponseWriter, r *http.Request, startN
 	rel, err := newLokiRelation(ctx, conn, h.cfg.DataDir, ns)
 	if err != nil {
 		if apiErr := h.execErrorIfCtx(ctx, err); apiErr != nil {
-			h.writeError(w, apiErr)
+			h.writeError(w, r, apiErr)
 			return
 		}
-		h.log().Error("loki relation", "ns", ns, "err", err)
-		h.writeError(w, &lokiError{status: http.StatusInternalServerError, msg: "query failed"})
+		h.writeError(w, r, &lokiError{status: http.StatusInternalServerError, msg: "query failed", cause: err})
 		return
 	}
 	data, apiErr := fn(ctx, rel)
 	if apiErr != nil {
 		if err := ctx.Err(); err != nil {
-			h.writeError(w, h.execError("loki", err))
+			h.writeError(w, r, h.execError(err))
 			return
 		}
-		h.writeError(w, apiErr)
+		h.writeError(w, r, apiErr)
 		return
 	}
 	h.writeSuccess(w, data)
@@ -769,26 +771,26 @@ func parseLokiLimit(raw string, maxEntries int) (int, *lokiError) {
 	return limit, nil
 }
 
-// execError hides sandbox internals from the client while keeping the cause in
-// the store's logs. A gone client is 499; a deadline is 503 unavailable.
-func (h *lokiHandler) execError(op string, err error) *lokiError {
+// execError maps sandbox/context failures onto the Loki envelope. The HTTP
+// body stays generic so clients never see DuckDB paths; the cause is logged
+// with truncated LogQL.
+func (*lokiHandler) execError(err error) *lokiError {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return &lokiError{status: http.StatusServiceUnavailable, msg: "query timed out"}
+		return &lokiError{status: http.StatusServiceUnavailable, msg: "query timed out", cause: err}
 	case httperr.IsCanceled(err):
-		return &lokiError{status: httperr.StatusClientClosed, msg: "query was canceled"}
+		return &lokiError{status: httperr.StatusClientClosed, msg: "query was canceled", cause: err}
 	default:
-		h.log().Error(op, "err", err)
-		return &lokiError{status: http.StatusInternalServerError, msg: "query failed"}
+		return &lokiError{status: http.StatusInternalServerError, msg: "query failed", cause: err}
 	}
 }
 
 func (h *lokiHandler) execErrorIfCtx(ctx context.Context, err error) *lokiError {
 	if httperr.IsCanceled(err) || httperr.IsCanceled(ctx.Err()) {
-		return h.execError("loki", context.Canceled)
+		return h.execError(context.Canceled)
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return h.execError("loki", context.DeadlineExceeded)
+		return h.execError(context.DeadlineExceeded)
 	}
 	return nil
 }
@@ -797,8 +799,41 @@ func (h *lokiHandler) writeSuccess(w http.ResponseWriter, data any) {
 	h.writeJSON(w, http.StatusOK, lokiResponse{Status: "success", Data: data})
 }
 
-func (h *lokiHandler) writeError(w http.ResponseWriter, e *lokiError) {
+func (h *lokiHandler) writeError(w http.ResponseWriter, r *http.Request, e *lokiError) {
+	if e == nil {
+		return
+	}
+	ns := ""
+	q := ""
+	if r != nil {
+		ns = r.PathValue("ns")
+		q = lokiQueryText(r)
+	}
+	logErr := e.cause
+	if logErr == nil && e.msg != "" {
+		logErr = errors.New(e.msg)
+	}
+	switch {
+	case e.status >= 500:
+		h.log().Error("loki query", "ns", ns, "status", e.status, "query", truncateQuery(q, queryLogCap), "err", logErr)
+	case e.status == http.StatusBadRequest:
+		h.log().Warn("loki query", "ns", ns, "status", e.status, "query", truncateQuery(q, queryLogCap), "err", logErr)
+	}
 	h.writeJSON(w, e.status, lokiResponse{Status: "error", Error: e.msg})
+}
+
+func lokiQueryText(r *http.Request) string {
+	if r.PostForm != nil {
+		if v := r.PostForm.Get("query"); v != "" {
+			return v
+		}
+	}
+	if r.Form != nil {
+		if v := r.Form.Get("query"); v != "" {
+			return v
+		}
+	}
+	return r.URL.Query().Get("query")
 }
 
 func (h *lokiHandler) writeJSON(w http.ResponseWriter, status int, resp lokiResponse) {

@@ -124,7 +124,7 @@ func TestLokiTimeParsing(t *testing.T) {
 
 func TestLokiExecErrorCanceledIs499(t *testing.T) {
 	h := &lokiHandler{cfg: &LokiConfig{}}
-	e := h.execError("test", context.Canceled)
+	e := h.execError(context.Canceled)
 	if e.status != 499 {
 		t.Fatalf("status=%d want 499", e.status)
 	}
@@ -132,7 +132,7 @@ func TestLokiExecErrorCanceledIs499(t *testing.T) {
 
 func TestLokiExecErrorDeadlineStill503(t *testing.T) {
 	h := &lokiHandler{cfg: &LokiConfig{}}
-	e := h.execError("test", context.DeadlineExceeded)
+	e := h.execError(context.DeadlineExceeded)
 	if e.status != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d want 503", e.status)
 	}

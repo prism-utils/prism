@@ -229,8 +229,9 @@ func execSQLExpect400(t *testing.T, srv *httptest.Server, tenant, sqlText string
 		t.Fatalf("status=%d want 400 sql=%q body=%s", resp.StatusCode, sqlText, b)
 	}
 	msg, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(msg), "bad query") {
-		t.Fatalf("body=%q want bad query", msg)
+	var errBody sqlErrorJSON
+	if err := json.Unmarshal(msg, &errBody); err != nil || errBody.Error == "" {
+		t.Fatalf("body=%q want JSON error", msg)
 	}
 }
 
