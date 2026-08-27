@@ -861,6 +861,11 @@ the `Trailer` response header). Clients must read the full response body before
 trailer fields are available. Mid-stream failures after `200` terminate the IPC
 stream (status cannot change).
 
+Failed `/sql` 4xx/5xx responses (except `404` unknown tenant and `499` client
+closed) return JSON `{"error":"<engine or validation>"}` (error string capped at
+1 KiB) and are logged with `ns`, HTTP status, truncated SQL (512 bytes), and
+`err`.
+
 Arrow transport requires building **`prism-store`** with the **`duckdb_arrow`**
 build tag (CGO enabled). Production `Makefile` / release targets include it;
 `go build ./...` without the tag returns **`406 Not Acceptable`** for Arrow
@@ -868,11 +873,11 @@ build tag (CGO enabled). Production `Makefile` / release targets include it;
 
 | Condition | Status |
 |---|---|
-| malformed JSON / empty SQL / non-SELECT / multi-statement / exec error | `400 bad query` |
-| query timeout (`SQL_API_TIMEOUT_SECONDS`) | `400 bad query` |
+| malformed JSON / empty SQL / non-SELECT / multi-statement / exec error | `400` JSON `{"error":"..."}` |
+| query timeout (`SQL_API_TIMEOUT_SECONDS`) | `400` JSON `{"error":"..."}` |
 | client gone (request context canceled; in-flight sandbox query is interrupted) | `499 client closed` |
 | unknown/malformed tenant / missing tenant root | `404 unknown tenant` |
-| internal failure (snapshot, sandbox) | `500 query failed` |
+| internal failure (snapshot, sandbox) | `500` JSON `{"error":"..."}` |
 
 When **`SQL_API_ENABLED=false`** (default `true`), the route is not registered
 (`404`).
