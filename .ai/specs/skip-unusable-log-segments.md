@@ -3,7 +3,7 @@
 Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/skip-unusable-log-segments-b37a`
-- **Owner phase:** developer
+- **Owner phase:** reviewer
 - **PLAN phase(s):** store logs lifecycle / query visibility
 
 ## 1. Task
