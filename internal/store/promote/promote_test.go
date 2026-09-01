@@ -209,6 +209,27 @@ func TestBrokenDestIsReplaced(t *testing.T) {
 	}
 }
 
+func TestListHotCompactedSkipsEmptyParquet(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := "user-empty-l1"
+	dir := layout.LogsTierDir(dataDir, tenant, "logs-raw", 1)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(dir, "keep.parquet")
+	empty := filepath.Join(dir, "empty.parquet")
+	writeFile(t, keep, parquetFixture("ok"))
+	writeFile(t, empty, nil)
+
+	got, err := listHotCompacted(dataDir, tenant, 2)
+	if err != nil {
+		t.Fatalf("listHotCompacted: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != keep {
+		t.Fatalf("listed = %+v, want only %s", got, keep)
+	}
+}
+
 func parquetFixture(mid string) []byte {
 	b := make([]byte, 0, 8+len(mid))
 	b = append(b, parquetMagic...)

@@ -501,6 +501,33 @@ func TestSandboxLogsSkipsDeletedCachedParquet(t *testing.T) {
 	}
 }
 
+func TestSandboxLogsSkipsEmptyTierParquet(t *testing.T) {
+	InvalidateLogsMetaCache("")
+	root := t.TempDir()
+	tenantRoot := filepath.Join(root, gateTenant)
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(dir, layout.SegmentName(time.Unix(1, 0)))
+	empty := filepath.Join(dir, layout.SegmentName(time.Unix(2, 0)))
+	testparquet.WriteLogsRawFile(t, keep, []testparquet.LogRow{{Message: "keep", Format: "none"}})
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sqlText, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	if err != nil {
+		t.Fatalf("empty sibling must not fail relation build: %v", err)
+	}
+	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(keep) {
+		t.Fatalf("open set = %+v, want only %s", fileBases(files), keep)
+	}
+	if strings.Contains(sqlText, filepath.Base(empty)) {
+		t.Fatalf("SQL still references empty file: %s", truncate(sqlText, 240))
+	}
+}
+
 func TestPrepareMetricsSandboxIgnoresStaleLogCache(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()

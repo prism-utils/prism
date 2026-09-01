@@ -186,17 +186,71 @@ func TestLogRefreshDrainRefreshesRemainderByAge(t *testing.T) {
 
 func TestLogRefreshDrainOrdersOldestFirst(t *testing.T) {
 	p := refreshPlanner(time.Minute, 8, 6)
-	landing := landingSegs(12, 10, time.Minute)
+	landing := landingSegs(18, 10, time.Minute)
 	now := fixtureBase.Add(24 * time.Hour)
 
 	actions := p.FindLogMerges(now, landing, nil)
-	if len(actions) < 2 {
-		t.Fatalf("want at least 2 refreshes to compare order, got %d", len(actions))
+	if len(actions) < 3 {
+		t.Fatalf("want newest-first plus two drain packs, got %d", len(actions))
 	}
-	firstNewest := actions[0].Sources[len(actions[0].Sources)-1].MinTs
-	secondOldest := actions[1].Sources[0].MinTs
-	if secondOldest.Before(firstNewest) {
-		t.Fatalf("second refresh starts at %v, before the first refresh ends at %v", secondOldest, firstNewest)
+	drainNewest := actions[1].Sources[len(actions[1].Sources)-1].MinTs
+	nextOldest := actions[2].Sources[0].MinTs
+	if nextOldest.Before(drainNewest) {
+		t.Fatalf("second drain starts at %v, before the first drain ends at %v", nextOldest, drainNewest)
+	}
+}
+
+func TestLogRefreshNewestFirstWhenBacklogExceedsOnePack(t *testing.T) {
+	const maxActions = 3
+	const perAction = 6
+	p := refreshPlanner(time.Minute, maxActions, perAction)
+	landing := landingSegs(20, 10, time.Minute)
+	now := fixtureBase.Add(24 * time.Hour)
+
+	actions := p.FindLogMerges(now, landing, nil)
+	if len(actions) != maxActions {
+		t.Fatalf("planned %d refreshes, want %d", len(actions), maxActions)
+	}
+	assertSourcesDisjoint(t, actions)
+
+	newest := landing[len(landing)-1].MinTs
+	var sawNewest bool
+	for _, s := range actions[0].Sources {
+		if s.MinTs.Equal(newest) {
+			sawNewest = true
+		}
+	}
+	if !sawNewest {
+		t.Fatalf("first refresh must pack the newest landing (%v); got %+v", newest, actions[0].Sources)
+	}
+
+	firstOldest := actions[1].Sources[0].MinTs
+	if !firstOldest.Equal(landing[0].MinTs) {
+		t.Fatalf("remaining drain must start at the oldest landing, got %v want %v", firstOldest, landing[0].MinTs)
+	}
+}
+
+func TestLogRefreshPacksTinyLandingsTowardSealBudget(t *testing.T) {
+	p := NewPlanner(PlannerConfig{
+		SegmentsPerTier:       6,
+		MaxMergeAtOnce:        0,
+		MaxSegmentBytes:       2 << 30,
+		FloorBytes:            360 << 20,
+		LogsRefreshInterval:   time.Minute,
+		LogsRefreshMaxActions: 2,
+	})
+	landing := landingSegs(80, 536000, time.Minute)
+	now := fixtureBase.Add(24 * time.Hour)
+
+	actions := p.FindLogMerges(now, landing, nil)
+	if len(actions) == 0 {
+		t.Fatal("want at least one refresh")
+	}
+	if got := len(actions[0].Sources); got <= 6 {
+		t.Fatalf("tiny landing pack width = %d, want more than the metrics-floor cap of 6", got)
+	}
+	if got := len(actions[0].Sources); got > 64 {
+		t.Fatalf("tiny landing pack width = %d, want capped at 64", got)
 	}
 }
 
