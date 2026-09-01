@@ -1,10 +1,10 @@
 # Spec: Log merge dest format wins (restore 1.0.13 COPY contract)
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/log-merge-dest-format-b37a`
-- **Owner phase:** reviewer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** store lifecycle / merge executor (regression of #155)
 
 ## 1. Task
@@ -122,16 +122,22 @@ data is visible without a data-dir purge.
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-<!-- Reviewer appends one actionable line under any gate it unchecks. Set
-     Status: ALL_OK only when every box above is checked; otherwise
-     Status: CHANGES_REQUESTED. -->
+Verdict: **ALL_OK**. No acceptance items or gates unchecked.
 
-_(empty until first review)_
+**History:** `test(store)` (failing dest-format + skip tests + SkipOpen size-only stub) → `fix(store)` (dest switch, parquet magic, STORE.md, scan fixtures) → `docs(specs)` (IN_REVIEW). Test-first contract holds. Conventional Commits; no `--no-verify`.
+
+**make lint test:** green (golangci-lint 0 issues; `go test -race -tags duckdb_arrow ./...` ok). Reviewer re-ran `segformat`, `merge`, `query` with `-count=1` ok.
+
+**make full-tests:** `full-tests: OK`. Compose `up` logged host port `18080` already in use; integration tests still passed (`test/integration` 2.0s). Environment port clash, not a product failure.
+
+**Checklist (N/A items):** no new component/factory; no new deps; no new goroutines; extra 8-byte header+footer read per `.parquet` scan path (Decision Protocol). Skip-not-fail matches CONTRIBUTING §3.3 for malformed files. STORE.md matches dest-format contract and magic skip. New comments are atomic (no file/package/symbol pointers). DESIGN.md/PLAN.md topology unchanged (store merge contract only).
+
+**Scope:** dest format wins for logs and metrics merge; query + log merge scan skip invalid parquet. Promote still size-only (out of scope). Metrics OOM / gitops pin out of scope.
