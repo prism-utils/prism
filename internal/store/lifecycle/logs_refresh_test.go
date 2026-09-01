@@ -30,8 +30,8 @@ func seedLandingWindows(t *testing.T, dataDir, tenant, artifact string, base tim
 }
 
 // refreshRunner drives merges with a one-pack-per-two-files budget: the derived
-// max-merge-at-once is MaxSegmentBytes/FloorBytes, so a drain needs one action
-// per pair of landing files.
+// max-merge-at-once is MaxSegmentBytes/FloorBytes. FloorBytes stays at 1 MiB so
+// logs do not re-widen the pack (that path only fires when the floor is larger).
 func refreshRunner(t *testing.T, dataDir string, now func() time.Time, interval time.Duration, maxActions, segmentsPerTier int) *Runner {
 	t.Helper()
 	eng := engine.New(engine.Config{DataDir: dataDir}, now)
@@ -39,8 +39,8 @@ func refreshRunner(t *testing.T, dataDir string, now func() time.Time, interval 
 	return NewRunner(&Config{
 		DataDir:               dataDir,
 		SegmentsPerTier:       segmentsPerTier,
-		MaxSegmentBytes:       1 << 30,
-		FloorBytes:            1 << 29,
+		MaxSegmentBytes:       2 << 20,
+		FloorBytes:            1 << 20,
 		RetentionDays:         15,
 		MaxTier:               8,
 		LogsRefreshInterval:   interval,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/seed"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 const defaultAfter = 12 * time.Hour
@@ -205,8 +206,19 @@ func listSegmentFiles(dir, relPrefix string, tier int) ([]fileRef, error) {
 		if _, held := retired[name]; held {
 			continue
 		}
+		path := filepath.Join(dir, name)
+		st, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		if segformat.TooSmall(st.Size()) {
+			continue
+		}
 		out = append(out, fileRef{
-			Path: filepath.Join(dir, name),
+			Path: path,
 			Rel:  relPrefix + "/" + name,
 			Tier: tier,
 		})

@@ -15,6 +15,31 @@ import (
 
 const logsMergeTenant = "user-logmerge01-apps"
 
+func TestScanLogLandingSkipsEmptyFile(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := logsMergeTenant
+	artifact := "logs-raw"
+	dir := layout.LogsLandingDir(dataDir, tenant, artifact)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	keep := filepath.Join(dir, layout.SegmentName(base))
+	empty := filepath.Join(dir, layout.SegmentName(base.Add(time.Minute)))
+	testparquet.WriteLogsRawFile(t, keep, []testparquet.LogRow{{Message: "keep", Format: "none"}})
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ScanLogLanding(dataDir, tenant, artifact)
+	if err != nil {
+		t.Fatalf("ScanLogLanding: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != keep {
+		t.Fatalf("landing = %+v, want only %s", got, keep)
+	}
+}
+
 func TestLogsTierMergeCompactsPastSegmentsPerTier(t *testing.T) {
 	dataDir := t.TempDir()
 	tenant := logsMergeTenant

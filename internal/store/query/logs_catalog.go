@@ -11,6 +11,7 @@ import (
 
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/logmeta"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 // logFileMeta is one landed or compacted log segment the planners may open.
@@ -291,6 +292,9 @@ func listParquetInDir(roots []string, dir, artifact string) ([]logFileMeta, erro
 			}
 			return nil, err
 		}
+		if segformat.TooSmall(fi.Size()) {
+			continue
+		}
 		minNs, maxNs := logFileTimeBounds(match, fi.ModTime())
 		out = append(out, logFileMeta{
 			Path:        match,
@@ -461,15 +465,20 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 }
 
 // filterExistingLogFiles drops paths that disappeared after the meta cache /
-// manifest snapshot (retention, compaction, or a lost rename). DuckDB's
-// read_parquet([…]) fails the whole relation if any listed file is missing.
+// manifest snapshot (retention, compaction, or a lost rename) and paths too
+// small to open. DuckDB's read_parquet([…]) fails the whole relation if any
+// listed file is missing or truncated.
 func filterExistingLogFiles(files []logFileMeta) []logFileMeta {
 	if len(files) == 0 {
 		return files
 	}
 	out := make([]logFileMeta, 0, len(files))
 	for _, f := range files {
-		if _, err := os.Stat(f.Path); err != nil { //nolint:gosec // G703: path already tenant-validated
+		st, err := os.Stat(f.Path) //nolint:gosec // G703: path already tenant-validated
+		if err != nil {
+			continue
+		}
+		if segformat.TooSmall(st.Size()) {
 			continue
 		}
 		out = append(out, f)

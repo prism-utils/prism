@@ -54,6 +54,22 @@ func TestExt(t *testing.T) {
 	}
 }
 
+func TestTooSmall(t *testing.T) {
+	t.Parallel()
+	if !segformat.TooSmall(0) {
+		t.Fatal("0 bytes must be unusable")
+	}
+	if !segformat.TooSmall(segformat.MinUsableBytes - 1) {
+		t.Fatalf("%d bytes must be unusable", segformat.MinUsableBytes-1)
+	}
+	if segformat.TooSmall(segformat.MinUsableBytes) {
+		t.Fatalf("%d bytes must be usable", segformat.MinUsableBytes)
+	}
+	if segformat.TooSmall(segformat.MinUsableBytes + 1) {
+		t.Fatalf("%d bytes must be usable", segformat.MinUsableBytes+1)
+	}
+}
+
 func TestConvertDuckDBFileToParquet(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "seg.duckdb")
