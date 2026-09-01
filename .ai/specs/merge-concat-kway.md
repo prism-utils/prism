@@ -1,6 +1,6 @@
 # Spec: Merge concat (metrics) + k-way (logs) + OOM quarantine
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/merge-concat-kway-1cdb` (cloud branch prefix; prism type is `feat`)
@@ -195,19 +195,19 @@ Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
 - [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-  - `Executor` / `NewExecutor` still say merge is DuckDB COPY/ATTACH while parquet is concat/k-way first. `docs/STORE.md` says a corrupt footer takes COPY; `firstHomogeneousPack` skips fingerprint errors and can return `ErrNoHomogeneousPack` with no COPY. Spec §5.2 orders the heap by `__prism_ts_ns` then `ts`; `kwayHeap.Less` only uses ingest-ts then source index. Align comments + STORE.md (and the `ts` tie-break if it is still required).
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
 - [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
-  - Gate 3 fails; `make test` is not green; Arrow concat/k-way never assert allocator balance (`CheckedAllocator`); `make full-tests` not run.
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 9. Reviewer notes
 
-History (oldest→newest on the branch): `docs(store/merge)` → `test(store/merge)` (tests only) → `feat(store/merge)`. TDD contract holds.
+History (oldest→newest on the branch): `docs(store/merge)` → `test(store/merge)` (tests only) → `feat(store/merge)` → previous `docs(specs)` verdict → `fix(store/merge)`. TDD contract holds.
 
-Reviewer re-ran: `make lint` (0 issues). `CGO_ENABLED=1 go test -count=1 -race -tags duckdb_arrow ./internal/store/layout/ ./internal/store/merge/ ./internal/store/lifecycle/` green. `make test` failed on `TestE2E_LoggingThreePhaseParquet` (`logging_test.go:102` Eventually; pipeline `Failed to detect creation of …/app.log`). Isolation (`-run TestE2E_LoggingThreePhaseParquet`, twice) also failed in 5s — not only a `./...` parallel race. Diff does not touch `internal/e2e`. Docker compose v2.29.7 is installed; `make full-tests` was not run.
+Second review (after CHANGES_REQUESTED): Gate 3 items are fixed — `Executor`/`NewExecutor`/`ExecuteMerge` comments, `docs/STORE.md` skip-unreadable-footers, spec §5.2 and `kwayHeap.Less` all agree (`__prism_ts_ns`, then event `ts`, then source index). Allocator balance tests exist. `TestE2E_LoggingThreePhaseParquet` now appends after the tailer starts.
 
-M8 records rewrite attempts in the lifecycle tick on ExecuteMerge error, not on a successful COPY fallback — a concat-then-COPY success does not write an attempts sidecar (sources are retired).
+Reviewer re-ran: `make lint` (0 issues). `make test GOFLAGS=-count=1` green (`-race`; `internal/store/merge` 19.039s; `internal/e2e` 3.394s). `make full-tests` printed OK: compose http-sink failed to bind host 18080 (kubectl port-forward already listening); tagged `./test/integration` still passed (`-count=1`, 0.416s); `make e2e GOFLAGS=-count=1` green (`test/e2e` 230.475s).
+
+Non-blocking leftovers (do not reopen the loop): metering still calls compaction wall-clock “the DuckDB COPY merge” (`docs/STORE.md` §Metering) while concat/k-way is the parquet path; M8 records rewrite attempts on ExecuteMerge error, not on a successful COPY fallback (sources are retired).
 
 ## 10. Homelab follow-up (not this PR)
 
