@@ -1,10 +1,10 @@
 # Spec: Log merge dest format wins (restore 1.0.13 COPY contract)
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/log-merge-dest-format-b37a`
-- **Owner phase:** developer
+- **Owner phase:** reviewer
 - **PLAN phase(s):** store lifecycle / merge executor (regression of #155)
 
 ## 1. Task
@@ -98,24 +98,24 @@ data is visible without a data-dir purge.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `ExecuteLogMerge` with duckdb landing sources and parquet dest writes a
+- [x] `ExecuteLogMerge` with duckdb landing sources and parquet dest writes a
       file whose header and footer are `PAR1` (DuckDB `read_parquet` succeeds).
       Dest path still uses `.parquet`.
-- [ ] `ExecuteMerge` (metrics) with duckdb sources and parquet dest writes
+- [x] `ExecuteMerge` (metrics) with duckdb sources and parquet dest writes
       parquet bytes to a `.parquet` path, not a DuckDB file.
-- [ ] Dest `SegmentFormat=duckdb` still emits `.duckdb` via `AtomicExportDuckDB`.
-- [ ] All-parquet sources still use k-way (logs) / concat (metrics); COPY only
+- [x] Dest `SegmentFormat=duckdb` still emits `.duckdb` via `AtomicExportDuckDB`.
+- [x] All-parquet sources still use k-way (logs) / concat (metrics); COPY only
       as fallback or when a duckdb source forces a rewrite to parquet dest.
-- [ ] Query `logs_raw` open set omits a `.parquet` path that is a DuckDB file
+- [x] Query `logs_raw` open set omits a `.parquet` path that is a DuckDB file
       (no footer `PAR1`) and still lists a valid sibling parquet.
-- [ ] `ScanLogTier` / log merge scan omits the same poison `.parquet` and still
+- [x] `ScanLogTier` / log merge scan omits the same poison `.parquet` and still
       returns valid neighbors (tick does not fail on k-way of duckdb-bytes).
-- [ ] Skip does not rename or write a sidecar for the poison file.
-- [ ] Valid `.duckdb` landing/tier files are not skipped by the parquet-magic
+- [x] Skip does not rename or write a sidecar for the poison file.
+- [x] Valid `.duckdb` landing/tier files are not skipped by the parquet-magic
       check (they stay ATTACH inputs).
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
-- [ ] STORE.md one-liner: dest format governs merge output; query/scan skip
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring touched)
+- [x] STORE.md one-liner: dest format governs merge output; query/scan skip
       `.parquet` files that lack parquet magic (not only size &lt; 8).
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
