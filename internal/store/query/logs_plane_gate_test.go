@@ -528,6 +528,38 @@ func TestSandboxLogsSkipsEmptyTierParquet(t *testing.T) {
 	}
 }
 
+func TestSandboxLogsSkipsDuckDBBytesAtParquetPath(t *testing.T) {
+	InvalidateLogsMetaCache("")
+	root := t.TempDir()
+	tenantRoot := filepath.Join(root, gateTenant)
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(dir, layout.SegmentName(time.Unix(1, 0)))
+	poison := filepath.Join(dir, layout.SegmentName(time.Unix(2, 0)))
+	testparquet.WriteLogsRawFile(t, keep, []testparquet.LogRow{{Message: "keep", Format: "none"}})
+	buf := make([]byte, 800*1024)
+	copy(buf[8:], "DUCK")
+	if err := os.WriteFile(poison, buf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sqlText, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	if err != nil {
+		t.Fatalf("poison sibling must not fail relation build: %v", err)
+	}
+	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(keep) {
+		t.Fatalf("open set = %+v, want only %s", fileBases(files), keep)
+	}
+	if strings.Contains(sqlText, filepath.Base(poison)) {
+		t.Fatalf("SQL still references poison parquet: %s", truncate(sqlText, 240))
+	}
+	if _, err := os.Stat(poison); err != nil {
+		t.Fatalf("poison file must stay on disk (skip, not rename): %v", err)
+	}
+}
+
 func TestPrepareMetricsSandboxIgnoresStaleLogCache(t *testing.T) {
 	InvalidateLogsMetaCache("")
 	root := t.TempDir()

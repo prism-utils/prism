@@ -35,6 +35,14 @@ func TooSmall(n int64) bool {
 	return n < MinUsableBytes
 }
 
+// SkipOpen reports whether a segment should be omitted from query and merge
+// scans. Size below a header is always unusable. A .parquet path that lacks
+// parquet header and footer magic is unusable even when large enough (a DuckDB
+// file written to a .parquet name is the 1.0.14 merge regression).
+func SkipOpen(path string, size int64) bool {
+	return TooSmall(size)
+}
+
 // MetricsTable is the relation name inside metrics-plane .duckdb segments and
 // hot/current.duckdb exports.
 const MetricsTable = "metrics"

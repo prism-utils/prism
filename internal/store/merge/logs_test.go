@@ -40,6 +40,54 @@ func TestScanLogLandingSkipsEmptyFile(t *testing.T) {
 	}
 }
 
+func TestScanLogTierSkipsDuckDBBytesAtParquetPath(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := logsMergeTenant
+	artifact := "logs-raw"
+	dir := layout.LogsTierDir(dataDir, tenant, artifact, 0)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	keep := filepath.Join(dir, layout.SegmentName(base))
+	poison := filepath.Join(dir, layout.SegmentName(base.Add(time.Minute)))
+	liveDuck := filepath.Join(dir, layout.SegmentNameFormat(base.Add(2*time.Minute), "duckdb"))
+	testparquet.WriteLogsRawFile(t, keep, []testparquet.LogRow{{Message: "keep", Format: "none"}})
+	writePoisonParquet(t, poison)
+	writeLandingLogsDuckDB(t, liveDuck, "ok-duck")
+
+	got, err := ScanLogTier(dataDir, tenant, artifact, 0)
+	if err != nil {
+		t.Fatalf("ScanLogTier: %v", err)
+	}
+	var paths []string
+	for _, s := range got {
+		paths = append(paths, s.Path)
+	}
+	if len(got) != 2 {
+		t.Fatalf("tier = %v, want keep parquet + live duckdb", paths)
+	}
+	for _, s := range got {
+		if s.Path == poison {
+			t.Fatalf("poison parquet still in scan: %s", poison)
+		}
+	}
+	if _, err := os.Stat(poison); err != nil {
+		t.Fatalf("poison file must stay on disk (skip, not rename): %v", err)
+	}
+}
+
+func writePoisonParquet(t *testing.T, path string) {
+	t.Helper()
+	// Larger than TooSmall (8 bytes); duckdb-shaped so Grafana read_parquet
+	// fails with missing footer magic rather than a truncated-file skip.
+	buf := make([]byte, 800*1024)
+	copy(buf[8:], "DUCK")
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLogsTierMergeCompactsPastSegmentsPerTier(t *testing.T) {
 	dataDir := t.TempDir()
 	tenant := logsMergeTenant

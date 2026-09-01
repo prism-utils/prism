@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -67,6 +68,79 @@ func TestTooSmall(t *testing.T) {
 	}
 	if segformat.TooSmall(segformat.MinUsableBytes + 1) {
 		t.Fatalf("%d bytes must be usable", segformat.MinUsableBytes+1)
+	}
+}
+
+func TestSkipOpenParquet(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.parquet")
+	writeTinyParquet(t, good)
+	st, err := os.Stat(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if segformat.SkipOpen(good, st.Size()) {
+		t.Fatal("valid parquet must not be skipped")
+	}
+
+	poison := filepath.Join(dir, "poison.parquet")
+	buf := make([]byte, 800*1024)
+	copy(buf[8:], "DUCK")
+	if err := os.WriteFile(poison, buf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pst, err := os.Stat(poison)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !segformat.SkipOpen(poison, pst.Size()) {
+		t.Fatal("duckdb bytes at a .parquet path must be skipped")
+	}
+
+	headerOnly := filepath.Join(dir, "header-only.parquet")
+	head := append([]byte("PAR1"), make([]byte, 100)...)
+	if err := os.WriteFile(headerOnly, head, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hst, err := os.Stat(headerOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !segformat.SkipOpen(headerOnly, hst.Size()) {
+		t.Fatal("parquet header without footer magic must be skipped")
+	}
+
+	duck := filepath.Join(dir, "ok.duckdb")
+	writeLogsDuckDB(t, duck)
+	dst, err := os.Stat(duck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if segformat.SkipOpen(duck, dst.Size()) {
+		t.Fatal("valid .duckdb must not be skipped by parquet-magic check")
+	}
+
+	empty := filepath.Join(dir, "empty.parquet")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !segformat.SkipOpen(empty, 0) {
+		t.Fatal("0-byte parquet must still be skipped")
+	}
+}
+
+func writeTinyParquet(t *testing.T, path string) {
+	t.Helper()
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	q := fmt.Sprintf(`COPY (SELECT 'x' AS message) TO '%s' (FORMAT parquet)`, filepath.ToSlash(path))
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("write parquet: %v", err)
 	}
 }
 
