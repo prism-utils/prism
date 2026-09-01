@@ -23,6 +23,18 @@ const (
 // line readable by the bundled go-duckdb. Operators may override via env.
 const DefaultStorageVersion = "v1.0.0"
 
+// MinUsableBytes is the smallest on-disk segment that can hold a parquet magic
+// pair or a duckdb header. Crash leftovers below this fail ATTACH / read_parquet
+// for every sibling in the same open set.
+const MinUsableBytes int64 = 8
+
+// TooSmall reports whether a file is too small to open as a parquet or duckdb
+// segment. Callers skip these paths; they do not rename them (a read-only query
+// plane cannot).
+func TooSmall(n int64) bool {
+	return n < MinUsableBytes
+}
+
 // MetricsTable is the relation name inside metrics-plane .duckdb segments and
 // hot/current.duckdb exports.
 const MetricsTable = "metrics"

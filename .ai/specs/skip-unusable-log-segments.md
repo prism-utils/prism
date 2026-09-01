@@ -1,6 +1,6 @@
 # Spec: skip unusable log segments so refresh and Loki survive crash leftovers
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/skip-unusable-log-segments-b37a`
 - **Owner phase:** developer
@@ -73,15 +73,15 @@ tiny landings fill the seal budget.
 
 ## 5. Acceptance checklist
 
-- [ ] `segformat.TooSmall` treats 0 and `<8` bytes as unusable; 8+ is not
-- [ ] Loki/`/sql` open set skips a 0-byte tier parquet and still reads a valid sibling
-- [ ] `ScanLogLanding` omits a 0-byte landing file and still returns valid neighbors
-- [ ] Promote listing omits a 0-byte L1 parquet
-- [ ] Refresh with budget ≥2 and backlog > one pack plans a newest-first action first
-- [ ] Oldest-first drain still uses the remaining budget (disjoint sources)
-- [ ] Log pack-at-once uses the 1 MiB floor (capped) when the planner floor is larger
-- [ ] Tests written first (a `test:` commit precedes implementation)
-- [ ] `make lint test` green locally
+- [x] `segformat.TooSmall` treats 0 and `<8` bytes as unusable; 8+ is not
+- [x] Loki/`/sql` open set skips a 0-byte tier parquet and still reads a valid sibling
+- [x] `ScanLogLanding` omits a 0-byte landing file and still returns valid neighbors
+- [x] Promote listing omits a 0-byte L1 parquet
+- [x] Refresh with budget ≥2 and backlog > one pack plans a newest-first action first
+- [x] Oldest-first drain still uses the remaining budget (disjoint sources)
+- [x] Log pack-at-once uses the 1 MiB floor (capped) when the planner floor is larger
+- [x] Tests written first (a `test:` commit precedes implementation)
+- [x] `make lint test` green locally
 
 ## 6. Mandatory review gates
 

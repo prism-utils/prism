@@ -17,7 +17,7 @@ func writeSegmentFixture(t *testing.T, path string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("segment"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("segment\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

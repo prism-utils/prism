@@ -15,6 +15,16 @@ import (
 
 const logLandingTier = -1
 
+const (
+	// logsPackFloorBytes is the landing pack floor when the planner floor is
+	// larger (metrics 24h windows). Tiny landings would otherwise pack only a
+	// handful of files per action.
+	logsPackFloorBytes int64 = 1 << 20
+	// logsPackAtOnceCap bounds files per landing/tier pack so DuckDB merge RAM
+	// stays inside the process memory limit.
+	logsPackAtOnceCap = 64
+)
+
 // logIngestTSColumn is the per-row storage ingest-time axis (nanoseconds) written
 // at land/merge so compaction does not collapse charts to merge wall-clock.
 const logIngestTSColumn = "__prism_ts_ns"
@@ -75,6 +85,9 @@ func ScanLogLanding(dataDir, tenant, artifact string) ([]Segment, error) {
 		if err != nil {
 			return nil, err
 		}
+		if segformat.TooSmall(seg.Bytes) {
+			continue
+		}
 		out = append(out, seg)
 	}
 	return out, nil
@@ -103,6 +116,9 @@ func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) 
 		seg, err := StatLogSegment(path, tier)
 		if err != nil {
 			return nil, err
+		}
+		if segformat.TooSmall(seg.Bytes) {
+			continue
 		}
 		out = append(out, seg)
 	}
@@ -150,12 +166,19 @@ func (p *Planner) FindLogMerges(now time.Time, landing, tiers []Segment) []LogMe
 }
 
 // findLogLandingRefreshes packs the live landing buffer into disjoint landing→L0
-// actions, oldest first, while a trigger still fires and the action budget
-// holds. Each action's sources are removed from the candidate pool, so one tick
-// can shrink a backlog that a single pack could not.
+// actions while a trigger still fires and the action budget holds. When the
+// budget is at least two packs and the live set is larger than one pack, the
+// first action is newest-first so last-hour queries become searchable before
+// the oldest-first drain finishes. Remaining actions stay oldest-first.
 func (p *Planner) findLogLandingRefreshes(now time.Time, landing []Segment) []LogMergeAction {
 	live := p.sortedLiveLogs(landing)
 	var out []LogMergeAction
+	if p.cfg.LogsRefreshMaxActions >= 2 && len(live) > 0 && p.logRefreshDue(now, live) {
+		if sources, ok := p.packLiveLogsNewest(live); ok && len(live) > len(sources) {
+			out = append(out, LogMergeAction{Sources: sources, DestTier: 0})
+			live = subtractLogSources(live, sources)
+		}
+	}
 	for len(out) < p.cfg.LogsRefreshMaxActions && len(live) > 0 {
 		if !p.logRefreshDue(now, live) {
 			break
@@ -216,8 +239,7 @@ func (p *Planner) packUnsealedLogs(segs []Segment) ([]Segment, bool) {
 	return p.packLiveLogs(live)
 }
 
-// sortedLiveLogs drops sealed segments and orders the rest oldest first, which
-// is the order every log pack consumes candidates in.
+// sortedLiveLogs drops sealed segments and orders the rest oldest first.
 func (p *Planner) sortedLiveLogs(segs []Segment) []Segment {
 	live := make([]Segment, 0, len(segs))
 	for _, s := range segs {
@@ -235,26 +257,89 @@ func (p *Planner) sortedLiveLogs(segs []Segment) []Segment {
 	return live
 }
 
-// packLiveLogs fills toward MaxSegmentBytes from the head of a live, time-ordered
-// candidate set (capped by MaxMergeAtOnce), shrinking the set until the summed
-// bytes fit the seal budget.
-func (p *Planner) packLiveLogs(live []Segment) ([]Segment, bool) {
+// logPackAtOnce is how many live log segments one action may attach. When the
+// planner floor is above 1 MiB (shared with metrics), logs re-derive from 1 MiB
+// and cap at 64 so 536 KiB landings fill toward the seal budget.
+func (p *Planner) logPackAtOnce() int {
 	n := p.cfg.MaxMergeAtOnce
+	if p.cfg.FloorBytes > logsPackFloorBytes {
+		n = derivedMaxMergeAtOnce(p.cfg.MaxSegmentBytes, logsPackFloorBytes, p.cfg.SegmentsPerTier)
+		if n > logsPackAtOnceCap {
+			n = logsPackAtOnceCap
+		}
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// packLiveLogs fills toward MaxSegmentBytes from the head of a live, time-ordered
+// candidate set (capped by the logs pack width), shrinking the set until the
+// summed bytes fit the seal budget.
+func (p *Planner) packLiveLogs(live []Segment) ([]Segment, bool) {
+	return packLiveLogsFrom(live, p.logPackAtOnce(), p.cfg.MaxSegmentBytes, false)
+}
+
+// packLiveLogsNewest packs from the tail of a live, oldest-first set so recent
+// windows become searchable first. The returned subset stays oldest-first.
+func (p *Planner) packLiveLogsNewest(live []Segment) ([]Segment, bool) {
+	return packLiveLogsFrom(live, p.logPackAtOnce(), p.cfg.MaxSegmentBytes, true)
+}
+
+func packLiveLogsFrom(live []Segment, maxAtOnce int, maxBytes int64, newest bool) ([]Segment, bool) {
+	if len(live) == 0 || maxAtOnce < 1 {
+		return nil, false
+	}
+	n := maxAtOnce
 	if n > len(live) {
 		n = len(live)
 	}
-	candidates := live[:n]
+	var candidates []Segment
+	if newest {
+		candidates = live[len(live)-n:]
+	} else {
+		candidates = live[:n]
+	}
+	if newest {
+		for start := 0; start < len(candidates); start++ {
+			subset := candidates[start:]
+			if sumSegmentBytes(subset) <= maxBytes {
+				return subset, true
+			}
+		}
+		return nil, false
+	}
 	for n := len(candidates); n >= 1; n-- {
 		subset := candidates[:n]
-		sum := int64(0)
-		for _, s := range subset {
-			sum += s.Bytes
-		}
-		if sum <= p.cfg.MaxSegmentBytes {
+		if sumSegmentBytes(subset) <= maxBytes {
 			return subset, true
 		}
 	}
 	return nil, false
+}
+
+func sumSegmentBytes(segs []Segment) int64 {
+	var sum int64
+	for _, s := range segs {
+		sum += s.Bytes
+	}
+	return sum
+}
+
+func subtractLogSources(live, drop []Segment) []Segment {
+	skip := make(map[string]struct{}, len(drop))
+	for _, s := range drop {
+		skip[s.Path] = struct{}{}
+	}
+	out := make([]Segment, 0, len(live)-len(drop))
+	for _, s := range live {
+		if _, hit := skip[s.Path]; hit {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // ExecuteLogMerge compacts sources into logs/<artifact>/tiers/L{DestTier}/ via union_by_name.

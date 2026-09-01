@@ -137,7 +137,7 @@ func TestTickMergePurgesExpiredHoldWithoutPlanningAMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	held := filepath.Join(tierDir, "1786140844863329878-aaaaaaaa.parquet")
-	if err := os.WriteFile(held, []byte("segment"), 0o600); err != nil {
+	if err := os.WriteFile(held, []byte("segment\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	expired := strconv.FormatInt(now.Add(-time.Minute).Unix(), 10) + "\n"
