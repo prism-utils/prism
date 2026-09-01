@@ -1,6 +1,6 @@
 # Spec: Merge concat (metrics) + k-way (logs) + OOM quarantine
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/merge-concat-kway-1cdb` (cloud branch prefix; prism type is `feat`)
@@ -58,6 +58,11 @@ Stop the lucene metrics merge COPY from OOMing DuckDB (`ORDER BY ts` over hundre
   - perf: 359 identical OOMs in 6h burned ~400m CPU continuously. Five bounded attempts then skip is enough to prove a pack cannot rewrite.
   - product: unmergeable sources remain readable (query still opens L0). They are not deleted. A sidecar is durable across restarts (in-memory counters are not).
 
+- **Unreadable footers are skipped, not COPY-rewritten**
+  - ref: DuckDB `read_parquet` fails on a truncated footer the same way concat fingerprinting does; COPY of that file cannot succeed.
+  - perf: skip-and-leave-live avoids a guaranteed-fail COPY that would burn the rewrite budget on an unreadable singleton.
+  - product: a bad L0 stays queryable if the footer is only partially broken; a truly unreadable file stays on disk for operator inspection instead of being quarantined as `too-large`.
+
 - **No new parquet library**
   - ref: `docs/DESIGN.md` §13 — Parquet = `apache/arrow-go/v18`.
   - perf: streaming one Arrow record batch / row group is enough to kill the OOM; verbatim compressed-page copy would be faster but is an optional later optimization.
@@ -68,15 +73,15 @@ Stop the lucene metrics merge COPY from OOMing DuckDB (`ORDER BY ts` over hundre
 ### 5.1 Metrics `ExecuteMerge` (parquet)
 
 1. If any source is `.duckdb`, use today’s `AtomicExportDuckDB` path (unchanged).
-2. Read each parquet footer; compute a schema fingerprint (canonical column names + types + repetition).
-3. Partition sources by fingerprint.
+2. Read each parquet footer; compute a schema fingerprint (canonical column names + types + repetition). Skip files whose footer cannot be fingerprinted; they stay live and are not COPY inputs (a corrupt file cannot be rewritten by `read_parquet` either).
+3. Partition the readable sources by fingerprint.
 4. For each partition with **≥ 2** files, sort by `MinTs` (then path), concat:
    - dest tmp file, `AppendRowGroup` for every source row group in that order
    - atomic rename to `L{dest}/<unixNano>.parquet`
    - `StatSegment` for min/max ts (footer stats preferred; existing `StatSegment` OK)
    - `retireSources` + metrics catalog sync (unchanged)
-5. Partitions with **1** file: leave the source live (do not retire). Not an error.
-6. If concat fails (I/O, corrupt footer, schema drift mid-file): do **not** retire. Record an attempt (see 5.3). If attempts remain, **fallback** DuckDB COPY of that homogeneous partition:
+5. If no partition has ≥ 2 files: return `ErrNoHomogeneousPack` (not an error for lifecycle quarantine). Singletons stay live.
+6. If concat fails after a pack is selected (I/O, schema drift mid-file, test hook): do **not** retire. Record an attempt (see 5.3). If attempts remain, **fallback** DuckDB COPY of that homogeneous partition:
    ```
    COPY (SELECT * FROM (<union>) ORDER BY ts) TO tmp (FORMAT parquet, ROW_GROUP_SIZE …)
    ```
@@ -124,8 +129,8 @@ Lifecycle: on merge error, increment attempts for **all sources in that action**
 - [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
 - [x] Metrics concat: N same-schema time-adjacent L0s → one L1; row count = sum; `ts` globally non-decreasing; per-row values unchanged; sources retired (or grace-held)
 - [x] Metrics concat does **not** use DuckDB COPY (assert via spy / no `merge copy:` error path / executor unit that fails if `db.Exec` COPY runs)
-- [ ] Large pack: ≥14 files, compressed sum ≥200Mi (or a fixture that would OOM old COPY under `memory_limit=256MB`) concat succeeds under that cap
-  - `TestExecuteMergeFourteenFilesNoCopy` is 14×50 rows with 2Ki labels (not ≥200Mi and would not OOM DuckDB COPY at `MemoryLimit=256MB`); add a fixture that meets either arm, or narrow this item to the bound the test actually proves.
+- [x] Large pack: ≥14 files, compressed sum ≥200Mi (or a fixture that would OOM old COPY under `memory_limit=256MB`) concat succeeds under that cap
+  - `TestExecuteMergeFourteenFilesNoCopy` writes 14×5000 unique-label rows, asserts DuckDB COPY at `MemoryLimit=256MB` returns Out of Memory, then concat succeeds with `CopyCount=0`.
 
 - [x] Schema split: 5 files schema A + 1 file extra column → concat only A; extra file still live; no mixed schema dest
 - [x] Singleton leftover is not deleted
@@ -136,8 +141,8 @@ Lifecycle: on merge error, increment attempts for **all sources in that action**
 - [x] Logs k-way peak: test with `MemoryLimit` too small for a full sort still succeeds (or concat/k-way path does not call DuckDB)
 - [x] DuckDB-format metrics merge still uses AtomicExportDuckDB
 - [x] Delete-grace + catalog tests still pass
-- [ ] `make lint test` green locally (+ `make full-tests` — merge is I/O)
-  - Reviewer: `make lint` green. Store `go test -race -tags duckdb_arrow ./internal/store/{layout,merge,lifecycle}` green (`-count=1`). `make test` failed on unrelated `TestE2E_LoggingThreePhaseParquet` (file-watch 5s); isolation re-run failed twice with the same error. `make full-tests` skipped (docker compose v2.29.7 is present; not run).
+- [x] `make lint test` green locally (+ `make full-tests` — merge is I/O)
+  - Developer re-run: `make lint` 0 issues. `make test` green (`-race`, including `TestE2E_LoggingThreePhaseParquet` under `./...`). `make full-tests` green (lint + test + integration + `test/e2e`; compose http-sink bind 18080 was already in use, tagged integration tests still passed).
 
 
 ## 7. Test matrix (must exist before any homelab promote)

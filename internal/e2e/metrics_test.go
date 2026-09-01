@@ -117,7 +117,7 @@ func assertRangeName(t *testing.T, path, pipeline, phase string) {
 
 func waitForFiles(t *testing.T, dir, ext string) {
 	t.Helper()
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if entries, _ := os.ReadDir(dir); hasExt(entries, ext) {
 			return

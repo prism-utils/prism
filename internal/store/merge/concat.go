@@ -68,7 +68,7 @@ func firstHomogeneousPack(sources []Segment) ([]Segment, error) {
 	return nil, ErrNoHomogeneousPack
 }
 
-func concatParquet(dest string, sources []Segment) error {
+func concatParquet(dest string, sources []Segment, mem memory.Allocator) error {
 	if len(sources) < 2 {
 		return ErrNoHomogeneousPack
 	}
@@ -85,7 +85,9 @@ func concatParquet(dest string, sources []Segment) error {
 		}
 	}()
 
-	mem := memory.DefaultAllocator
+	if mem == nil {
+		mem = memory.DefaultAllocator
+	}
 	ctx := context.Background()
 	props := parquet.NewWriterProperties(parquet.WithCompression(compress.Codecs.Snappy))
 	var writer *pqarrow.FileWriter

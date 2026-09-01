@@ -18,15 +18,16 @@ import (
 const kwayFlushRows = 1024
 
 type kwayCursor struct {
-	src     int
-	stampNs int64
-	tsCol   int
-	rec     arrow.RecordBatch
-	row     int
-	fr      *pqarrow.FileReader
-	pf      *file.Reader
-	rg      int
-	nrg     int
+	src      int
+	stampNs  int64
+	tsCol    int
+	eventCol int
+	rec      arrow.RecordBatch
+	row      int
+	fr       *pqarrow.FileReader
+	pf       *file.Reader
+	rg       int
+	nrg      int
 }
 
 func (c *kwayCursor) ts() int64 {
@@ -41,7 +42,15 @@ func (h kwayHeap) Less(i, j int) bool {
 	if ti != tj {
 		return ti < tj
 	}
+	ei, ej := h[i].eventTs(), h[j].eventTs()
+	if ei != ej {
+		return ei < ej
+	}
 	return h[i].src < h[j].src
+}
+
+func (c *kwayCursor) eventTs() int64 {
+	return eventTSAt(c.rec, c.eventCol, c.row)
 }
 func (h kwayHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 func (h *kwayHeap) Push(x any)   { *h = append(*h, x.(*kwayCursor)) }
@@ -54,11 +63,13 @@ func (h *kwayHeap) Pop() any {
 	return item
 }
 
-func kwayMergeLogs(dest string, sources []Segment) error {
+func kwayMergeLogs(dest string, sources []Segment, mem memory.Allocator) error {
 	if len(sources) == 0 {
 		return fmt.Errorf("log merge: no sources")
 	}
-	mem := memory.DefaultAllocator
+	if mem == nil {
+		mem = memory.DefaultAllocator
+	}
 	ctx := context.Background()
 	cursors := make([]*kwayCursor, 0, len(sources))
 	schemas := make([]*arrow.Schema, 0, len(sources))
@@ -90,12 +101,13 @@ func kwayMergeLogs(dest string, sources []Segment) error {
 			return err
 		}
 		cursors = append(cursors, &kwayCursor{
-			src:     i,
-			stampNs: s.MinTs.UTC().UnixNano(),
-			fr:      fr,
-			pf:      pf,
-			nrg:     pf.NumRowGroups(),
-			tsCol:   -1,
+			src:      i,
+			stampNs:  s.MinTs.UTC().UnixNano(),
+			fr:       fr,
+			pf:       pf,
+			nrg:      pf.NumRowGroups(),
+			tsCol:    -1,
+			eventCol: -1,
 		})
 		schemas = append(schemas, schema)
 	}
@@ -214,6 +226,7 @@ func (c *kwayCursor) loadNext(ctx context.Context) error {
 		c.rec = rec
 		c.row = 0
 		c.tsCol = fieldIndex(rec.Schema(), logIngestTSColumn)
+		c.eventCol = fieldIndex(rec.Schema(), "ts")
 		return nil
 	}
 	c.rec = nil
@@ -261,6 +274,26 @@ func fieldIndex(sc *arrow.Schema, name string) int {
 		return -1
 	}
 	return idx[0]
+}
+
+func eventTSAt(rec arrow.RecordBatch, colIdx, row int) int64 {
+	if rec == nil || colIdx < 0 || row >= int(rec.NumRows()) {
+		return 0
+	}
+	col := rec.Column(colIdx)
+	if col.IsNull(row) {
+		return 0
+	}
+	switch c := col.(type) {
+	case *array.Timestamp:
+		return int64(c.Value(row))
+	case *array.Int64:
+		return c.Value(row)
+	case *array.Int32:
+		return int64(c.Value(row))
+	default:
+		return 0
+	}
 }
 
 func ingestTSAt(rec arrow.RecordBatch, colIdx, row int, stamp int64) int64 {

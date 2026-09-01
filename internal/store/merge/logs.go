@@ -379,7 +379,7 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 		if x.cfg.FailKway {
 			kerr = fmt.Errorf("log merge k-way: forced failure")
 		} else {
-			kerr = kwayMergeLogs(final, action.Sources)
+			kerr = kwayMergeLogs(final, action.Sources, nil)
 		}
 		if kerr != nil {
 			_ = os.Remove(final)

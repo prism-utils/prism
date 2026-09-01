@@ -38,7 +38,9 @@ type ExecutorConfig struct {
 	FailKway bool
 }
 
-// Executor runs planned merges via DuckDB COPY / ATTACH export.
+// Executor concatenates same-schema parquet metrics and k-way merges logs.
+// An in-process DuckDB is kept for .duckdb export and for COPY fallback when
+// concat or k-way cannot finish.
 type Executor struct {
 	cfg       ExecutorConfig
 	db        *sql.DB
@@ -47,7 +49,7 @@ type Executor struct {
 	CopyCount int
 }
 
-// NewExecutor opens a temporary in-process DuckDB for merge COPY operations.
+// NewExecutor opens in-process DuckDB used by .duckdb export and COPY fallback.
 func NewExecutor(cfg ExecutorConfig) (*Executor, error) { //nolint:gocritic // Config options bag copied once at construction.
 	if cfg.RowGroupSize <= 0 {
 		cfg.RowGroupSize = 1_000_000
@@ -88,7 +90,9 @@ func (x *Executor) DB() *sql.DB {
 	return x.db
 }
 
-// ExecuteMerge merges sources into L{DestTier} with rows ordered by ts.
+// ExecuteMerge writes one homogeneous parquet pack into L{DestTier} by
+// concatenating row groups in earliest-timestamp order. DuckDB COPY+sort
+// runs only when that concat cannot finish, or when a source is already .duckdb.
 func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, error) {
 	if len(action.Sources) == 0 {
 		return Segment{}, fmt.Errorf("merge: no sources")
@@ -117,7 +121,7 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 		if x.cfg.FailConcat {
 			concatErr = fmt.Errorf("merge concat: forced failure")
 		} else {
-			concatErr = concatParquet(final, pack)
+			concatErr = concatParquet(final, pack, nil)
 		}
 		if concatErr != nil {
 			_ = os.Remove(final)

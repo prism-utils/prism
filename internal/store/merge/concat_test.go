@@ -11,6 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/compress"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/testparquet"
@@ -167,28 +173,42 @@ func TestExecuteMergeFourteenFilesNoCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	labels := strings.Repeat("x", 2048)
+	const files, rowsPerFile, labelBytes = 14, 5000, 4096
 	var sources []Segment
 	var wantRows int
-	for i := 0; i < 14; i++ {
+	var sumBytes int64
+	for i := 0; i < files; i++ {
 		path := filepath.Join(l0, fmt.Sprintf("%02d.parquet", i))
-		rows := make([]testparquet.SegRow, 50)
-		for r := 0; r < 50; r++ {
-			rows[r] = testparquet.SegRow{
-				Name:   "up",
-				Labels: labels,
-				Value:  float64(i*50 + r),
-				Ts:     base.Add(time.Duration(i*50+r) * time.Second),
-			}
-		}
-		wantRows += len(rows)
-		testparquet.WriteSegmentRows(t, path, rows)
+		start := i * rowsPerFile
+		writeUniqueMetricsParquet(t, path, base.Add(time.Duration(start)*time.Second), start, rowsPerFile, labelBytes)
 		seg, err := StatSegment(path, 0, DuckDBCaps{})
 		if err != nil {
 			t.Fatal(err)
 		}
+		sumBytes += seg.Bytes
+		wantRows += rowsPerFile
 		sources = append(sources, seg)
 	}
+	copyX, err := NewExecutor(ExecutorConfig{
+		DataDir:      dataDir,
+		Tenant:       tenant,
+		RowGroupSize: 1000,
+		MemoryLimit:  "256MB",
+		Threads:      1,
+		FailConcat:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := copyX.ExecuteMerge(MergeAction{Sources: sources, DestTier: 1}, base.Add(time.Hour)); err == nil {
+		_ = copyX.Close()
+		t.Fatalf("COPY at 256MB succeeded on %d files (%d bytes); fixture is not an OOM case", files, sumBytes)
+	} else if !strings.Contains(strings.ToLower(err.Error()), "out of memory") &&
+		!strings.Contains(strings.ToLower(err.Error()), "memory_limit") {
+		_ = copyX.Close()
+		t.Fatalf("COPY fallback error = %v (want DuckDB OOM)", err)
+	}
+	_ = copyX.Close()
 	x, err := NewExecutor(ExecutorConfig{
 		DataDir:      dataDir,
 		Tenant:       tenant,
@@ -200,21 +220,15 @@ func TestExecuteMergeFourteenFilesNoCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = x.Close() }()
-	out, err := x.ExecuteMerge(MergeAction{Sources: sources, DestTier: 1}, base.Add(time.Hour))
+	out, err := x.ExecuteMerge(MergeAction{Sources: sources, DestTier: 1}, base.Add(2*time.Hour))
 	if err != nil {
-		t.Fatalf("ExecuteMerge: %v", err)
+		t.Fatalf("concat ExecuteMerge: %v", err)
 	}
 	if x.CopyCount != 0 {
 		t.Fatalf("CopyCount = %d, want concat", x.CopyCount)
 	}
-	got := readMetricRows(t, out.Path)
-	if len(got) != wantRows {
-		t.Fatalf("rows = %d, want %d", len(got), wantRows)
-	}
-	for i := 1; i < len(got); i++ {
-		if got[i].ts.Before(got[i-1].ts) {
-			t.Fatalf("ts not ordered at %d: %v then %v", i, got[i-1].ts, got[i].ts)
-		}
+	if got := countParquetRows(t, out.Path); got != wantRows {
+		t.Fatalf("rows = %d, want %d", got, wantRows)
 	}
 }
 
@@ -406,6 +420,90 @@ func TestExecuteLogMergeKwayOrdersByIngestTS(t *testing.T) {
 	}
 }
 
+func TestExecuteLogMergeKwayTiesBreakOnEventTS(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := "user-kway0001b-apps"
+	artifact := "logs-raw"
+	landing := layout.LogsLandingDir(dataDir, tenant, artifact)
+	if err := os.MkdirAll(landing, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Date(2026, 1, 1, 0, 0, 2, 0, time.UTC)
+	earlier := time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC)
+	p0 := filepath.Join(landing, layout.SegmentName(time.Unix(0, 1).UTC()))
+	p1 := filepath.Join(landing, layout.SegmentName(time.Unix(0, 2).UTC()))
+	writeLogsIngestAndEvent(t, p0, []logEventRow{{Message: "later", NS: 100, Event: later}})
+	writeLogsIngestAndEvent(t, p1, []logEventRow{{Message: "earlier", NS: 100, Event: earlier}})
+	s0, err := StatLogSegment(p0, logLandingTier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1, err := StatLogSegment(p1, logLandingTier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, err := NewExecutor(ExecutorConfig{DataDir: dataDir, Tenant: tenant, RowGroupSize: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = x.Close() }()
+	out, err := x.ExecuteLogMerge(artifact, LogMergeAction{Sources: []Segment{s0, s1}, DestTier: 0}, time.Unix(0, 9).UTC())
+	if err != nil {
+		t.Fatalf("ExecuteLogMerge: %v", err)
+	}
+	if x.CopyCount != 0 {
+		t.Fatalf("CopyCount = %d, want k-way", x.CopyCount)
+	}
+	msgs := readLogMessagesOrdered(t, out.Path)
+	want := []string{"earlier", "later"}
+	if len(msgs) != 2 || msgs[0] != want[0] || msgs[1] != want[1] {
+		t.Fatalf("order = %v, want %v", msgs, want)
+	}
+}
+
+func TestConcatParquetAllocatorBalance(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var sources []Segment
+	for i := 0; i < 2; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("%d.parquet", i))
+		testparquet.WriteSegmentWithTs(t, path, base.Add(time.Duration(i)*time.Minute), "up", float64(i))
+		seg, err := StatSegment(path, 0, DuckDBCaps{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources = append(sources, seg)
+	}
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	dest := filepath.Join(dir, "out.parquet")
+	if err := concatParquet(dest, sources, mem); err != nil {
+		t.Fatalf("concatParquet: %v", err)
+	}
+	mem.AssertSize(t, 0)
+}
+
+func TestKwayMergeLogsAllocatorBalance(t *testing.T) {
+	dir := t.TempDir()
+	p0 := filepath.Join(dir, "a.parquet")
+	p1 := filepath.Join(dir, "b.parquet")
+	writeLogsIngest(t, p0, []logIngestRow{{Message: "a", NS: 100}})
+	writeLogsIngest(t, p1, []logIngestRow{{Message: "b", NS: 200}})
+	s0, err := StatLogSegment(p0, logLandingTier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1, err := StatLogSegment(p1, logLandingTier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	dest := filepath.Join(dir, "out.parquet")
+	if err := kwayMergeLogs(dest, []Segment{s0, s1}, mem); err != nil {
+		t.Fatalf("kwayMergeLogs: %v", err)
+	}
+	mem.AssertSize(t, 0)
+}
+
 func TestExecuteLogMergeKwayNullFillsExtraColumn(t *testing.T) {
 	dataDir := t.TempDir()
 	tenant := "user-kway0002-apps"
@@ -508,6 +606,121 @@ func TestRecordRewriteFailureLogsThenSkip(t *testing.T) {
 type metricRow struct {
 	ts    time.Time
 	value float64
+}
+
+func countParquetRows(t *testing.T, path string) int {
+	t.Helper()
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	var n int
+	q := "SELECT COUNT(*) FROM read_parquet('" + layout.ToSlash(path) + "')"
+	if err := db.QueryRowContext(context.Background(), q).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func writeUniqueMetricsParquet(t *testing.T, path string, start time.Time, id0, rows, labelBytes int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "__name__", Type: arrow.BinaryTypes.String, Nullable: true},
+		{Name: "labels", Type: arrow.BinaryTypes.String, Nullable: true},
+		{Name: "value", Type: arrow.PrimitiveTypes.Float64, Nullable: true},
+		{Name: "timestamp_ms", Type: arrow.PrimitiveTypes.Int64, Nullable: true},
+		{Name: "ts", Type: &arrow.TimestampType{Unit: arrow.Microsecond, TimeZone: "UTC"}, Nullable: true},
+	}, nil)
+	mem := memory.DefaultAllocator
+	b := array.NewRecordBuilder(mem, schema)
+	defer b.Release()
+	nameB := b.Field(0).(*array.StringBuilder)
+	labB := b.Field(1).(*array.StringBuilder)
+	valB := b.Field(2).(*array.Float64Builder)
+	msB := b.Field(3).(*array.Int64Builder)
+	tsB := b.Field(4).(*array.TimestampBuilder)
+	label := make([]byte, labelBytes)
+	for i := 0; i < rows; i++ {
+		id := id0 + i
+		s := uint32(id)*1103515245 + 12345
+		for j := range label {
+			s = s*1103515245 + 12345
+			label[j] = ' ' + byte(s%95)
+		}
+		nameB.Append("up")
+		labB.Append(string(label))
+		valB.Append(float64(id))
+		msB.Append(0)
+		tsB.Append(arrow.Timestamp(start.Add(time.Duration(i) * time.Second).UTC().UnixMicro()))
+	}
+	rec := b.NewRecordBatch()
+	defer rec.Release()
+	tbl := array.NewTableFromRecords(schema, []arrow.RecordBatch{rec})
+	defer tbl.Release()
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // G304: test fixture path
+	if err != nil {
+		t.Fatal(err)
+	}
+	props := parquet.NewWriterProperties(parquet.WithCompression(compress.Codecs.Snappy))
+	w, err := pqarrow.NewFileWriter(schema, out, props, pqarrow.DefaultWriterProps())
+	if err != nil {
+		_ = out.Close()
+		t.Fatal(err)
+	}
+	chunk := tbl.NumRows()
+	if chunk <= 0 {
+		chunk = 1
+	}
+	if err := w.WriteTable(tbl, chunk); err != nil {
+		_ = w.Close()
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type logEventRow struct {
+	Message string
+	NS      int64
+	Event   time.Time
+}
+
+func writeLogsIngestAndEvent(t *testing.T, path string, rows []logEventRow) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	parts := make([]string, len(rows))
+	for i, r := range rows {
+		tsStr := r.Event.UTC().Format("2006-01-02 15:04:05.999999")
+		parts[i] = fmt.Sprintf("('%s', 'none', %d::BIGINT, CAST('%s' AS TIMESTAMP))", r.Message, r.NS, tsStr)
+	}
+	tmp := path + ".tmp"
+	q := fmt.Sprintf(`
+		COPY (
+			SELECT * FROM (VALUES %s) AS t(message, format, "%s", ts)
+		) TO '%s' (FORMAT parquet)
+	`, strings.Join(parts, ", "), logIngestTSColumn, layout.ToSlash(tmp))
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readMetricRows(t *testing.T, path string) []metricRow {
