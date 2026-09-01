@@ -1,6 +1,6 @@
 # Spec: Merge concat (metrics) + k-way (logs) + OOM quarantine
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/merge-concat-kway-1cdb` (cloud branch prefix; prism type is `feat`)
@@ -124,7 +124,9 @@ Lifecycle: on merge error, increment attempts for **all sources in that action**
 - [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
 - [x] Metrics concat: N same-schema time-adjacent L0s → one L1; row count = sum; `ts` globally non-decreasing; per-row values unchanged; sources retired (or grace-held)
 - [x] Metrics concat does **not** use DuckDB COPY (assert via spy / no `merge copy:` error path / executor unit that fails if `db.Exec` COPY runs)
-- [x] Large pack: ≥14 files, compressed sum ≥200Mi (or a fixture that would OOM old COPY under `memory_limit=256MB`) concat succeeds under that cap
+- [ ] Large pack: ≥14 files, compressed sum ≥200Mi (or a fixture that would OOM old COPY under `memory_limit=256MB`) concat succeeds under that cap
+  - `TestExecuteMergeFourteenFilesNoCopy` is 14×50 rows with 2Ki labels (not ≥200Mi and would not OOM DuckDB COPY at `MemoryLimit=256MB`); add a fixture that meets either arm, or narrow this item to the bound the test actually proves.
+
 - [x] Schema split: 5 files schema A + 1 file extra column → concat only A; extra file still live; no mixed schema dest
 - [x] Singleton leftover is not deleted
 - [x] Fallback COPY+sort: force concat fail (e.g. truncated parquet) → COPY path used; dest valid; attempts increment
@@ -134,7 +136,9 @@ Lifecycle: on merge error, increment attempts for **all sources in that action**
 - [x] Logs k-way peak: test with `MemoryLimit` too small for a full sort still succeeds (or concat/k-way path does not call DuckDB)
 - [x] DuckDB-format metrics merge still uses AtomicExportDuckDB
 - [x] Delete-grace + catalog tests still pass
-- [ ] `make lint test` green locally (+ `make full-tests` — merge is I/O) — lint green; store tests green; full `make test` flakes on unrelated `TestE2E_LoggingThreePhaseParquet` under `./...`
+- [ ] `make lint test` green locally (+ `make full-tests` — merge is I/O)
+  - Reviewer: `make lint` green. Store `go test -race -tags duckdb_arrow ./internal/store/{layout,merge,lifecycle}` green (`-count=1`). `make test` failed on unrelated `TestE2E_LoggingThreePhaseParquet` (file-watch 5s); isolation re-run failed twice with the same error. `make full-tests` skipped (docker compose v2.29.7 is present; not run).
+
 
 ## 7. Test matrix (must exist before any homelab promote)
 
@@ -184,15 +188,19 @@ Homelab promote (prism-cache image) is **blocked** until this matrix is in-tree 
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
 - [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+  - `Executor` / `NewExecutor` still say merge is DuckDB COPY/ATTACH while parquet is concat/k-way first. `docs/STORE.md` says a corrupt footer takes COPY; `firstHomogeneousPack` skips fingerprint errors and can return `ErrNoHomogeneousPack` with no COPY. Spec §5.2 orders the heap by `__prism_ts_ns` then `ts`; `kwayHeap.Less` only uses ingest-ts then source index. Align comments + STORE.md (and the `ts` tie-break if it is still required).
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
 - [ ] Full docs/REVIEW.md checklist passes
+  - Gate 3 fails; `make test` is not green; Arrow concat/k-way never assert allocator balance (`CheckedAllocator`); `make full-tests` not run.
 
 ## 9. Reviewer notes
 
-Developer: `make lint` is green. `go test` for `internal/store/{layout,merge,lifecycle}` is green with `-race`. Full `make test` hit a pre-existing flake in `TestE2E_LoggingThreePhaseParquet` (file-watch race when `./...` runs in parallel); the same test passes in isolation. `make full-tests` (compose integration + e2e) was not run here.
+History (oldest→newest on the branch): `docs(store/merge)` → `test(store/merge)` (tests only) → `feat(store/merge)`. TDD contract holds.
+
+Reviewer re-ran: `make lint` (0 issues). `CGO_ENABLED=1 go test -count=1 -race -tags duckdb_arrow ./internal/store/layout/ ./internal/store/merge/ ./internal/store/lifecycle/` green. `make test` failed on `TestE2E_LoggingThreePhaseParquet` (`logging_test.go:102` Eventually; pipeline `Failed to detect creation of …/app.log`). Isolation (`-run TestE2E_LoggingThreePhaseParquet`, twice) also failed in 5s — not only a `./...` parallel race. Diff does not touch `internal/e2e`. Docker compose v2.29.7 is installed; `make full-tests` was not run.
 
 M8 records rewrite attempts in the lifecycle tick on ExecuteMerge error, not on a successful COPY fallback — a concat-then-COPY success does not write an attempts sidecar (sources are retired).
 
