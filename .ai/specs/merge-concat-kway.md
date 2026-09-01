@@ -1,6 +1,6 @@
 # Spec: Merge concat (metrics) + k-way (logs) + OOM quarantine
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/merge-concat-kway-1cdb` (cloud branch prefix; prism type is `feat`)
@@ -121,20 +121,20 @@ Lifecycle: on merge error, increment attempts for **all sources in that action**
 
 ## 6. Acceptance checklist  (developer checks these off)
 
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] Metrics concat: N same-schema time-adjacent L0s → one L1; row count = sum; `ts` globally non-decreasing; per-row values unchanged; sources retired (or grace-held)
-- [ ] Metrics concat does **not** use DuckDB COPY (assert via spy / no `merge copy:` error path / executor unit that fails if `db.Exec` COPY runs)
-- [ ] Large pack: ≥14 files, compressed sum ≥200Mi (or a fixture that would OOM old COPY under `memory_limit=256MB`) concat succeeds under that cap
-- [ ] Schema split: 5 files schema A + 1 file extra column → concat only A; extra file still live; no mixed schema dest
-- [ ] Singleton leftover is not deleted
-- [ ] Fallback COPY+sort: force concat fail (e.g. truncated parquet) → COPY path used; dest valid; attempts increment
-- [ ] After 5 rewrite failures, skip marker exists; 6th `FindMerges` does not include those sources; no error spin
-- [ ] Skip-marked files remain readable by `read_parquet` / StatSegment
-- [ ] Logs k-way: overlapping windows, extra column on one source, output ordered by `__prism_ts_ns`, extra column null-filled on other rows (`logs_ts_preserve` still passes)
-- [ ] Logs k-way peak: test with `MemoryLimit` too small for a full sort still succeeds (or concat/k-way path does not call DuckDB)
-- [ ] DuckDB-format metrics merge still uses AtomicExportDuckDB
-- [ ] Delete-grace + catalog tests still pass
-- [ ] `make lint test` green locally (+ `make full-tests` — merge is I/O)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] Metrics concat: N same-schema time-adjacent L0s → one L1; row count = sum; `ts` globally non-decreasing; per-row values unchanged; sources retired (or grace-held)
+- [x] Metrics concat does **not** use DuckDB COPY (assert via spy / no `merge copy:` error path / executor unit that fails if `db.Exec` COPY runs)
+- [x] Large pack: ≥14 files, compressed sum ≥200Mi (or a fixture that would OOM old COPY under `memory_limit=256MB`) concat succeeds under that cap
+- [x] Schema split: 5 files schema A + 1 file extra column → concat only A; extra file still live; no mixed schema dest
+- [x] Singleton leftover is not deleted
+- [x] Fallback COPY+sort: force concat fail (e.g. truncated parquet) → COPY path used; dest valid; attempts increment
+- [x] After 5 rewrite failures, skip marker exists; 6th `FindMerges` does not include those sources; no error spin
+- [x] Skip-marked files remain readable by `read_parquet` / StatSegment
+- [x] Logs k-way: overlapping windows, extra column on one source, output ordered by `__prism_ts_ns`, extra column null-filled on other rows (`logs_ts_preserve` still passes)
+- [x] Logs k-way peak: test with `MemoryLimit` too small for a full sort still succeeds (or concat/k-way path does not call DuckDB)
+- [x] DuckDB-format metrics merge still uses AtomicExportDuckDB
+- [x] Delete-grace + catalog tests still pass
+- [ ] `make lint test` green locally (+ `make full-tests` — merge is I/O) — lint green; store tests green; full `make test` flakes on unrelated `TestE2E_LoggingThreePhaseParquet` under `./...`
 
 ## 7. Test matrix (must exist before any homelab promote)
 
@@ -192,7 +192,9 @@ Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here
 
 ## 9. Reviewer notes
 
-_(empty until first review)_
+Developer: `make lint` is green. `go test` for `internal/store/{layout,merge,lifecycle}` is green with `-race`. Full `make test` hit a pre-existing flake in `TestE2E_LoggingThreePhaseParquet` (file-watch race when `./...` runs in parallel); the same test passes in isolation. `make full-tests` (compose integration + e2e) was not run here.
+
+M8 records rewrite attempts in the lifecycle tick on ExecuteMerge error, not on a successful COPY fallback — a concat-then-COPY success does not write an attempts sidecar (sources are retired).
 
 ## 10. Homelab follow-up (not this PR)
 

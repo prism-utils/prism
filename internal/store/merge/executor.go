@@ -29,6 +29,13 @@ type ExecutorConfig struct {
 	// instead of unlinking it, so a reader that resolved the path before the
 	// merge can still open it. Zero deletes as soon as the output is durable.
 	DeleteGrace time.Duration
+	// FailConcat forces the parquet concat path to error so tests can exercise
+	// the DuckDB COPY fallback.
+	FailConcat bool
+	// FailCopy skips DuckDB COPY and returns an error (used with FailConcat).
+	FailCopy bool
+	// FailKway forces the logs k-way path to error so tests can exercise COPY.
+	FailKway bool
 }
 
 // Executor runs planned merges via DuckDB COPY / ATTACH export.
@@ -36,6 +43,8 @@ type Executor struct {
 	cfg       ExecutorConfig
 	db        *sql.DB
 	connector *duckdb.Connector
+	// CopyCount is how many DuckDB COPY rewrites this executor ran.
+	CopyCount int
 }
 
 // NewExecutor opens a temporary in-process DuckDB for merge COPY operations.
@@ -90,38 +99,31 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 		return Segment{}, err
 	}
 	final := filepath.Join(destDir, layout.SegmentNameFormat(now, x.cfg.SegmentFormat.Ext()))
-	tmp := final + ".tmp"
 
-	fromParts, cleanup, err := x.sourcesSelectSQL(action.Sources, segformat.MetricsTable)
-	if err != nil {
-		return Segment{}, err
-	}
-	defer cleanup()
-
-	union := fromParts[0]
-	for _, p := range fromParts[1:] {
-		union += " UNION ALL " + p
-	}
-	selectSQL := fmt.Sprintf("SELECT * FROM (%s) ORDER BY ts", union)
-
-	switch x.cfg.SegmentFormat {
-	case segformat.DuckDB:
-		if err := segformat.AtomicExportDuckDB(x.db, selectSQL, final, x.cfg.DuckDBStorageVersion, segformat.MetricsTable); err != nil {
-			return Segment{}, fmt.Errorf("merge duckdb export: %w", err)
-		}
-	default:
-		// DuckDB read_parquet paths must be literal strings; server-owned paths only.
-		//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
-		copySQL := fmt.Sprintf(`
-			COPY (%s) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
-		`, selectSQL, layout.ToSlash(tmp), x.cfg.RowGroupSize)
-		if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
-			_ = os.Remove(tmp)
-			return Segment{}, fmt.Errorf("merge copy: %w", err)
-		}
-		if err := os.Rename(tmp, final); err != nil {
-			_ = os.Remove(tmp)
+	useDuck := x.cfg.SegmentFormat == segformat.DuckDB || sourcesHaveDuckDB(action.Sources)
+	var pack []Segment
+	if useDuck {
+		pack = action.Sources
+		if err := x.mergeMetricsDuckDB(pack, final); err != nil {
 			return Segment{}, err
+		}
+	} else {
+		var err error
+		pack, err = firstHomogeneousPack(action.Sources)
+		if err != nil {
+			return Segment{}, err
+		}
+		var concatErr error
+		if x.cfg.FailConcat {
+			concatErr = fmt.Errorf("merge concat: forced failure")
+		} else {
+			concatErr = concatParquet(final, pack)
+		}
+		if concatErr != nil {
+			_ = os.Remove(final)
+			if err := x.mergeMetricsCopy(pack, final); err != nil {
+				return Segment{}, err
+			}
 		}
 	}
 
@@ -130,13 +132,61 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 		_ = os.Remove(final)
 		return Segment{}, err
 	}
-	if err := retireSources(action.Sources, now, x.cfg.DeleteGrace); err != nil {
+	if err := retireSources(pack, now, x.cfg.DeleteGrace); err != nil {
 		return Segment{}, err
 	}
 	if err := metricsmeta.SyncAfterChangeRoots(context.Background(), x.cfg.DataDir, x.cfg.ColdDir, x.cfg.Tenant); err != nil {
 		return Segment{}, fmt.Errorf("merge: metrics catalog: %w", err)
 	}
 	return seg, nil
+}
+
+func (x *Executor) mergeMetricsDuckDB(sources []Segment, final string) error {
+	fromParts, cleanup, err := x.sourcesSelectSQL(sources, segformat.MetricsTable)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	union := fromParts[0]
+	for _, p := range fromParts[1:] {
+		union += " UNION ALL " + p
+	}
+	selectSQL := fmt.Sprintf("SELECT * FROM (%s) ORDER BY ts", union)
+	if err := segformat.AtomicExportDuckDB(x.db, selectSQL, final, x.cfg.DuckDBStorageVersion, segformat.MetricsTable); err != nil {
+		return fmt.Errorf("merge duckdb export: %w", err)
+	}
+	return nil
+}
+
+func (x *Executor) mergeMetricsCopy(sources []Segment, final string) error {
+	if x.cfg.FailCopy {
+		return fmt.Errorf("merge copy: forced failure")
+	}
+	tmp := final + ".tmp"
+	fromParts, cleanup, err := x.sourcesSelectSQL(sources, segformat.MetricsTable)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	union := fromParts[0]
+	for _, p := range fromParts[1:] {
+		union += " UNION ALL " + p
+	}
+	selectSQL := fmt.Sprintf("SELECT * FROM (%s) ORDER BY ts", union)
+	//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
+	copySQL := fmt.Sprintf(`
+			COPY (%s) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
+		`, selectSQL, layout.ToSlash(tmp), x.cfg.RowGroupSize)
+	if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("merge copy: %w", err)
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	x.CopyCount++
+	return nil
 }
 
 func (x *Executor) sourcesSelectSQL(sources []Segment, duckTable string) ([]string, func(), error) {
@@ -298,12 +348,16 @@ func ScanTier(dataDir, tenant string, tier int, caps DuckDBCaps) ([]Segment, err
 		return nil, err
 	}
 	retired := layout.CompactedSet(entries)
+	skipped := layout.MergeSkipSet(entries)
 	var out []Segment
 	for _, e := range entries {
 		if e.IsDir() || !isSegmentFile(e.Name()) {
 			continue
 		}
 		if _, held := retired[e.Name()]; held {
+			continue
+		}
+		if _, skip := skipped[e.Name()]; skip {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
