@@ -183,6 +183,21 @@ func TestRunCLIWritesJSON(t *testing.T) {
 	var snap Report
 	require.NoError(t, json.Unmarshal(out.Bytes(), &snap))
 	require.Equal(t, tenant, snap.Tenant)
+	require.Empty(t, snap.Segments)
+}
+
+func TestRunCLIListIncludesSegments(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tenant := "user-list-apps"
+	writeTSParquet(t, filepath.Join(root, tenant, "tiers", "L0", "1-a.parquet"), []time.Time{
+		time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	var out bytes.Buffer
+	require.NoError(t, run(nil, &out, []string{"--data-dir", root, "--tenant", tenant, "--list"}))
+	var snap Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &snap))
+	require.Equal(t, 1, len(snap.Segments))
 }
 
 func TestRunCLIRequiresTenant(t *testing.T) {
@@ -206,7 +221,7 @@ func writeTSParquet(t *testing.T, path string, ts []time.Time) {
 	}
 	col := b.NewArray()
 	defer col.Release()
-	rec := array.NewRecord(schema, []arrow.Array{col}, int64(len(ts)))
+	rec := array.NewRecordBatch(schema, []arrow.Array{col}, int64(len(ts)))
 	defer rec.Release()
 	writeRecord(t, path, rec)
 }
@@ -226,16 +241,15 @@ func writeNSParquet(t *testing.T, path string, ts []time.Time) {
 	}
 	col := b.NewArray()
 	defer col.Release()
-	rec := array.NewRecord(schema, []arrow.Array{col}, int64(len(ts)))
+	rec := array.NewRecordBatch(schema, []arrow.Array{col}, int64(len(ts)))
 	defer rec.Release()
 	writeRecord(t, path, rec)
 }
 
-func writeRecord(t *testing.T, path string, rec arrow.Record) {
+func writeRecord(t *testing.T, path string, rec arrow.RecordBatch) {
 	t.Helper()
 	f, err := os.Create(path)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, f.Close()) }()
 	w, err := pqarrow.NewFileWriter(rec.Schema(), f, parquet.NewWriterProperties(), pqarrow.DefaultWriterProps())
 	require.NoError(t, err)
 	require.NoError(t, w.Write(rec))

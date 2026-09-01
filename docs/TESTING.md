@@ -83,8 +83,10 @@ make format-matrix-e2e  # HOT×MERGE format matrix (parquet|duckdb) metrics+logs
 make agent-duckdb-e2e   # Agent duckdb encoder → store ingest (+ mixed hot) via docker
 make fuzz           # longer fuzz soak (FUZZTIME overridable)
 make golden-update  # regenerate golden files (review the diff!)
+make diagnostic-segments TENANT=<ns>  # JSON histogram of on-disk store segments
 make clean
 ```
+
 
 - `make test` runs with `-race`. Race conditions fail the build.
 - `make full-tests` is the gate for calling a phase "done". It brings up

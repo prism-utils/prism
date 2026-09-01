@@ -1,6 +1,6 @@
 # Spec: Tenant segment histogram diagnostic
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/segment-histogram-1cdb`
 - **Owner phase:** developer
@@ -22,7 +22,7 @@ script plus `make diagnostic-segments TENANT=…` that prints JSON.
 
 - [x] Q: Script language? — A: Go CLI under `diagnostic/` (arrow-go footer reads, CGO-free). Thin `.sh` wrapper so Make has a script entrypoint.
 - [x] Q: Prod target identity? — A: `--tenant` is the store namespace (`user-fknjdouh-apps` admin canary, `user-fqsejat4-apps` almeidamarcos). `--data-dir` / `--cold-dir` default to the prod hostPaths.
-- [x] Q: Histogram shape? — A: JSON with totals, by family/kind/tier/root, size buckets (`le_bytes`), UTC day buckets of min_ts, plus a compact per-file list.
+- [x] Q: Histogram shape? — A: JSON with totals, by family/kind/tier/root, size buckets (`le_bytes` upper bound of a non-overlapping bin), UTC day buckets of min_ts. Per-file rows are opt-in (`--list`) because log-heavy tenants exceed 100k files.
 
 ## 4. Decision log
 
@@ -30,10 +30,14 @@ script plus `make diagnostic-segments TENANT=…` that prints JSON.
   - ref: https://parquet.apache.org/docs/file-format/ — min/max live in column-chunk statistics; a diagnostic must not scan row groups.
   - perf: one footer read per file (~KB), no 128MB DuckDB session per segment.
   - product: runs on the operator workstation against hostPath without CGO or a store process.
-- Size buckets as inclusive `le_bytes` powers of four KiB
-  - ref: https://prometheus.io/docs/practices/histograms/ — cumulative `le` buckets are the operator-familiar histogram encoding.
+- Size buckets as non-overlapping bins labeled with inclusive `le_bytes`
+  - ref: https://prometheus.io/docs/practices/histograms/ — `le` as an upper bound is the operator-familiar size encoding; bins here are disjoint so counts sum to `totals.files`.
   - perf: O(files) increment; no extra I/O.
   - product: matches how we already talk about lucene packs (tens of MiB vs 681MiB).
+  - Default CLI omits the per-file list (`--list` to include it)
+  - ref: same; 100k+ log landings on the admin canary made a 43MiB dump the default.
+  - perf: walking 100k files is fine; serializing them is not the snapshot operators asked for.
+  - product: histogram + totals answer organization/dates/sizes; `--list` is there when a file-level drill-down is needed.
 - Date histogram by UTC day of min_ts (footer, else window-id)
   - ref: same parquet footer stats; window-id is the store's on-disk clock (`layout.WindowIDNanos`).
   - perf: no extra reads.
@@ -41,13 +45,13 @@ script plus `make diagnostic-segments TENANT=…` that prints JSON.
 
 ## 5. Acceptance checklist
 
-- [ ] `make diagnostic-segments TENANT=<ns>` prints JSON to stdout
-- [ ] Snapshot covers metrics tiers, hot window, logs landing/tiers, rollups, materializations; hot+cold roots
-- [ ] Compacted / `.tmp` / `_` prefixed files are skipped; unreadable parquet is counted not fatal
-- [ ] JSON includes size histogram, UTC day histogram, per-segment path/bytes/min_ts/max_ts
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally
-- [ ] Ran against prod admin (`user-fknjdouh-apps`) and almeidamarcos (`user-fqsejat4-apps`)
+- [x] `make diagnostic-segments TENANT=<ns>` prints JSON to stdout
+- [x] Snapshot covers metrics tiers, hot window, logs landing/tiers, rollups, materializations; hot+cold roots
+- [x] Compacted / `.tmp` / `_` prefixed files are skipped; unreadable parquet is counted not fatal
+- [x] JSON includes size histogram, UTC day histogram, per-segment path/bytes/min_ts/max_ts (`--list`)
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally
+- [x] Ran against prod admin (`user-fknjdouh-apps`) and almeidamarcos (`user-fqsejat4-apps`)
 
 ## 6. Mandatory review gates
 

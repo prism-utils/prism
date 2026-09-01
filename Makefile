@@ -174,6 +174,15 @@ snapshot: ## Local dry-run release (builds binaries+images, pushes nothing)
 release: ## Tag-driven release (CI runs this via goreleaser-action; needs a v* tag)
 	goreleaser release --clean
 
+DATA_DIR ?= /var/lib/homelab/prism-store
+COLD_DIR ?= /data/k8s/prism-store
+LIST_FLAG := $(if $(filter 1,$(LIST)),--list,)
+
+.PHONY: diagnostic-segments
+diagnostic-segments: ## JSON histogram of tenant store segments (TENANT=ns; LIST=1 for per-file rows)
+	@test -n "$(TENANT)" || { echo "TENANT is required (store ns, e.g. user-fqsejat4-apps)"; exit 1; }
+	@./diagnostic/segment-histogram.sh --data-dir "$(DATA_DIR)" --cold-dir "$(COLD_DIR)" --tenant "$(TENANT)" $(LIST_FLAG)
+
 .PHONY: clean
 clean: ## Remove build + coverage artifacts
 	rm -rf $(BIN_DIR) coverage.txt coverage.html
