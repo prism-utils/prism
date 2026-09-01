@@ -1,9 +1,9 @@
 # Spec: skip unusable log segments so refresh and Loki survive crash leftovers
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `cursor/skip-unusable-log-segments-b37a`
-- **Owner phase:** reviewer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** store logs lifecycle / query visibility
 
 ## 1. Task
@@ -85,12 +85,20 @@ tiny landings fill the seal budget.
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code**
-- [ ] **Gate 4 — Comments are atomic**
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code**
+- [x] **Gate 4 — Comments are atomic**
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+Verdict: **ALL_OK**. No acceptance items or gates unchecked.
+
+**History:** `test(store)` (tests + spec) → `fix(store)` (implementation + STORE/CONFIG + fixture size bumps so 7-byte placeholders stay usable) → `docs(store)` (IN_REVIEW). Test-first contract holds. Conventional Commits; no `--no-verify`.
+
+**make lint test:** green (golangci-lint 0 issues; `go test -race -tags duckdb_arrow ./...` ok). Forced rerun of touched packages (`segformat`, `merge`, `query`, `promote`, `lifecycle`) with `-count=1` also ok.
+
+**make full-tests:** reported `full-tests: OK` (e2e 245s ok). Compose `up` logged host port `18080` already in use; integration tests still passed (`test/integration` 2.3s). Environment port clash, not a product failure.
+
+**Checklist (N/A items):** no new component/factory; no new deps; no new goroutines; no hot-path alloc change (extra `Stat` per cached path, as decided). Skip-not-fail matches CONTRIBUTING §3.3 for truncated files. STORE.md + CONFIG.md match newest-first, 1 MiB log pack floor, and skip-below-8-bytes. New comments are atomic (no file/package/symbol pointers).
