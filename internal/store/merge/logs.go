@@ -89,7 +89,7 @@ func ScanLogLanding(dataDir, tenant, artifact string) ([]Segment, error) {
 		if err != nil {
 			return nil, err
 		}
-		if segformat.TooSmall(seg.Bytes) {
+		if segformat.SkipOpen(path, seg.Bytes) {
 			continue
 		}
 		out = append(out, seg)
@@ -125,7 +125,7 @@ func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) 
 		if err != nil {
 			return nil, err
 		}
-		if segformat.TooSmall(seg.Bytes) {
+		if segformat.SkipOpen(path, seg.Bytes) {
 			continue
 		}
 		out = append(out, seg)
@@ -351,9 +351,10 @@ func subtractLogSources(live, drop []Segment) []Segment {
 }
 
 // ExecuteLogMerge writes packed log sources into logs/<artifact>/tiers/L{DestTier}/.
-// Per-source rows are stamped with __prism_ts_ns (ingest window ns). The output
-// filename uses min source MinTs so legacy filename consumers stay near truth;
-// now is only a fallback when bounds are unset.
+// Dest format is the on-disk encoding: parquet dest writes parquet even when
+// sources are duckdb. Per-source rows are stamped with __prism_ts_ns (ingest
+// window ns). The output filename uses min source MinTs so legacy filename
+// consumers stay near truth; now is only a fallback when bounds are unset.
 func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now time.Time) (Segment, error) {
 	if len(action.Sources) == 0 {
 		return Segment{}, fmt.Errorf("log merge: no sources")
@@ -369,12 +370,16 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 	}
 	final := filepath.Join(destDir, layout.SegmentNameFormat(nameTs, x.cfg.SegmentFormat.Ext()))
 
-	useDuck := x.cfg.SegmentFormat == segformat.DuckDB || sourcesHaveDuckDB(action.Sources)
-	if useDuck {
+	switch {
+	case x.cfg.SegmentFormat == segformat.DuckDB:
 		if err := x.mergeLogsDuckDB(action.Sources, final); err != nil {
 			return Segment{}, err
 		}
-	} else {
+	case sourcesHaveDuckDB(action.Sources):
+		if err := x.mergeLogsCopy(action.Sources, final); err != nil {
+			return Segment{}, err
+		}
+	default:
 		var kerr error
 		if x.cfg.FailKway {
 			kerr = fmt.Errorf("log merge k-way: forced failure")

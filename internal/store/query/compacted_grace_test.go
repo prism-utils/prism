@@ -15,12 +15,7 @@ const graceTenant = "user-gracequery-apps"
 
 func writeGraceFixture(t *testing.T, path string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("segment\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testparquet.WriteLogsRawFile(t, path, []testparquet.LogRow{{Message: "seg", Format: "none"}})
 }
 
 func markGraceCompacted(t *testing.T, path string) {

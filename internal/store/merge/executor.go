@@ -91,8 +91,10 @@ func (x *Executor) DB() *sql.DB {
 }
 
 // ExecuteMerge writes one homogeneous parquet pack into L{DestTier} by
-// concatenating row groups in earliest-timestamp order. DuckDB COPY+sort
-// runs only when that concat cannot finish, or when a source is already .duckdb.
+// concatenating row groups in earliest-timestamp order. Dest format is the
+// on-disk encoding: parquet dest always writes parquet (COPY when a source is
+// already .duckdb, because row-group append cannot read it). DuckDB export
+// runs only when dest format is duckdb.
 func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, error) {
 	if len(action.Sources) == 0 {
 		return Segment{}, fmt.Errorf("merge: no sources")
@@ -104,14 +106,19 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	}
 	final := filepath.Join(destDir, layout.SegmentNameFormat(now, x.cfg.SegmentFormat.Ext()))
 
-	useDuck := x.cfg.SegmentFormat == segformat.DuckDB || sourcesHaveDuckDB(action.Sources)
 	var pack []Segment
-	if useDuck {
+	switch {
+	case x.cfg.SegmentFormat == segformat.DuckDB:
 		pack = action.Sources
 		if err := x.mergeMetricsDuckDB(pack, final); err != nil {
 			return Segment{}, err
 		}
-	} else {
+	case sourcesHaveDuckDB(action.Sources):
+		pack = action.Sources
+		if err := x.mergeMetricsCopy(pack, final); err != nil {
+			return Segment{}, err
+		}
+	default:
 		var err error
 		pack, err = firstHomogeneousPack(action.Sources)
 		if err != nil {
