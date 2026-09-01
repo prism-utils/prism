@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -298,6 +299,12 @@ func (r *Runner) executeMetricsMerge(tenant string, action merge.MergeAction) er
 	mergeStart := now
 	out, err := x.ExecuteMerge(action, now)
 	if err != nil {
+		if errors.Is(err, merge.ErrNoHomogeneousPack) {
+			return nil
+		}
+		if recErr := merge.RecordRewriteFailure(action.Sources); recErr != nil {
+			return recErr
+		}
 		return err
 	}
 	if elapsed := r.clock().Sub(mergeStart).Seconds(); elapsed > 0 {
@@ -465,6 +472,9 @@ func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
 			out, err := x.ExecuteLogMerge(artifact, action, mergeStart)
 			_ = x.Close()
 			if err != nil {
+				if recErr := merge.RecordRewriteFailure(action.Sources); recErr != nil {
+					return recErr
+				}
 				return err
 			}
 			if elapsed := r.clock().Sub(mergeStart).Seconds(); elapsed > 0 {

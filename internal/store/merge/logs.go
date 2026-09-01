@@ -72,12 +72,16 @@ func ScanLogLanding(dataDir, tenant, artifact string) ([]Segment, error) {
 		return nil, err
 	}
 	retired := layout.CompactedSet(entries)
+	skipped := layout.MergeSkipSet(entries)
 	var out []Segment
 	for _, e := range entries {
 		if e.IsDir() || !isSegmentFile(e.Name()) {
 			continue
 		}
 		if _, held := retired[e.Name()]; held {
+			continue
+		}
+		if _, skip := skipped[e.Name()]; skip {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -104,12 +108,16 @@ func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) 
 		return nil, err
 	}
 	retired := layout.CompactedSet(entries)
+	skipped := layout.MergeSkipSet(entries)
 	var out []Segment
 	for _, e := range entries {
 		if e.IsDir() || !isSegmentFile(e.Name()) {
 			continue
 		}
 		if _, held := retired[e.Name()]; held {
+			continue
+		}
+		if _, skip := skipped[e.Name()]; skip {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -342,7 +350,7 @@ func subtractLogSources(live, drop []Segment) []Segment {
 	return out
 }
 
-// ExecuteLogMerge compacts sources into logs/<artifact>/tiers/L{DestTier}/ via union_by_name.
+// ExecuteLogMerge writes packed log sources into logs/<artifact>/tiers/L{DestTier}/.
 // Per-source rows are stamped with __prism_ts_ns (ingest window ns). The output
 // filename uses min source MinTs so legacy filename consumers stay near truth;
 // now is only a fallback when bounds are unset.
@@ -360,39 +368,24 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 		nameTs = now
 	}
 	final := filepath.Join(destDir, layout.SegmentNameFormat(nameTs, x.cfg.SegmentFormat.Ext()))
-	tmp := final + ".tmp"
 
-	fromParts, cleanup, err := x.sourcesSelectSQLLogs(action.Sources)
-	if err != nil {
-		return Segment{}, err
-	}
-	defer cleanup()
-
-	// Per-source arms project __prism_ts_ns (ingest ns); bulk list read cannot.
-	union := fromParts[0]
-	for _, p := range fromParts[1:] {
-		union += " UNION ALL BY NAME " + p
-	}
-	selectSQL := fmt.Sprintf("SELECT * FROM (%s)", union)
-
-	switch x.cfg.SegmentFormat {
-	case segformat.DuckDB:
-		if err := segformat.AtomicExportDuckDB(x.db, selectSQL, final, x.cfg.DuckDBStorageVersion, segformat.LogsTable); err != nil {
-			return Segment{}, fmt.Errorf("log merge duckdb export: %w", err)
-		}
-	default:
-		// DuckDB read_parquet paths must be literal strings; server-owned paths only.
-		//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
-		copySQL := fmt.Sprintf(`
-			COPY (%s) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
-		`, selectSQL, layout.ToSlash(tmp), x.cfg.RowGroupSize)
-		if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
-			_ = os.Remove(tmp)
-			return Segment{}, fmt.Errorf("log merge copy: %w", err)
-		}
-		if err := os.Rename(tmp, final); err != nil {
-			_ = os.Remove(tmp)
+	useDuck := x.cfg.SegmentFormat == segformat.DuckDB || sourcesHaveDuckDB(action.Sources)
+	if useDuck {
+		if err := x.mergeLogsDuckDB(action.Sources, final); err != nil {
 			return Segment{}, err
+		}
+	} else {
+		var kerr error
+		if x.cfg.FailKway {
+			kerr = fmt.Errorf("log merge k-way: forced failure")
+		} else {
+			kerr = kwayMergeLogs(final, action.Sources, nil)
+		}
+		if kerr != nil {
+			_ = os.Remove(final)
+			if err := x.mergeLogsCopy(action.Sources, final); err != nil {
+				return Segment{}, err
+			}
 		}
 	}
 
@@ -412,6 +405,54 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 		return Segment{}, err
 	}
 	return seg, nil
+}
+
+func (x *Executor) mergeLogsDuckDB(sources []Segment, final string) error {
+	fromParts, cleanup, err := x.sourcesSelectSQLLogs(sources)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	union := fromParts[0]
+	for _, p := range fromParts[1:] {
+		union += " UNION ALL BY NAME " + p
+	}
+	selectSQL := fmt.Sprintf("SELECT * FROM (%s) ORDER BY %s", union, logIngestTSColumn)
+	if err := segformat.AtomicExportDuckDB(x.db, selectSQL, final, x.cfg.DuckDBStorageVersion, segformat.LogsTable); err != nil {
+		return fmt.Errorf("log merge duckdb export: %w", err)
+	}
+	return nil
+}
+
+func (x *Executor) mergeLogsCopy(sources []Segment, final string) error {
+	if x.cfg.FailCopy {
+		return fmt.Errorf("log merge copy: forced failure")
+	}
+	tmp := final + ".tmp"
+	fromParts, cleanup, err := x.sourcesSelectSQLLogs(sources)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	union := fromParts[0]
+	for _, p := range fromParts[1:] {
+		union += " UNION ALL BY NAME " + p
+	}
+	selectSQL := fmt.Sprintf("SELECT * FROM (%s) ORDER BY %s", union, logIngestTSColumn)
+	//nolint:gosec // G201: parquet paths are server-owned literals; DuckDB cannot bind file paths.
+	copySQL := fmt.Sprintf(`
+			COPY (%s) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)
+		`, selectSQL, layout.ToSlash(tmp), x.cfg.RowGroupSize)
+	if _, err := x.db.ExecContext(context.Background(), copySQL); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("log merge copy: %w", err)
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	x.CopyCount++
+	return nil
 }
 
 func mergedLogBounds(sources []Segment) (minTs, maxTs time.Time) {

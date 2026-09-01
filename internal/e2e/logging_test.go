@@ -97,17 +97,31 @@ func TestE2E_LoggingThreePhaseParquet(t *testing.T) {
 		`user 3 request failed code 500`,
 	}
 	payload := strings.Join(lines, "\n") + "\n"
-	// ModeTail seeks to EOF on open. Republish via truncate until a raw window
-	// appears so a late-open tailer still sees the fixture (ReOpen on shrink).
+	// Wait until the tailer is following, then append once. Truncate+rewrite
+	// races nxadm/tail under `go test ./...` load (watch reset: file vanished).
+	start := time.Now()
+	written := false
 	require.Eventually(t, func() bool {
-		if entries, err := os.ReadDir(rawDir); err == nil && hasExt(entries, ".parquet") {
-			return true
-		}
-		if err := os.WriteFile(logPath, []byte(payload), 0o600); err != nil {
+		if !written {
+			if time.Since(start) < 2*time.Second {
+				return false
+			}
+			f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: test fixture path
+			if err != nil {
+				return false
+			}
+			_, werr := f.WriteString(payload)
+			_ = f.Sync()
+			_ = f.Close()
+			if werr != nil {
+				return false
+			}
+			written = true
 			return false
 		}
-		return false
-	}, 5*time.Second, 250*time.Millisecond)
+		entries, err := os.ReadDir(rawDir)
+		return err == nil && hasExt(entries, ".parquet")
+	}, 90*time.Second, 100*time.Millisecond)
 
 	waitForFiles(t, tmplDir, ".parquet")
 	waitForFiles(t, sumDir, ".parquet")
