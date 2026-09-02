@@ -303,7 +303,7 @@ func TestRunUnusableDestDoesNotReadParquet(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dest, bytes.Repeat([]byte{0}, 64), 0o600); err != nil {
+	if err := os.WriteFile(dest, make([]byte, 64), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	err := Run(context.Background(), &RunConfig{
@@ -409,4 +409,3 @@ func writeLogsDuckDB(t *testing.T, path string) {
 		t.Fatalf("write logs duckdb: %v", err)
 	}
 }
-

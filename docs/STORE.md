@@ -664,6 +664,11 @@ and writes:
 <DATA_DIR>/<tenant>/materializations/<name>/<ts>-<id>.parquet
 ```
 
+Those views bind by payload magic: DuckDB dests and sources are
+`ATTACH … (READ_ONLY)` then scanned from the plane table (`logs` under log
+`/tiers/`, `metrics` on the metrics plane); Parquet files use `read_parquet`.
+Unusable dests fail the bind without opening as parquet.
+
 The basename matches the dest segment so a later merge that retires that dest
 also marks the matching materialization `.compacted` (same sidecar rule as
 tiers). `POST /{ns}/sql` binds `mat_<name>` from the live (non-compacted) files
