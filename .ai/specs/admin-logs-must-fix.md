@@ -1,9 +1,9 @@
 # Spec: Admin logs must-fix (same-type merge, dual-format query, isolation, L0 cold, full billing)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `cursor/admin-logs-must-fix-1cdb`
-- **Owner phase:** developer
+- **Owner phase:** orchestrator
 - **Closes:** prism#158 (epic), #159, #160, #161, #162, #163
 
 ## 1. Task
@@ -53,13 +53,10 @@ Prod admin (`user-fknjdouh-apps`) holds ~57 GiB of log segments on hot SSD, Graf
 
 - [x] **Gate 1 — Follows the guidelines**
 - [x] **Gate 2 — Tests cover edge cases**
-- [ ] **Gate 3 — Docs & comments match**
-  `docs/STORE.md` logs/metrics rewrite still says dest format wins and duckdb sources COPY to parquet; query still says duckdb-at-`.parquet` is skipped. Update those sections (and `MERGE_SEGMENT_FORMAT` in CONFIG.md / STORE.md ingest) to match dest-follows-payload, ATTACH-on-magic, and repair-rename.
-- [ ] **Gate 4 — Comments are atomic**
-  `internal/store/merge/logs.go` `findLogTierPacks` comment names `findMergeForTier`. State the local constraint (no time-adjacency; log L0 windows are often minutes apart) without naming another function.
-- [ ] Full docs/REVIEW.md checklist passes
-  Observability & docs items fail with Gate 3 (STORE.md/CONFIG.md drift) and Gate 4 (non-atomic comment).
+- [x] **Gate 3 — Docs & comments match**
+- [x] **Gate 4 — Comments are atomic**
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-First pass: CHANGES_REQUESTED on Gates 3–4. Docs/comment follow-up is in the next commit (STORE.md/CONFIG.md dest-follows-payload + ATTACH-on-magic; `findLogTierPacks` comment no longer names another function). Re-review those two gates.
+ALL_OK. Second pass confirmed both prior failures: STORE.md/CONFIG.md now describe dest-follows-payload, ATTACH-on-magic, and repair-rename; `findLogTierPacks` states the local no-adjacency constraint and no longer names another function. `make lint` green (0 issues). Test-first and Gates 1–2 from first pass still hold.
