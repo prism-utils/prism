@@ -3,6 +3,7 @@ package query
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,10 +11,12 @@ import (
 	"testing"
 	"time"
 
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/engine"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/logmeta"
 	"github.com/prism-utils/prism/internal/store/merge"
+	"github.com/prism-utils/prism/internal/store/segformat"
 	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
@@ -545,18 +548,94 @@ func TestSandboxLogsSkipsDuckDBBytesAtParquetPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sqlText, files, err := sandboxLogsRelationSQL(tenantRoot, logsCatalogOpts{})
+	ctx := context.Background()
+	conn, cleanup, err := prepareSandboxConn(ctx, tenantRoot, &metricsOpenOpts{}, sandboxLimits{})
 	if err != nil {
-		t.Fatalf("poison sibling must not fail relation build: %v", err)
+		t.Fatalf("fake duck header must not fail sandbox open: %v", err)
 	}
-	if len(files) != 1 || filepath.Base(files[0].Path) != filepath.Base(keep) {
-		t.Fatalf("open set = %+v, want only %s", fileBases(files), keep)
+	defer cleanup()
+	rows, err := conn.QueryContext(ctx, "SELECT message FROM "+sandboxLogsView)
+	if err != nil {
+		t.Fatalf("query logs view: %v", err)
 	}
-	if strings.Contains(sqlText, filepath.Base(poison)) {
-		t.Fatalf("SQL still references poison parquet: %s", truncate(sqlText, 240))
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var msg string
+		if err := rows.Scan(&msg); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, msg)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "keep" {
+		t.Fatalf("logs rows = %v, want only keep", got)
 	}
 	if _, err := os.Stat(poison); err != nil {
-		t.Fatalf("poison file must stay on disk (skip, not rename): %v", err)
+		t.Fatalf("poison file must stay on disk: %v", err)
+	}
+}
+
+func TestSandboxLogsQueriesDuckDBNamedParquet(t *testing.T) {
+	InvalidateLogsMetaCache("")
+	root := t.TempDir()
+	tenantRoot := filepath.Join(root, gateTenant)
+	dir := filepath.Join(tenantRoot, "logs", "logs-raw", "tiers", "L0")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(dir, layout.SegmentName(time.Unix(1, 0)))
+	misnamed := filepath.Join(dir, layout.SegmentName(time.Unix(2, 0)))
+	testparquet.WriteLogsRawFile(t, keep, []testparquet.LogRow{{Message: "keep", Format: "none"}})
+	writeLogsDuckDBAt(t, misnamed)
+
+	ctx := context.Background()
+	conn, cleanup, err := prepareSandboxConn(ctx, tenantRoot, &metricsOpenOpts{}, sandboxLimits{})
+	if err != nil {
+		t.Fatalf("real duckdb at .parquet must open: %v", err)
+	}
+	defer cleanup()
+	rows, err := conn.QueryContext(ctx, "SELECT message FROM "+sandboxLogsView+" ORDER BY message")
+	if err != nil {
+		t.Fatalf("query logs view: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var msg string
+		if err := rows.Scan(&msg); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, msg)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("logs rows = %v, want keep + duckdb line", got)
+	}
+}
+
+func writeLogsDuckDBAt(t *testing.T, path string) {
+	t.Helper()
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	slash := filepath.ToSlash(path)
+	q := fmt.Sprintf(`
+		ATTACH '%s' AS exp (STORAGE_VERSION '%s');
+		CREATE TABLE exp.%s AS SELECT 'hello' AS message, 'raw' AS format;
+		CHECKPOINT exp;
+		DETACH exp;
+	`, slash, segformat.DefaultStorageVersion, segformat.LogsTable)
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("write logs duckdb: %v", err)
 	}
 }
 

@@ -155,13 +155,48 @@ func TestExecuteLogMergeDuckDBSourcesWriteParquetDest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("log merge: %v", err)
 	}
-	if filepath.Ext(out.Path) != ".parquet" {
-		t.Fatalf("log merge ext=%q, want .parquet", filepath.Ext(out.Path))
+	if filepath.Ext(out.Path) != ".duckdb" {
+		t.Fatalf("log merge ext=%q, want .duckdb (dest follows source payload)", filepath.Ext(out.Path))
 	}
-	assertFileParquetMagic(t, out.Path)
-	assertParquetReadable(t, out.Path)
-	if x.CopyCount < 1 {
-		t.Fatalf("duckdb sources with parquet dest must COPY, CopyCount=%d", x.CopyCount)
+	if !segformat.IsDuckDB(out.Path) {
+		t.Fatal("duckdb sources must write a duckdb dest")
+	}
+}
+
+func TestExecuteLogMergeMixedSourcesError(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := "user-test00001-apps"
+	artifact := "logs-raw"
+	landing := filepath.Join(dataDir, tenant, "logs", artifact)
+	if err := os.MkdirAll(landing, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	parq := filepath.Join(landing, layout.SegmentName(base))
+	duck := filepath.Join(landing, layout.SegmentNameFormat(base.Add(time.Second), "duckdb"))
+	writeTinyLogParquet(t, parq, "line-p")
+	writeLandingLogsDuckDB(t, duck, "line-d")
+	s0, err := StatLogSegment(parq, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1, err := StatLogSegment(duck, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, err := NewExecutor(ExecutorConfig{
+		DataDir:              dataDir,
+		Tenant:               tenant,
+		RowGroupSize:         1000,
+		SegmentFormat:        segformat.Parquet,
+		DuckDBStorageVersion: segformat.DefaultStorageVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = x.Close() }()
+	if _, err := x.ExecuteLogMerge(artifact, LogMergeAction{Sources: []Segment{s0, s1}, DestTier: 0}, base); err == nil {
+		t.Fatal("mixed parquet+duckdb sources must error")
 	}
 }
 
@@ -203,12 +238,8 @@ func TestExecuteMergeDuckDBSourcesWriteParquetDest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if filepath.Ext(out.Path) != ".parquet" {
-		t.Fatalf("merge out ext=%q, want .parquet", filepath.Ext(out.Path))
-	}
-	assertFileParquetMagic(t, out.Path)
-	if x.CopyCount < 1 {
-		t.Fatalf("duckdb sources with parquet dest must COPY, CopyCount=%d", x.CopyCount)
+	if filepath.Ext(out.Path) != ".duckdb" {
+		t.Fatalf("merge out ext=%q, want .duckdb (dest follows source payload)", filepath.Ext(out.Path))
 	}
 }
 

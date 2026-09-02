@@ -93,8 +93,11 @@ func TestSkipOpenParquet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !segformat.SkipOpen(poison, pst.Size()) {
-		t.Fatal("duckdb bytes at a .parquet path must be skipped")
+	if segformat.SkipOpen(poison, pst.Size()) {
+		t.Fatal("duckdb-magic payload at a .parquet path must stay in the open set")
+	}
+	if got := segformat.Payload(poison); got != segformat.DuckDB {
+		t.Fatalf("Payload(poison)=%q, want duckdb", got)
 	}
 
 	headerOnly := filepath.Join(dir, "header-only.parquet")
