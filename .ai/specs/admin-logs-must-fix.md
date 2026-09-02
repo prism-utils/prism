@@ -1,6 +1,6 @@
 # Spec: Admin logs must-fix (same-type merge, dual-format query, isolation, L0 cold, full billing)
 
-Status: IN_REVIEW
+Status: CHANGES_REQUESTED
 
 - **Slug / branch:** `cursor/admin-logs-must-fix-1cdb`
 - **Owner phase:** developer
@@ -51,12 +51,17 @@ Prod admin (`user-fknjdouh-apps`) holds ~57 GiB of log segments on hot SSD, Graf
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines**
-- [ ] **Gate 2 — Tests cover edge cases**
+- [x] **Gate 1 — Follows the guidelines**
+- [x] **Gate 2 — Tests cover edge cases**
 - [ ] **Gate 3 — Docs & comments match**
+  `docs/STORE.md` logs/metrics rewrite still says dest format wins and duckdb sources COPY to parquet; query still says duckdb-at-`.parquet` is skipped. Update those sections (and `MERGE_SEGMENT_FORMAT` in CONFIG.md / STORE.md ingest) to match dest-follows-payload, ATTACH-on-magic, and repair-rename.
 - [ ] **Gate 4 — Comments are atomic**
+  `internal/store/merge/logs.go` `findLogTierPacks` comment names `findMergeForTier`. State the local constraint (no time-adjacency; log L0 windows are often minutes apart) without naming another function.
 - [ ] Full docs/REVIEW.md checklist passes
+  Observability & docs items fail with Gate 3 (STORE.md/CONFIG.md drift) and Gate 4 (non-atomic comment).
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+CHANGES_REQUESTED. Test-first holds (`07a28bf` test(store) before `3f61887` fix(store)). `make lint test` green (0 lint issues; `go test -race -tags duckdb_arrow ./...` ok). Forced uncached re-run of changed packages green. `make store-integration` green. Docker was available; compose-backed `make full-tests` (loki/format-matrix/compact e2e) was not re-run — `make store-integration` covers the same integration packages without compose.
+
+Gates 1–2 pass: same-type packs, dest-follows-duckdb-payload, query ATTACH+skip, isolation continue, aged L0 pack/promote, full-tree billing; tests cover mixed sources, fake DUCK skip, real duckdb-at-parquet, young vs aged L0, landing/temps/cold roots. Gates 3–4 fail as above.
