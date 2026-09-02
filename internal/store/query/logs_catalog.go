@@ -292,7 +292,7 @@ func listParquetInDir(roots []string, dir, artifact string) ([]logFileMeta, erro
 			}
 			return nil, err
 		}
-		if segformat.TooSmall(fi.Size()) {
+		if segformat.SkipOpen(match, fi.Size()) {
 			continue
 		}
 		minNs, maxNs := logFileTimeBounds(match, fi.ModTime())
@@ -465,9 +465,9 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 }
 
 // filterExistingLogFiles drops paths that disappeared after the meta cache /
-// manifest snapshot (retention, compaction, or a lost rename) and paths too
-// small to open. DuckDB's read_parquet([…]) fails the whole relation if any
-// listed file is missing or truncated.
+// manifest snapshot (retention, compaction, or a lost rename) and paths that
+// cannot be opened as the extension claims. DuckDB's read_parquet([…]) fails
+// the whole relation if any listed file is missing, truncated, or not parquet.
 func filterExistingLogFiles(files []logFileMeta) []logFileMeta {
 	if len(files) == 0 {
 		return files
@@ -478,7 +478,7 @@ func filterExistingLogFiles(files []logFileMeta) []logFileMeta {
 		if err != nil {
 			continue
 		}
-		if segformat.TooSmall(st.Size()) {
+		if segformat.SkipOpen(f.Path, st.Size()) {
 			continue
 		}
 		out = append(out, f)

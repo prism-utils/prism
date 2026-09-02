@@ -196,8 +196,8 @@ func TestScanLogTierSkipsRetiredSegments(t *testing.T) {
 	tierDir := layout.LogsTierDir(dataDir, graceTenant, artifact, 0)
 	live := filepath.Join(tierDir, "1786140844863329878-aaaaaaaa.parquet")
 	retired := filepath.Join(tierDir, "1786140844863329879-bbbbbbbb.parquet")
-	writeSegmentFixture(t, live)
-	writeSegmentFixture(t, retired)
+	testparquet.WriteLogsRawFile(t, live, []testparquet.LogRow{{Message: "live", Format: "none"}})
+	testparquet.WriteLogsRawFile(t, retired, []testparquet.LogRow{{Message: "retired", Format: "none"}})
 	if err := retireSources([]Segment{{Path: retired}}, time.Now(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
@@ -217,8 +217,8 @@ func TestScanLogLandingSkipsRetiredSegments(t *testing.T) {
 	landing := layout.LogsLandingDir(dataDir, graceTenant, artifact)
 	live := filepath.Join(landing, "1786140844863329878-aaaaaaaa.parquet")
 	retired := filepath.Join(landing, "1786140844863329879-bbbbbbbb.parquet")
-	writeSegmentFixture(t, live)
-	writeSegmentFixture(t, retired)
+	testparquet.WriteLogsRawFile(t, live, []testparquet.LogRow{{Message: "live", Format: "none"}})
+	testparquet.WriteLogsRawFile(t, retired, []testparquet.LogRow{{Message: "retired", Format: "none"}})
 	if err := retireSources([]Segment{{Path: retired}}, time.Now(), time.Hour); err != nil {
 		t.Fatal(err)
 	}

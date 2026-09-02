@@ -3,6 +3,8 @@ package segformat
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,6 +35,50 @@ const MinUsableBytes int64 = 8
 // plane cannot).
 func TooSmall(n int64) bool {
 	return n < MinUsableBytes
+}
+
+const parquetMagic = "PAR1"
+
+// SkipOpen reports whether a segment should be omitted from query and merge
+// scans. Size below a header is always unusable. A .parquet path that lacks
+// parquet header and footer magic is unusable even when large enough (a DuckDB
+// file written to a .parquet name is the 1.0.14 merge regression). Callers skip
+// these paths; they do not rename them (a read-only query plane cannot).
+func SkipOpen(path string, size int64) bool {
+	if TooSmall(size) {
+		return true
+	}
+	if IsParquet(path) && !hasParquetMagic(path) {
+		return true
+	}
+	return false
+}
+
+func hasParquetMagic(path string) bool {
+	f, err := os.Open(path) //nolint:gosec // G304: path is a server-owned segment
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, 4)
+	if _, err := io.ReadFull(f, head); err != nil {
+		return false
+	}
+	if string(head) != parquetMagic {
+		return false
+	}
+	st, err := f.Stat()
+	if err != nil || st.Size() < 8 {
+		return false
+	}
+	if _, err := f.Seek(-4, io.SeekEnd); err != nil {
+		return false
+	}
+	tail := make([]byte, 4)
+	if _, err := io.ReadFull(f, tail); err != nil {
+		return false
+	}
+	return string(tail) == parquetMagic
 }
 
 // MetricsTable is the relation name inside metrics-plane .duckdb segments and
