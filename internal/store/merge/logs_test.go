@@ -64,13 +64,17 @@ func TestScanLogTierSkipsDuckDBBytesAtParquetPath(t *testing.T) {
 	for _, s := range got {
 		paths = append(paths, s.Path)
 	}
-	if len(got) != 2 {
-		t.Fatalf("tier = %v, want keep parquet + live duckdb", paths)
+	if len(got) != 3 {
+		t.Fatalf("tier = %v, want keep parquet + poison duck-magic parquet + live duckdb", paths)
 	}
+	foundPoison := false
 	for _, s := range got {
 		if s.Path == poison {
-			t.Fatalf("poison parquet still in scan: %s", poison)
+			foundPoison = true
 		}
+	}
+	if !foundPoison {
+		t.Fatal("duckdb-magic parquet must stay in the merge scan so repair can rename it")
 	}
 	if _, err := os.Stat(poison); err != nil {
 		t.Fatalf("poison file must stay on disk (skip, not rename): %v", err)

@@ -138,7 +138,7 @@ func ScanLogTiers(dataDir, tenant, artifact string, maxTier int) ([]Segment, err
 	return ScanLogTiersRoots(dataDir, "", tenant, artifact, maxTier)
 }
 
-// ScanLogTiersRoots unions hot and cold log tiers. L0 is only read from dataDir.
+// ScanLogTiersRoots unions hot and cold log tiers including L0.
 func ScanLogTiersRoots(dataDir, coldDir, tenant, artifact string, maxTier int) ([]Segment, error) {
 	var all []Segment
 	for tier := 0; tier <= maxTier; tier++ {
@@ -151,7 +151,7 @@ func ScanLogTiersRoots(dataDir, coldDir, tenant, artifact string, maxTier int) (
 	if coldDir == "" {
 		return all, nil
 	}
-	for tier := 1; tier <= maxTier; tier++ {
+	for tier := 0; tier <= maxTier; tier++ {
 		segs, err := ScanLogTier(coldDir, tenant, artifact, tier)
 		if err != nil {
 			return nil, err
@@ -167,9 +167,7 @@ func ScanLogTiersRoots(dataDir, coldDir, tenant, artifact string, maxTier int) (
 // pass so landing traffic cannot starve tier catch-up.
 func (p *Planner) FindLogMerges(now time.Time, landing, tiers []Segment) []LogMergeAction {
 	out := p.findLogLandingRefreshes(now, landing)
-	if action, ok := p.findLogTierPack(tiers); ok {
-		out = append(out, action)
-	}
+	out = append(out, p.findLogTierPacks(now, tiers)...)
 	return out
 }
 
@@ -179,15 +177,27 @@ func (p *Planner) FindLogMerges(now time.Time, landing, tiers []Segment) []LogMe
 // first action is newest-first so last-hour queries become searchable before
 // the oldest-first drain finishes. Remaining actions stay oldest-first.
 func (p *Planner) findLogLandingRefreshes(now time.Time, landing []Segment) []LogMergeAction {
+	var out []LogMergeAction
+	for _, group := range groupByPayload(landing) {
+		if len(out) >= p.cfg.LogsRefreshMaxActions {
+			break
+		}
+		remain := p.cfg.LogsRefreshMaxActions - len(out)
+		out = append(out, p.findLogLandingRefreshesOne(now, group, remain)...)
+	}
+	return out
+}
+
+func (p *Planner) findLogLandingRefreshesOne(now time.Time, landing []Segment, maxActions int) []LogMergeAction {
 	live := p.sortedLiveLogs(landing)
 	var out []LogMergeAction
-	if p.cfg.LogsRefreshMaxActions >= 2 && len(live) > 0 && p.logRefreshDue(now, live) {
+	if maxActions >= 2 && len(live) > 0 && p.logRefreshDue(now, live) {
 		if sources, ok := p.packLiveLogsNewest(live); ok && len(live) > len(sources) {
 			out = append(out, LogMergeAction{Sources: sources, DestTier: 0})
 			live = subtractLogSources(live, sources)
 		}
 	}
-	for len(out) < p.cfg.LogsRefreshMaxActions && len(live) > 0 {
+	for len(out) < maxActions && len(live) > 0 {
 		if !p.logRefreshDue(now, live) {
 			break
 		}
@@ -214,11 +224,11 @@ func (p *Planner) logRefreshDue(now time.Time, live []Segment) bool {
 	return !live[0].MinTs.After(now.Add(-p.cfg.LogsRefreshInterval))
 }
 
-// findLogTierPack packs the lowest tier with enough unsealed segments toward
-// MaxSegmentBytes. Unlike metrics findMergeForTier, it does not require
-// Lucene time-adjacency — log L0 files from merge ticks are often minutes
-// apart (point windows), so adjacency would never form a pack.
-func (p *Planner) findLogTierPack(tiers []Segment) (LogMergeAction, bool) {
+// findLogTierPacks packs the lowest tier with enough unsealed same-type
+// segments toward MaxSegmentBytes. It does not require time-adjacency —
+// log L0 files from merge ticks are often minutes apart (point windows),
+// so adjacency would never form a pack.
+func (p *Planner) findLogTierPacks(now time.Time, tiers []Segment) []LogMergeAction {
 	byTier := map[int][]Segment{}
 	for _, s := range tiers {
 		if s.Bytes >= p.cfg.MaxSegmentBytes {
@@ -227,24 +237,86 @@ func (p *Planner) findLogTierPack(tiers []Segment) (LogMergeAction, bool) {
 		byTier[s.Tier] = append(byTier[s.Tier], s)
 	}
 	for _, tier := range sortedKeys(byTier) {
-		sources, ok := p.packUnsealedLogs(byTier[tier])
-		if !ok {
-			continue
+		var out []LogMergeAction
+		for _, group := range groupByPayload(byTier[tier]) {
+			sources, ok := p.packUnsealedLogs(now, group)
+			if !ok {
+				continue
+			}
+			out = append(out, LogMergeAction{Sources: sources, DestTier: tier + 1})
 		}
-		return LogMergeAction{Sources: sources, DestTier: tier + 1}, true
+		if len(out) > 0 {
+			return out
+		}
 	}
-	return LogMergeAction{}, false
+	return nil
 }
 
 // packUnsealedLogs returns a time-ordered subset of unsealed segments that
 // fills toward MaxSegmentBytes (capped by MaxMergeAtOnce), once the
-// SegmentsPerTier trigger is met.
-func (p *Planner) packUnsealedLogs(segs []Segment) ([]Segment, bool) {
+// SegmentsPerTier trigger is met or ColdAfter ages the set.
+func (p *Planner) packUnsealedLogs(now time.Time, segs []Segment) ([]Segment, bool) {
 	live := p.sortedLiveLogs(segs)
-	if len(live) < p.cfg.SegmentsPerTier {
+	if len(live) == 0 {
+		return nil, false
+	}
+	if len(live) < p.cfg.SegmentsPerTier && !p.logsColdDue(now, live) {
 		return nil, false
 	}
 	return p.packLiveLogs(live)
+}
+
+func (p *Planner) logsColdDue(now time.Time, live []Segment) bool {
+	if p.cfg.ColdAfter <= 0 {
+		return false
+	}
+	cutoff := now.Add(-p.cfg.ColdAfter)
+	for _, s := range live {
+		if !s.MaxTs.IsZero() && !s.MaxTs.After(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
+func groupByPayload(segs []Segment) [][]Segment {
+	var order []segformat.Format
+	grouped := map[segformat.Format][]Segment{}
+	for _, s := range segs {
+		f := segmentPayload(s.Path)
+		if _, ok := grouped[f]; !ok {
+			order = append(order, f)
+		}
+		grouped[f] = append(grouped[f], s)
+	}
+	out := make([][]Segment, 0, len(order))
+	for _, f := range order {
+		out = append(out, grouped[f])
+	}
+	return out
+}
+
+func segmentPayload(path string) segformat.Format {
+	if f := segformat.Payload(path); f != "" {
+		return f
+	}
+	if segformat.IsDuckDB(path) {
+		return segformat.DuckDB
+	}
+	return segformat.Parquet
+}
+
+func homogeneousPayload(sources []Segment) (segformat.Format, error) {
+	if len(sources) == 0 {
+		return "", fmt.Errorf("merge: no sources")
+	}
+	got := segmentPayload(sources[0].Path)
+	for _, s := range sources[1:] {
+		if segmentPayload(s.Path) != got {
+			return "", fmt.Errorf("merge: mixed parquet and duckdb sources")
+		}
+	}
+	return got, nil
 }
 
 // sortedLiveLogs drops sealed segments and orders the rest oldest first.
@@ -351,10 +423,11 @@ func subtractLogSources(live, drop []Segment) []Segment {
 }
 
 // ExecuteLogMerge writes packed log sources into logs/<artifact>/tiers/L{DestTier}/.
-// Dest format is the on-disk encoding: parquet dest writes parquet even when
-// sources are duckdb. Per-source rows are stamped with __prism_ts_ns (ingest
-// window ns). The output filename uses min source MinTs so legacy filename
-// consumers stay near truth; now is only a fallback when bounds are unset.
+// Dest extension follows source payload: duckdb sources stay duckdb even when
+// MERGE_SEGMENT_FORMAT is parquet. Mixed parquet+duckdb lists error. Per-source
+// rows are stamped with __prism_ts_ns (ingest window ns). The output filename
+// uses min source MinTs so legacy filename consumers stay near truth; now is
+// only a fallback when bounds are unset.
 func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now time.Time) (Segment, error) {
 	if len(action.Sources) == 0 {
 		return Segment{}, fmt.Errorf("log merge: no sources")
@@ -368,15 +441,19 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 	if nameTs.IsZero() {
 		nameTs = now
 	}
-	final := filepath.Join(destDir, layout.SegmentNameFormat(nameTs, x.cfg.SegmentFormat.Ext()))
+	srcFmt, err := homogeneousPayload(action.Sources)
+	if err != nil {
+		return Segment{}, err
+	}
+	destFmt := x.cfg.SegmentFormat
+	if srcFmt == segformat.DuckDB {
+		destFmt = segformat.DuckDB
+	}
+	final := filepath.Join(destDir, layout.SegmentNameFormat(nameTs, destFmt.Ext()))
 
-	switch {
-	case x.cfg.SegmentFormat == segformat.DuckDB:
+	switch destFmt {
+	case segformat.DuckDB:
 		if err := x.mergeLogsDuckDB(action.Sources, final); err != nil {
-			return Segment{}, err
-		}
-	case sourcesHaveDuckDB(action.Sources):
-		if err := x.mergeLogsCopy(action.Sources, final); err != nil {
 			return Segment{}, err
 		}
 	default:

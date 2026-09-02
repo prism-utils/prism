@@ -90,11 +90,9 @@ func (x *Executor) DB() *sql.DB {
 	return x.db
 }
 
-// ExecuteMerge writes one homogeneous parquet pack into L{DestTier} by
-// concatenating row groups in earliest-timestamp order. Dest format is the
-// on-disk encoding: parquet dest always writes parquet (COPY when a source is
-// already .duckdb, because row-group append cannot read it). DuckDB export
-// runs only when dest format is duckdb.
+// ExecuteMerge writes one homogeneous pack into L{DestTier}. DuckDB sources
+// keep a duckdb dest even when MERGE_SEGMENT_FORMAT is parquet. Parquet sources
+// concatenate row groups unless dest format is duckdb.
 func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, error) {
 	if len(action.Sources) == 0 {
 		return Segment{}, fmt.Errorf("merge: no sources")
@@ -104,18 +102,21 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	if err := os.MkdirAll(destDir, 0o750); err != nil {
 		return Segment{}, err
 	}
-	final := filepath.Join(destDir, layout.SegmentNameFormat(now, x.cfg.SegmentFormat.Ext()))
+	srcFmt, err := homogeneousPayload(action.Sources)
+	if err != nil {
+		return Segment{}, err
+	}
+	destFmt := x.cfg.SegmentFormat
+	if srcFmt == segformat.DuckDB {
+		destFmt = segformat.DuckDB
+	}
+	final := filepath.Join(destDir, layout.SegmentNameFormat(now, destFmt.Ext()))
 
 	var pack []Segment
-	switch {
-	case x.cfg.SegmentFormat == segformat.DuckDB:
+	switch destFmt {
+	case segformat.DuckDB:
 		pack = action.Sources
 		if err := x.mergeMetricsDuckDB(pack, final); err != nil {
-			return Segment{}, err
-		}
-	case sourcesHaveDuckDB(action.Sources):
-		pack = action.Sources
-		if err := x.mergeMetricsCopy(pack, final); err != nil {
 			return Segment{}, err
 		}
 	default:
@@ -219,7 +220,7 @@ func (x *Executor) sourcesSelectSQLLogs(sources []Segment) ([]string, func(), er
 		ingestNs := s.MinTs.UTC().UnixNano()
 		var fromSQL string
 		switch {
-		case segformat.IsDuckDB(s.Path):
+		case segformat.Payload(s.Path) == segformat.DuckDB:
 			alias := fmt.Sprintf("msrc_%d", i)
 			q := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(s.Path), alias)
 			if _, err := x.db.ExecContext(context.Background(), q); err != nil {
@@ -277,7 +278,7 @@ func (x *Executor) sourcesSelectSQLWithTable(sources []Segment, duckTable func(p
 	parts := make([]string, len(sources))
 	for i, s := range sources {
 		switch {
-		case segformat.IsDuckDB(s.Path):
+		case segformat.Payload(s.Path) == segformat.DuckDB:
 			alias := fmt.Sprintf("msrc_%d", i)
 			q := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(s.Path), alias)
 			if _, err := x.db.ExecContext(context.Background(), q); err != nil {
@@ -313,7 +314,7 @@ func StatSegment(path string, tier int, caps DuckDBCaps) (Segment, error) {
 
 	var minTs, maxTs time.Time
 	ctx := context.Background()
-	if segformat.IsDuckDB(path) {
+	if segformat.Payload(path) == segformat.DuckDB {
 		alias := "stat"
 		attach := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(path), alias)
 		if _, err := db.ExecContext(ctx, attach); err != nil {
@@ -386,8 +387,7 @@ func ScanAllTiers(dataDir, tenant string, maxTier int, caps DuckDBCaps) ([]Segme
 	return ScanAllTiersRoots(dataDir, "", tenant, maxTier, caps)
 }
 
-// ScanAllTiersRoots unions hot and cold tier listings. L0 is only read from
-// dataDir; coldDir is skipped when empty.
+// ScanAllTiersRoots unions hot and cold tier listings. coldDir is skipped when empty.
 func ScanAllTiersRoots(dataDir, coldDir, tenant string, maxTier int, caps DuckDBCaps) ([]Segment, error) {
 	var all []Segment
 	for tier := 0; tier <= maxTier; tier++ {
@@ -400,7 +400,7 @@ func ScanAllTiersRoots(dataDir, coldDir, tenant string, maxTier int, caps DuckDB
 	if coldDir == "" {
 		return all, nil
 	}
-	for tier := 1; tier <= maxTier; tier++ {
+	for tier := 0; tier <= maxTier; tier++ {
 		segs, err := ScanTier(coldDir, tenant, tier, caps)
 		if err != nil {
 			return nil, err

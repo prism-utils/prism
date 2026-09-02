@@ -93,13 +93,13 @@ func listLogSegmentFiles(tenantRoot, coldDir string) ([]logFileMeta, error) {
 
 func attachLogsDuckDB(ctx context.Context, conn *sql.Conn, files []logFileMeta) error {
 	for i, f := range files {
-		if !segformat.IsDuckDB(f.Path) {
+		if segformat.Payload(f.Path) != segformat.DuckDB {
 			continue
 		}
 		alias := fmt.Sprintf("lseg_%d", i)
 		q := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", layout.ToSlash(f.Path), alias)
 		if _, err := conn.ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("attach logs %s: %w", f.Path, err)
+			continue
 		}
 		files[i].duckAlias = alias
 		rel := segformat.LogsRelationForPath(f.Path)
@@ -110,7 +110,8 @@ func attachLogsDuckDB(ctx context.Context, conn *sql.Conn, files []logFileMeta) 
 		)
 		var has bool
 		if err := conn.QueryRowContext(ctx, desc).Scan(&has); err != nil {
-			return fmt.Errorf("describe logs %s: %w", f.Path, err)
+			files[i].duckAlias = ""
+			continue
 		}
 		files[i].HasIngestTS = has
 	}
@@ -127,11 +128,20 @@ func buildLogsRelationSQLMixed(files []logFileMeta, opts logsCatalogOpts) (strin
 	var parquet []logFileMeta
 	var duck []logFileMeta
 	for _, f := range files {
-		if segformat.IsDuckDB(f.Path) {
-			duck = append(duck, f)
-		} else {
+		switch segformat.Payload(f.Path) {
+		case segformat.DuckDB:
+			if f.duckAlias != "" {
+				duck = append(duck, f)
+			}
+		case segformat.Parquet:
 			parquet = append(parquet, f)
 		}
+	}
+	if len(parquet) == 0 && len(duck) == 0 {
+		if opts.WithIngestTS {
+			return emptyLokiLogsViewSQL, nil
+		}
+		return emptyLogsViewSQL, nil
 	}
 
 	var parts []string
@@ -140,9 +150,6 @@ func buildLogsRelationSQLMixed(files []logFileMeta, opts logsCatalogOpts) (strin
 	}
 	for _, f := range duck {
 		alias := f.duckAlias
-		if alias == "" {
-			return "", fmt.Errorf("query: duckdb log segment missing attach alias: %s", f.Path)
-		}
 		rel := segformat.LogsRelationForPath(f.Path)
 		sel := fmt.Sprintf("SELECT * FROM %s.%s", alias, rel)
 		if opts.WithIngestTS {

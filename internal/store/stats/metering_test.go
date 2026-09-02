@@ -89,12 +89,32 @@ func TestTenantOnDiskBytesIgnoresLegacyMetricsRaw(t *testing.T) {
 	testparquet.WriteFile(t, legacy, []testparquet.Row{
 		{Name: "up", Labels: "{}", Value: 1, TimestampMs: 0},
 	})
+	st, err := os.Stat(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := TenantOnDiskBytes(root, testTenant)
 	if err != nil {
 		t.Fatalf("bytes: %v", err)
 	}
-	if got != 0 {
-		t.Fatalf("legacy metrics-raw must not be billed after tiered migration, got %d", got)
+	if got != st.Size() {
+		t.Fatalf("metrics-raw must be billed, got %d want %d", got, st.Size())
+	}
+}
+
+func TestTenantOnDiskBytesCountsLandingAndTemps(t *testing.T) {
+	root := t.TempDir()
+	tenantRoot := filepath.Join(root, testTenant)
+	writeFile(t, filepath.Join(tenantRoot, "logs", "logs-raw", "win.parquet"), []byte("landing"))
+	writeFile(t, filepath.Join(tenantRoot, "logs", "logs-raw", "win.parquet.tmp"), []byte("tmpxx"))
+	writeFile(t, filepath.Join(tenantRoot, "tiers", "L0", "a.parquet.compacted"), []byte("hold"))
+	got, err := TenantOnDiskBytes(root, testTenant)
+	if err != nil {
+		t.Fatalf("bytes: %v", err)
+	}
+	want := int64(len("landing") + len("tmpxx") + len("hold"))
+	if got != want {
+		t.Fatalf("want %d billed bytes including landing/temps, got %d", want, got)
 	}
 }
 

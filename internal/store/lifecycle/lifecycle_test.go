@@ -254,11 +254,15 @@ func TestTickMergePromotesEligibleL1LeavesL0(t *testing.T) {
 	if err := runner.TickMerge(); err != nil {
 		t.Fatalf("TickMerge: %v", err)
 	}
-	if _, err := os.Stat(l0); err != nil {
-		t.Fatal("L0 must remain on hot")
+	if _, err := os.Stat(l0); !os.IsNotExist(err) {
+		t.Fatal("eligible L0 must leave hot after dest verifies")
 	}
 	if _, err := os.Stat(l1); !os.IsNotExist(err) {
 		t.Fatal("eligible L1 must leave hot after dest verifies")
+	}
+	dest0 := filepath.Join(layout.TierDir(cold, lifecycleTenant, 0), "old.parquet")
+	if _, err := os.Stat(dest0); err != nil {
+		t.Fatalf("cold L0 missing: %v", err)
 	}
 	dest := filepath.Join(layout.TierDir(cold, lifecycleTenant, 1), "old.parquet")
 	if _, err := os.Stat(dest); err != nil {

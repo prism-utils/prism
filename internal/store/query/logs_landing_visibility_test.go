@@ -170,9 +170,7 @@ func TestLogsCatalogOpensDuckDBTierSegments(t *testing.T) {
 		t.Fatal(err)
 	}
 	duckSeg := filepath.Join(tierDir, layout.SegmentNameFormat(time.Unix(300, 0).UTC(), "duckdb"))
-	if err := os.WriteFile(duckSeg, []byte("duckdb segment"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeLogsDuckDBAt(t, duckSeg)
 	tenantRoot := absTenantRoot(t, dataDir, visibilityTenant)
 	if err := logmeta.Bump(dataDir, visibilityTenant); err != nil {
 		t.Fatal(err)

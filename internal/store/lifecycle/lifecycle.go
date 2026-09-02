@@ -80,11 +80,11 @@ type Config struct {
 	// still live can finish opening it. Zero deletes as soon as the merge
 	// output is durable.
 	DeleteGrace time.Duration
-	// ColdDir is a second data root for compacted L1+ segments. Empty disables
+	// ColdDir is a second data root for compacted L0+ segments. Empty disables
 	// promote and dual-root scans.
 	ColdDir string
 	// ColdAfter is how old a compacted segment's max timestamp must be before
-	// it may leave the hot root. Zero means twelve hours.
+	// it may leave the hot root, including leftover L0. Zero means twelve hours.
 	ColdAfter time.Duration
 	// Materializations are named merge-time SQL artifacts. Empty is a no-op.
 	Materializations materialize.File
@@ -196,6 +196,7 @@ func (r *Runner) tickMerge() error {
 		FloorBytes:            r.cfg.FloorBytes,
 		LogsRefreshInterval:   r.cfg.LogsRefreshInterval,
 		LogsRefreshMaxActions: r.cfg.LogsRefreshMaxActions,
+		ColdAfter:             r.cfg.ColdAfter,
 	})
 	now := r.clock()
 	for _, tenant := range tenants {
@@ -438,69 +439,85 @@ func (r *Runner) runMaterialize(tenant, dest string, sources []string, destTier 
 }
 
 func (r *Runner) mergeLogsTenant(tenant string, planner *merge.Planner) error {
+	if _, err := merge.RepairLogSegmentExtensions(r.cfg.DataDir, tenant); err != nil {
+		r.log.Error("repair log extensions", "tenant", tenant, "err", err)
+	}
 	artifacts, err := merge.ListLogArtifacts(r.cfg.DataDir, tenant)
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, artifact := range artifacts {
-		landing, err := merge.ScanLogLanding(r.cfg.DataDir, tenant, artifact)
-		if err != nil {
-			return err
-		}
-		r.rec.ObserveLogLandingFiles(tenant, artifact, len(landing))
-		tiers, err := merge.ScanLogTiersRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact, r.cfg.MaxTier)
-		if err != nil {
-			return err
-		}
-		actions := planner.FindLogMerges(r.clock(), landing, tiers)
-		for _, action := range actions {
-			action.Artifact = artifact
-			x, err := merge.NewExecutor(merge.ExecutorConfig{
-				DataDir:              r.cfg.DataDir,
-				ColdDir:              r.cfg.ColdDir,
-				Tenant:               tenant,
-				Threads:              r.cfg.Threads,
-				MemoryLimit:          r.cfg.MemoryLimit,
-				SegmentFormat:        r.cfg.MergeSegmentFormat,
-				DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
-				DeleteGrace:          r.cfg.DeleteGrace,
-			})
-			if err != nil {
-				return err
-			}
-			mergeStart := r.clock()
-			out, err := x.ExecuteLogMerge(artifact, action, mergeStart)
-			_ = x.Close()
-			if err != nil {
-				if recErr := merge.RecordRewriteFailure(action.Sources); recErr != nil {
-					return recErr
-				}
-				return err
-			}
-			if elapsed := r.clock().Sub(mergeStart).Seconds(); elapsed > 0 {
-				if err := stats.AddCompactionCPUSeconds(r.cfg.DataDir, tenant, elapsed); err != nil {
-					return err
-				}
-				r.rec.ObserveCompactionSeconds(tenant, elapsed)
-			}
-			if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
-				return err
-			}
-			if err := logmeta.SyncManifestRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact); err != nil {
-				return err
-			}
-			// A refresh is what publishes buffered rows, so this is where their
-			// label values enter the index; folding in just the new segment keeps
-			// the next label query off a full rescan of every tier.
-			if err := logmeta.MergeLabelIndexFromParquet(r.cfg.DataDir, tenant, out.Path); err != nil {
-				return err
-			}
-			if err := r.runMaterialize(tenant, out.Path, segmentPaths(action.Sources), action.DestTier, materialize.PlaneLogs, mergeStart); err != nil {
-				return err
-			}
+		if err := r.mergeLogsArtifact(tenant, artifact, planner); err != nil {
+			r.log.Error("merge logs artifact", "tenant", tenant, "artifact", artifact, "err", err)
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
+}
+
+func (r *Runner) mergeLogsArtifact(tenant, artifact string, planner *merge.Planner) error {
+	landing, err := merge.ScanLogLanding(r.cfg.DataDir, tenant, artifact)
+	if err != nil {
+		return err
+	}
+	r.rec.ObserveLogLandingFiles(tenant, artifact, len(landing))
+	tiers, err := merge.ScanLogTiersRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact, r.cfg.MaxTier)
+	if err != nil {
+		return err
+	}
+	actions := planner.FindLogMerges(r.clock(), landing, tiers)
+	var errs []error
+	for _, action := range actions {
+		action.Artifact = artifact
+		x, err := merge.NewExecutor(merge.ExecutorConfig{
+			DataDir:              r.cfg.DataDir,
+			ColdDir:              r.cfg.ColdDir,
+			Tenant:               tenant,
+			Threads:              r.cfg.Threads,
+			MemoryLimit:          r.cfg.MemoryLimit,
+			SegmentFormat:        r.cfg.MergeSegmentFormat,
+			DuckDBStorageVersion: r.cfg.DuckDBStorageVersion,
+			DeleteGrace:          r.cfg.DeleteGrace,
+		})
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		mergeStart := r.clock()
+		out, err := x.ExecuteLogMerge(artifact, action, mergeStart)
+		_ = x.Close()
+		if err != nil {
+			if recErr := merge.RecordRewriteFailureReason(action.Sources, merge.RewriteSkipReason(err)); recErr != nil {
+				errs = append(errs, recErr)
+			}
+			errs = append(errs, err)
+			continue
+		}
+		if elapsed := r.clock().Sub(mergeStart).Seconds(); elapsed > 0 {
+			if err := stats.AddCompactionCPUSeconds(r.cfg.DataDir, tenant, elapsed); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			r.rec.ObserveCompactionSeconds(tenant, elapsed)
+		}
+		if err := logmeta.Bump(r.cfg.DataDir, tenant); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := logmeta.SyncManifestRoots(r.cfg.DataDir, r.cfg.ColdDir, tenant, artifact); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := logmeta.MergeLabelIndexFromParquet(r.cfg.DataDir, tenant, out.Path); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := r.runMaterialize(tenant, out.Path, segmentPaths(action.Sources), action.DestTier, materialize.PlaneLogs, mergeStart); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // TickRetention deletes expired tier segments and rollup files.

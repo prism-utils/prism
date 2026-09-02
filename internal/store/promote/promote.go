@@ -38,9 +38,9 @@ func Enabled(coldDir string) bool {
 }
 
 // Eligible reports whether a compacted segment may leave the hot root.
-// L0 never leaves, even when its data is older than After.
+// Any tier whose data is older than After may leave, including leftover L0.
 func Eligible(tier int, maxTs, now time.Time, after time.Duration) bool {
-	if tier < 1 {
+	if tier < 0 {
 		return false
 	}
 	if after <= 0 {
@@ -137,7 +137,7 @@ type fileRef struct {
 
 func listHotCompacted(dataDir, tenant string, maxTier int) ([]fileRef, error) {
 	var out []fileRef
-	for tier := 1; tier <= maxTier; tier++ {
+	for tier := 0; tier <= maxTier; tier++ {
 		dir := layout.TierDir(dataDir, tenant, tier)
 		files, err := listSegmentFiles(dir, filepath.ToSlash(filepath.Join("tiers", fmt.Sprintf("L%d", tier))), tier)
 		if err != nil {
@@ -150,7 +150,7 @@ func listHotCompacted(dataDir, tenant string, maxTier int) ([]fileRef, error) {
 		return nil, err
 	}
 	for _, artifact := range artifacts {
-		for tier := 1; tier <= maxTier; tier++ {
+		for tier := 0; tier <= maxTier; tier++ {
 			dir := layout.LogsTierDir(dataDir, tenant, artifact, tier)
 			rel := filepath.ToSlash(filepath.Join("logs", artifact, "tiers", fmt.Sprintf("L%d", tier)))
 			files, err := listSegmentFiles(dir, rel, tier)

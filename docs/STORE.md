@@ -271,8 +271,9 @@ returns **`400`** with an actionable error (not `500`). Per-window success lines
 immutable file under `<tenant>/logs/<artifact>/` (`.parquet` or `.duckdb` by
 magic) and read back through the `logs` relation on `/sql`. Metrics ingest
 inserts into `hot_current`. Both HTTP and Flight ingest land logs the same way.
-After land, `HOT_SEGMENT_FORMAT` / `MERGE_SEGMENT_FORMAT` still govern hot export
-and merge output.
+After land, `HOT_SEGMENT_FORMAT` governs the metrics hot export. Merge dest for
+DuckDB sources follows payload magic (`.duckdb`); parquet sources honor
+`MERGE_SEGMENT_FORMAT`.
 
 ### Arrow Flight
 
@@ -475,8 +476,9 @@ DATA_DIR/
     .metering.json         # on-disk usage / compaction metering (operator-facing)
 ```
 
-When `COLD_DATA_DIR` is set, compacted **L1+** metrics and logs are copied there after
-their max timestamp is older than `COLD_AFTER` (default 12h). L0, `hot/`, rollups,
+When `COLD_DATA_DIR` is set, compacted **L0+** metrics and logs are copied there after
+their max timestamp is older than `COLD_AFTER` (default 12h). Aged L0 is force-packed
+same-type when a pack exists, then leftover L0 is still eligible. `hot/`, rollups,
 materializations, and `_manifest.json` stay on `DATA_DIR`. Query, PromQL, Loki, and
 `/sql` union both roots. Merge still writes new L1+ onto `DATA_DIR`, then the promote
 pass copies. Empty `COLD_DATA_DIR` is a no-op.
@@ -541,11 +543,12 @@ tenant database, which DuckDB rejects (`ATTACH` of one file/alias twice on a
 connection). Overlapping callers share the single in-flight export and its
 result, so a burst of N queries costs one export.
 
-Metrics flush→L0 and metrics/logs tier merges emit `.parquet` or `.duckdb`
-according to `MERGE_SEGMENT_FORMAT` (default `parquet`). Query sandboxes ATTACH
-`.duckdb` segments read-only and keep `read_parquet` for Parquet; mixed trees
-during a config flip are unioned. Tenant isolation (`allowed_directories`,
-sandbox lock) is unchanged.
+Metrics flush→L0 and parquet-source tier merges emit `.parquet` or `.duckdb`
+according to `MERGE_SEGMENT_FORMAT` (default `parquet`). DuckDB-source packs stay
+`.duckdb`. Query sandboxes ATTACH files whose payload is DuckDB (including a
+`.parquet` name) and keep `read_parquet` for Parquet magic; mixed trees are
+unioned. ATTACH/read failure skips that file. Tenant isolation
+(`allowed_directories`, sandbox lock) is unchanged.
 
 #### DuckDB storage upgrade procedure
 
@@ -628,10 +631,10 @@ compact:
       every: 1h
 ```
 
-- **Logs:** one tick may run up to `LOGS_REFRESH_MAX_ACTIONS` landing→L0 refreshes per artifact plus one cold-tier pack (time-ordered fill toward `MAX_SEGMENT_BYTES`, no Lucene adjacency — L0 files from merge ticks are often minutes apart). When the action budget is at least two and the live landing set is larger than one pack, the first refresh is newest-first so last-hour queries become searchable before the rest of the backlog drains oldest-first. Landing pack width re-derives from a 1 MiB floor (capped at 64 files) when the shared planner floor is larger than 1 MiB, so tiny landings fill toward the seal budget instead of packing only a handful of files. Files smaller than 8 bytes are skipped on scan, query, and promote (crash leftovers). `.parquet` files that lack parquet header+footer magic are also skipped on scan and query (a DuckDB file at a `.parquet` path); they are not renamed, because the read-only query plane cannot. Refreshes are planned before the cold pack, so searchable lag stays bounded while tier catch-up still progresses.
+- **Logs:** one tick may run up to `LOGS_REFRESH_MAX_ACTIONS` landing→L0 refreshes per artifact plus one cold-tier pack (time-ordered fill toward `MAX_SEGMENT_BYTES`, no Lucene adjacency — L0 files from merge ticks are often minutes apart). When the action budget is at least two and the live landing set is larger than one pack, the first refresh is newest-first so last-hour queries become searchable before the rest of the backlog drains oldest-first. Landing pack width re-derives from a 1 MiB floor (capped at 64 files) when the shared planner floor is larger than 1 MiB, so tiny landings fill toward the seal budget instead of packing only a handful of files. Files smaller than 8 bytes or with unknown payload magic are skipped on scan, query, and promote (crash leftovers). DuckDB magic at a `.parquet` name is opened by ATTACH; ATTACH failure skips that file only. The writer rename pass matches live log extensions to payload magic and clears format-mismatch skip sidecars. Refreshes are planned before the cold pack, so searchable lag stays bounded while tier catch-up still progresses.
 - **Promotion:** merged output lands in `L{dest}` with rows ordered by `ts`; source files are released only after the output is atomically renamed.
-- **Metrics rewrite:** parquet sources with identical footers are concatenated (one row group at a time, `MinTs` order). Unreadable footers are skipped when grouping; if no group of two or more readable same-schema files remains, merge returns without COPY and those files stay live. Dest format is the on-disk encoding: `MERGE_SEGMENT_FORMAT=parquet` always writes parquet. DuckDB `COPY (… ORDER BY ts)` runs after a homogeneous pack is selected and concat fails (I/O, schema drift mid-file, or a test-forced failure), or when a source is already `.duckdb` (duckdb sources are inputs only — never a DuckDB export to a `.parquet` path). Schema mismatches split the pack: the first homogeneous group of two or more files is rewritten; a leftover singleton stays live. After five failed rewrites a `<segment>.merge-skip` sidecar keeps the file out of `ScanTier` / merge planning while queries still read it.
-- **Logs rewrite:** dest format wins. Parquet dest writes parquet: parquet sources are k-way merged by `__prism_ts_ns`, then event `ts` when that column exists, then source index (stamped from the source window when `__prism_ts_ns` is missing). Missing columns are null-filled. When any source is `.duckdb`, COPY to parquet (not a DuckDB file at the `.parquet` dest). DuckDB `UNION ALL BY NAME` + `ORDER BY __prism_ts_ns` is the fallback for parquet-only packs, with the same five-attempt skip sidecar. Dest `duckdb` still exports a `.duckdb` file.
+- **Metrics rewrite:** parquet sources with identical footers are concatenated (one row group at a time, `MinTs` order). Unreadable footers are skipped when grouping; if no group of two or more readable same-schema files remains, merge returns without COPY and those files stay live. Dest extension follows source payload: DuckDB sources write `.duckdb` even when `MERGE_SEGMENT_FORMAT=parquet`. Parquet sources honor `MERGE_SEGMENT_FORMAT` (concat when dest is parquet; COPY when dest is duckdb). DuckDB `COPY (… ORDER BY ts)` runs after a homogeneous parquet pack is selected and concat fails (I/O, schema drift mid-file, or a test-forced failure), or for DuckDB-source packs. Schema mismatches split the pack: the first homogeneous group of two or more files is rewritten; a leftover singleton stays live. After five failed rewrites a `<segment>.merge-skip` sidecar keeps the file out of `ScanTier` / merge planning while queries still read it.
+- **Logs rewrite:** same-type packs only. Dest extension follows source payload magic (DuckDB sources stay `.duckdb` even when `MERGE_SEGMENT_FORMAT=parquet`). Mixed parquet+duckdb lists error. Parquet-only packs are k-way merged by `__prism_ts_ns`, then event `ts` when that column exists, then source index (stamped from the source window when `__prism_ts_ns` is missing). Missing columns are null-filled. DuckDB `UNION ALL BY NAME` + `ORDER BY __prism_ts_ns` is the fallback for parquet-only packs when k-way fails, and the path for DuckDB-source packs. Same five-attempt skip sidecar.
 - **Delete grace:** releasing a source does not unlink it. For `LOGS_DELETE_GRACE_SECONDS` (default 120, `0` = unlink at once) its bytes stay at the exact path they were found at, marked by a `<segment>.compacted` sidecar holding the delete deadline; the merge tick unlinks segment and marker once that deadline passes. The window exists for readers that resolve a path and open it later — a Grafana `read_parquet('…/tiers/**/*.parquet')` glob is bound before execution and DuckDB cannot skip a file that vanished, so it fails the whole panel. A held segment is not live: log landing/tier scans, metrics tier scans, the manifest, the logs catalog, and the metrics view all skip it, so it is never a merge input twice and prism's own queries never double-count its rows. A client reading the tree by glob has no such marker to consult and can see those rows twice until the purge, which is the accepted cost of the window.
 
   Two properties do the work, and neither makes the unlink invisible. First, a path stays valid for at least the whole window after it stops being live, so a reader that resolved it while it was live has that long to open it — which is what a long scan over a wide glob needs. Second, the purge is one batched pass per tenant at the top of the merge tick rather than one unlink per completed merge, so a tick exposes a single brief instant at which a file leaves the tree instead of one per merge action. A reader that binds during that instant can still lose the race; the durable fix for a client that cannot skip a missing file is to read the manifest instead of globbing.
@@ -1119,10 +1122,11 @@ low-volume artifact becomes searchable on a clock rather than waiting for volume
 Worst-case lag is the interval plus up to one `MERGE_TICK_SECONDS`.
 `LOGS_REFRESH_INTERVAL=0` drops the age arm and restores count-only triggering.
 
-Refresh output keeps `MERGE_SEGMENT_FORMAT` (parquet by default), so a dashboard
-globbing `tiers/L*/*.parquet` needs no query change; a `duckdb` refresh is
-catalogued and searchable too, it is just opened by `ATTACH` instead of
-`read_parquet`. A backlog drains over
+Refresh dest follows source payload: DuckDB landings stay `.duckdb`; parquet
+landings honor `MERGE_SEGMENT_FORMAT` (parquet by default). A dashboard globbing
+`tiers/L*/*.parquet` still sees parquet refreshes; DuckDB refreshes are
+catalogued and searchable via `ATTACH`. A writer rename pass fixes mismatched
+extensions before merge. A backlog drains over
 several ticks: each tick applies up to `LOGS_REFRESH_MAX_ACTIONS` (default 8)
 packs per artifact, which bounds rewrite CPU while still shrinking a buffer that
 multiple agents are filling.
@@ -1311,8 +1315,8 @@ consumers scrape this for credit metering):
 all tenant directories under `DATA_DIR`.
 
 Per-tenant `windows` = hot row count + L0 segment count. `latestUnixNanos` =
-max L0 file mtime. `onDiskBytes` from `stats.TenantOnDiskBytes` (excludes
-legacy `metrics-raw/`). `compactionCpuSeconds` from `.metering.json`.
+max L0 file mtime. `onDiskBytes` from `stats.TenantOnDiskBytes` (every regular file
+under both tenant roots, including landing logs and temps). `compactionCpuSeconds` from `.metering.json`.
 
 | Condition | Status |
 |---|---|

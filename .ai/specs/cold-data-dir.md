@@ -62,7 +62,7 @@ Mirrored from the homelab spec — answer there; copy the A: line here.
 ## 5. Acceptance checklist  (developer checks these off)
 
 - [x] `COLD_DATA_DIR` empty/unset: identical layout and query behavior to today
-- [x] L0 never promoted, including when `max_ts` is older than `COLD_AFTER`
+- [x] L0 older than `COLD_AFTER` is packable and eligible for promote; younger L0 stays hot
 - [x] Eligible L1+ copied to cold with unique `*.promote.tmp`, fsync, checksum,
       same-FS rename; hot unlinked only after dest verifies (plus existing delete
       grace if still required for globbing clients)

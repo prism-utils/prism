@@ -13,8 +13,11 @@ import (
 func TestEligibleRejectsL0(t *testing.T) {
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-24 * time.Hour)
-	if Eligible(0, old, now, 12*time.Hour) {
-		t.Fatal("L0 must stay hot even when older than After")
+	if !Eligible(0, old, now, 12*time.Hour) {
+		t.Fatal("L0 older than After must be eligible")
+	}
+	if Eligible(0, now.Add(-11*time.Hour), now, 12*time.Hour) {
+		t.Fatal("L0 younger than After must stay hot")
 	}
 }
 
@@ -123,11 +126,19 @@ func TestTenantPromotesEligibleL1LeavesL0(t *testing.T) {
 	if _, err := Tenant(&cfg, tenant); err != nil {
 		t.Fatalf("Tenant: %v", err)
 	}
-	if _, err := os.Stat(l0); err != nil {
-		t.Fatal("L0 must remain on hot")
+	if _, err := os.Stat(l0); !os.IsNotExist(err) {
+		t.Fatal("eligible L0 must leave hot after dest verifies")
 	}
 	if _, err := os.Stat(l1); !os.IsNotExist(err) {
 		t.Fatal("eligible L1 must leave hot after dest verifies")
+	}
+	dest0 := filepath.Join(layout.TierDir(cold, tenant, 0), "old.parquet")
+	got0, err := os.ReadFile(dest0) //nolint:gosec // test dest
+	if err != nil {
+		t.Fatalf("cold L0: %v", err)
+	}
+	if !bytes.Equal(got0, body) {
+		t.Fatal("cold L0 bytes differ")
 	}
 	dest := filepath.Join(layout.TierDir(cold, tenant, 1), "old.parquet")
 	got, err := os.ReadFile(dest) //nolint:gosec // test dest

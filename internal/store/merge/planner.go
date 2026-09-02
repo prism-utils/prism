@@ -20,6 +20,9 @@ type PlannerConfig struct {
 	// LogsRefreshMaxActions caps landing→L0 refreshes planned in one pass, so a
 	// backlog drains over several ticks instead of stampeding DuckDB.
 	LogsRefreshMaxActions int
+	// ColdAfter, when set, force-packs L0 whose MaxTs is at least this old even
+	// below SegmentsPerTier so aged hot files can leave for the cold root.
+	ColdAfter time.Duration
 }
 
 // DefaultPlannerConfig returns production defaults with a 1 MiB floor for tests
