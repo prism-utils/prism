@@ -18,6 +18,15 @@ const skipReasonTooLarge = "too-large"
 // RecordRewriteFailure increments the attempt sidecar for each source and writes
 // a skip marker once the budget is exhausted.
 func RecordRewriteFailure(sources []Segment) error {
+	return RecordRewriteFailureReason(sources, skipReasonTooLarge)
+}
+
+// RecordRewriteFailureReason increments the attempt sidecar for each source
+// and writes a skip marker with reason once the budget is exhausted.
+func RecordRewriteFailureReason(sources []Segment, reason string) error {
+	if strings.TrimSpace(reason) == "" {
+		reason = skipReasonTooLarge
+	}
 	for _, s := range sources {
 		if s.Path == "" {
 			continue
@@ -34,12 +43,28 @@ func RecordRewriteFailure(sources []Segment) error {
 			return err
 		}
 		if n >= MergeMaxRewriteAttempts {
-			if err := writeMergeSkip(s.Path, n, skipReasonTooLarge); err != nil {
+			if err := writeMergeSkip(s.Path, n, reason); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// RewriteSkipReason maps a merge error to a skip-sidecar reason string.
+func RewriteSkipReason(err error) string {
+	if err == nil {
+		return skipReasonTooLarge
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "mixed parquet") || strings.Contains(msg, "mixed-format"):
+		return "mixed-format"
+	case strings.Contains(msg, "magic"):
+		return "format-mismatch"
+	default:
+		return "rewrite-failed"
+	}
 }
 
 func readMergeAttempts(segmentPath string) (int, error) {

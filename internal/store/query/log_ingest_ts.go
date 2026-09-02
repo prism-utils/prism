@@ -14,7 +14,7 @@ import (
 // .duckdb segments cannot be probed from a path alone — HasIngestTS stays
 // false here until DESCRIBE runs on an ATTACHed connection.
 func logSegmentHasIngestTS(path string) bool {
-	if segformat.IsDuckDB(path) {
+	if segformat.Payload(path) == segformat.DuckDB {
 		return false
 	}
 	return parquetHasColumn(path, lokiTSColumn)
@@ -40,7 +40,7 @@ func parquetHasColumn(path, name string) bool {
 func annotateDuckLogIngestTS(ctx context.Context, conn *sql.Conn, files []logFileMeta) error {
 	for i := range files {
 		f := &files[i]
-		if !segformat.IsDuckDB(f.Path) || f.duckAlias == "" {
+		if f.duckAlias == "" {
 			continue
 		}
 		rel := segformat.LogsRelationForPath(f.Path)

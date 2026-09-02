@@ -475,8 +475,9 @@ DATA_DIR/
     .metering.json         # on-disk usage / compaction metering (operator-facing)
 ```
 
-When `COLD_DATA_DIR` is set, compacted **L1+** metrics and logs are copied there after
-their max timestamp is older than `COLD_AFTER` (default 12h). L0, `hot/`, rollups,
+When `COLD_DATA_DIR` is set, compacted **L0+** metrics and logs are copied there after
+their max timestamp is older than `COLD_AFTER` (default 12h). Aged L0 is force-packed
+same-type when a pack exists, then leftover L0 is still eligible. `hot/`, rollups,
 materializations, and `_manifest.json` stay on `DATA_DIR`. Query, PromQL, Loki, and
 `/sql` union both roots. Merge still writes new L1+ onto `DATA_DIR`, then the promote
 pass copies. Empty `COLD_DATA_DIR` is a no-op.
@@ -1311,8 +1312,8 @@ consumers scrape this for credit metering):
 all tenant directories under `DATA_DIR`.
 
 Per-tenant `windows` = hot row count + L0 segment count. `latestUnixNanos` =
-max L0 file mtime. `onDiskBytes` from `stats.TenantOnDiskBytes` (excludes
-legacy `metrics-raw/`). `compactionCpuSeconds` from `.metering.json`.
+max L0 file mtime. `onDiskBytes` from `stats.TenantOnDiskBytes` (every regular file
+under both tenant roots, including landing logs and temps). `compactionCpuSeconds` from `.metering.json`.
 
 | Condition | Status |
 |---|---|

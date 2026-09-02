@@ -377,22 +377,3 @@ func assertFileParquetMagic(t *testing.T, path string) {
 		t.Fatalf("footer magic=%q, want PAR1", string(tail))
 	}
 }
-
-func assertParquetReadable(t *testing.T, path string) {
-	t.Helper()
-	connector, err := duckdb.NewConnector("", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = connector.Close() }()
-	db := sql.OpenDB(connector)
-	defer func() { _ = db.Close() }()
-	var n int
-	q := fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", filepath.ToSlash(path))
-	if err := db.QueryRowContext(context.Background(), q).Scan(&n); err != nil {
-		t.Fatalf("read_parquet: %v", err)
-	}
-	if n < 1 {
-		t.Fatalf("parquet row count=%d, want >=1", n)
-	}
-}

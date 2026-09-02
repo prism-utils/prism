@@ -48,7 +48,7 @@ func firstHomogeneousPack(sources []Segment) ([]Segment, error) {
 	groups := map[string][]Segment{}
 	var order []string
 	for _, s := range ordered {
-		if segformat.IsDuckDB(s.Path) {
+		if segformat.Payload(s.Path) == segformat.DuckDB {
 			continue
 		}
 		fp, err := parquetSchemaFingerprint(s.Path)
@@ -153,15 +153,6 @@ func concatParquet(dest string, sources []Segment, mem memory.Allocator) error {
 	}
 	success = true
 	return nil
-}
-
-func sourcesHaveDuckDB(sources []Segment) bool {
-	for _, s := range sources {
-		if segformat.IsDuckDB(s.Path) {
-			return true
-		}
-	}
-	return false
 }
 
 func sortSourcesByMinTs(sources []Segment) []Segment {

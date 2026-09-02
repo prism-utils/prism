@@ -22,7 +22,7 @@ func CountTemps(dataDir, coldDir, tenant string, maxTier int) int {
 
 func countRoot(root, tenant string, maxTier int) int {
 	n := 0
-	for tier := 1; tier <= maxTier; tier++ {
+	for tier := 0; tier <= maxTier; tier++ {
 		n += countDir(layout.TierDir(root, tenant, tier))
 	}
 	logsRoot := filepath.Join(root, tenant, "logs")
@@ -34,7 +34,7 @@ func countRoot(root, tenant string, maxTier int) int {
 		if !e.IsDir() {
 			continue
 		}
-		for tier := 1; tier <= maxTier; tier++ {
+		for tier := 0; tier <= maxTier; tier++ {
 			n += countDir(layout.LogsTierDir(root, tenant, e.Name(), tier))
 		}
 	}
@@ -72,7 +72,7 @@ func GCTenant(dataDir, coldDir, tenant string, maxTier int) error {
 }
 
 func gcRoot(root, tenant string, maxTier int) error {
-	for tier := 1; tier <= maxTier; tier++ {
+	for tier := 0; tier <= maxTier; tier++ {
 		if err := gcDir(layout.TierDir(root, tenant, tier)); err != nil {
 			return err
 		}
@@ -89,7 +89,7 @@ func gcRoot(root, tenant string, maxTier int) error {
 		if !e.IsDir() || len(e.Name()) < 5 {
 			continue
 		}
-		for tier := 1; tier <= maxTier; tier++ {
+		for tier := 0; tier <= maxTier; tier++ {
 			if err := gcDir(layout.LogsTierDir(root, tenant, e.Name(), tier)); err != nil {
 				return err
 			}

@@ -451,7 +451,7 @@ func sandboxLogsRelationSQL(tenantRoot string, opts logsCatalogOpts) (string, []
 	files = filterExistingLogFiles(files)
 	hasDuck := false
 	for _, f := range files {
-		if filepath.Ext(f.Path) == ".duckdb" {
+		if segformat.Payload(f.Path) == segformat.DuckDB {
 			hasDuck = true
 			break
 		}

@@ -11,13 +11,14 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/prism-utils/prism/internal/duckdbfile"
 	"github.com/prism-utils/prism/internal/store/layout"
 )
 
 const parquetMagic = "PAR1"
 
 // CopyAtomic copies src to dest on dest's filesystem: unique temp, full copy,
-// fsync, checksum, parquet-magic check for .parquet, then rename. The source
+// fsync, checksum, payload-magic check for .parquet/.duckdb, then rename. The source
 // is never removed here. A failure leaves dest unpublished (temp removed).
 func CopyAtomic(src, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
@@ -48,6 +49,12 @@ func CopyAtomic(src, dest string) error {
 	}
 	if filepath.Ext(dest) == ".parquet" {
 		if err := verifyParquetMagic(tmp); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
+	if filepath.Ext(dest) == ".duckdb" {
+		if err := verifyDuckDBMagic(tmp); err != nil {
 			_ = os.Remove(tmp)
 			return err
 		}
@@ -128,6 +135,23 @@ func verifyParquetMagic(path string) error {
 	}
 	if string(tail) != parquetMagic {
 		return fmt.Errorf("promote: parquet footer magic")
+	}
+	return nil
+}
+
+func verifyDuckDBMagic(path string) error {
+	f, err := os.Open(path) //nolint:gosec // G304: path is the promote temp
+	if err != nil {
+		return fmt.Errorf("promote: duckdb open: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, duckdbfile.MagicPeek)
+	n, err := io.ReadFull(f, head)
+	if err != nil && n < duckdbfile.MagicPeek {
+		return fmt.Errorf("promote: duckdb header: %w", err)
+	}
+	if !duckdbfile.HasMagic(head[:n]) {
+		return fmt.Errorf("promote: duckdb magic")
 	}
 	return nil
 }

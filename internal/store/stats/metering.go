@@ -14,25 +14,10 @@ type meteringFileData struct {
 	CompactionCPUSeconds float64 `json:"compactionCpuSeconds"`
 }
 
-// TenantOnDiskBytes sums tiers/, rollups/, hot/, and engine.duckdb for a tenant.
+// TenantOnDiskBytes sums every regular file under the tenant root, including
+// landing logs, temps, sidecars, and leftover metrics-raw.
 func TenantOnDiskBytes(dataDir, tenant string) (int64, error) {
-	root := filepath.Join(dataDir, tenant)
-	var total int64
-	for _, rel := range []string{"tiers", "rollups", "hot"} {
-		n, err := dirBytes(filepath.Join(root, rel))
-		if err != nil {
-			return 0, err
-		}
-		total += n
-	}
-	for _, name := range []string{"engine.duckdb", "engine.duckdb.wal"} {
-		n, err := fileBytesIfExists(filepath.Join(root, name))
-		if err != nil {
-			return 0, err
-		}
-		total += n
-	}
-	return total, nil
+	return dirBytes(filepath.Join(dataDir, tenant))
 }
 
 // TenantOnDiskBytesRoots adds cold-root tenant bytes when coldDir is set.
@@ -44,16 +29,11 @@ func TenantOnDiskBytesRoots(dataDir, coldDir, tenant string) (int64, error) {
 	if strings.TrimSpace(coldDir) == "" {
 		return hot, nil
 	}
-	root := filepath.Join(coldDir, tenant)
-	var extra int64
-	for _, rel := range []string{"tiers", "logs"} {
-		n, err := dirBytes(filepath.Join(root, rel))
-		if err != nil {
-			return 0, err
-		}
-		extra += n
+	cold, err := dirBytes(filepath.Join(coldDir, tenant))
+	if err != nil {
+		return 0, err
 	}
-	return hot + extra, nil
+	return hot + cold, nil
 }
 
 // CompactionCPUSeconds returns cumulative compaction CPU-seconds for a tenant.
@@ -122,9 +102,6 @@ func dirBytes(dir string) (int64, error) {
 		if d.IsDir() {
 			return nil
 		}
-		if strings.HasPrefix(d.Name(), ".") {
-			return nil
-		}
 		info, err := d.Info()
 		if err != nil {
 			return err
@@ -139,15 +116,4 @@ func dirBytes(dir string) (int64, error) {
 		return 0, err
 	}
 	return total, nil
-}
-
-func fileBytesIfExists(path string) (int64, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return info.Size(), nil
 }
