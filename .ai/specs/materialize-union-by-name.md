@@ -1,6 +1,6 @@
 # Spec: materialize merge_input UNION ALL BY NAME
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/materialize-union-by-name-1cdb`
 - **Owner phase:** developer
@@ -33,10 +33,10 @@ ticks fail with Binder Error and skip dest materializations. Use
 
 ## 5. Acceptance checklist
 
-- [ ] `merge_input` joins with `UNION ALL BY NAME`.
-- [ ] Two duckdb sources with different column counts bind and count as 2.
-- [ ] Tests written first (a `test:` commit precedes implementation)
-- [ ] `make lint test` green locally
+- [x] `merge_input` joins with `UNION ALL BY NAME`.
+- [x] Two duckdb sources with different column counts bind and count as 2.
+- [x] Tests written first (a `test:` commit precedes implementation)
+- [x] `make lint test` green locally
 
 ## 6. Mandatory review gates
 

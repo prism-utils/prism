@@ -657,7 +657,7 @@ belong in merge-time materializations below.
 ### Merge-time materializations (`internal/store/materialize`)
 
 When a merge dest is durable, the writer optionally runs named read-only DuckDB
-SQL against `merge_output` (the dest) and `merge_input` (UNION ALL of sources)
+SQL against `merge_output` (the dest) and `merge_input` (UNION ALL BY NAME of sources)
 and writes:
 
 ```

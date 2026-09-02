@@ -189,7 +189,7 @@ func (b *builder) inputViewSQL(ctx context.Context, paths []string, plane Plane)
 	if len(parts) == 0 {
 		return "SELECT * FROM merge_output WHERE 1=0", nil
 	}
-	return strings.Join(parts, " UNION ALL "), nil
+	return strings.Join(parts, " UNION ALL BY NAME "), nil
 }
 
 func (b *builder) writeItem(ctx context.Context, cfg *RunConfig, item Item) error {
