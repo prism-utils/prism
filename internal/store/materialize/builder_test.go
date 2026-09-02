@@ -296,6 +296,42 @@ func TestRunDuckDBSourceIncludedInMergeInput(t *testing.T) {
 	}
 }
 
+func TestRunDuckDBSourcesDifferentColumnsUnionByName(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := "user-mat00001-apps"
+	dest := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L1", "333-cccccccc.duckdb")
+	narrow := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L0", "111-aaaaaaaa.duckdb")
+	wide := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L0", "222-bbbbbbbb.duckdb")
+	writeLogsDuckDB(t, dest)
+	writeLogsDuckDB(t, narrow)
+	writeLogsDuckDBWide(t, wide)
+	cfg := RunConfig{
+		DataDir:     dataDir,
+		Tenant:      tenant,
+		DestPath:    dest,
+		SourcePaths: []string{narrow, wide},
+		DestTier:    1,
+		Plane:       PlaneLogs,
+		RunJobs:     true,
+		Now:         time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC),
+		Items:       []Item{{Name: "frominput", SQL: "SELECT COUNT(*)::INTEGER AS x FROM merge_input", On: "logs"}},
+	}
+	if err := Run(context.Background(), &cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	files, err := LiveFiles(layout.MaterializationDir(dataDir, tenant, "frominput"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("live files = %d, want 1", len(files))
+	}
+	n := parquetInt(t, files[0], "x")
+	if n != 2 {
+		t.Fatalf("merge_input count = %d, want 2 (UNION ALL BY NAME across column counts)", n)
+	}
+}
+
 func TestRunUnusableDestDoesNotReadParquet(t *testing.T) {
 	dataDir := t.TempDir()
 	tenant := "user-mat00001-apps"
@@ -407,5 +443,29 @@ func writeLogsDuckDB(t *testing.T, path string) {
 	`, slash, segformat.DefaultStorageVersion, segformat.LogsTable)
 	if _, err := db.ExecContext(context.Background(), q); err != nil {
 		t.Fatalf("write logs duckdb: %v", err)
+	}
+}
+
+func writeLogsDuckDBWide(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	slash := filepath.ToSlash(path)
+	q := fmt.Sprintf(`
+		ATTACH '%s' AS exp (STORAGE_VERSION '%s');
+		CREATE TABLE exp.%s AS SELECT 'hello' AS message, 'raw' AS format, 1::INTEGER AS extra;
+		CHECKPOINT exp;
+		DETACH exp;
+	`, slash, segformat.DefaultStorageVersion, segformat.LogsTable)
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("write logs duckdb wide: %v", err)
 	}
 }
