@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/segformat"
 	"github.com/prism-utils/prism/internal/store/testparquet"
 )
 
@@ -225,6 +227,103 @@ func TestRunSkipsLogsItemOnMetricsPlane(t *testing.T) {
 	}
 }
 
+func TestRunDuckDBLogsDestBindsMergeOutput(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := "user-mat00001-apps"
+	dest := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L1", "111-aaaaaaaa.duckdb")
+	writeLogsDuckDB(t, dest)
+	cfg := RunConfig{
+		DataDir:  dataDir,
+		Tenant:   tenant,
+		DestPath: dest,
+		DestTier: 1,
+		Plane:    PlaneLogs,
+		RunJobs:  true,
+		Now:      time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC),
+		Items:    []Item{{Name: "logonly", SQL: "SELECT 1 AS x FROM merge_output", On: "logs"}},
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	}
+	if err := Run(context.Background(), &cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	files, err := LiveFiles(layout.MaterializationDir(dataDir, tenant, "logonly"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("live files = %d, want 1", len(files))
+	}
+	if !strings.HasSuffix(files[0], ".parquet") {
+		t.Fatalf("mat file %q want .parquet", files[0])
+	}
+	cols := parquetColumns(t, files[0])
+	if len(cols) != 1 || cols[0] != "x" {
+		t.Fatalf("columns = %v, want [x]", cols)
+	}
+}
+
+func TestRunDuckDBSourceIncludedInMergeInput(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := "user-mat00001-apps"
+	dest := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L1", "222-bbbbbbbb.duckdb")
+	src := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L0", "111-aaaaaaaa.duckdb")
+	writeLogsDuckDB(t, dest)
+	writeLogsDuckDB(t, src)
+	cfg := RunConfig{
+		DataDir:     dataDir,
+		Tenant:      tenant,
+		DestPath:    dest,
+		SourcePaths: []string{src},
+		DestTier:    1,
+		Plane:       PlaneLogs,
+		RunJobs:     true,
+		Now:         time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC),
+		Items:       []Item{{Name: "frominput", SQL: "SELECT COUNT(*)::INTEGER AS x FROM merge_input", On: "logs"}},
+	}
+	if err := Run(context.Background(), &cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	files, err := LiveFiles(layout.MaterializationDir(dataDir, tenant, "frominput"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("live files = %d, want 1", len(files))
+	}
+	n := parquetInt(t, files[0], "x")
+	if n != 1 {
+		t.Fatalf("merge_input count = %d, want 1 (duckdb source must not be skipped)", n)
+	}
+}
+
+func TestRunUnusableDestDoesNotReadParquet(t *testing.T) {
+	dataDir := t.TempDir()
+	tenant := "user-mat00001-apps"
+	dest := filepath.Join(dataDir, tenant, "logs", "logs-raw", "tiers", "L0", "333-cccccccc.duckdb")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dest, bytes.Repeat([]byte{0}, 64), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := Run(context.Background(), &RunConfig{
+		DataDir:  dataDir,
+		Tenant:   tenant,
+		DestPath: dest,
+		DestTier: 0,
+		Plane:    PlaneLogs,
+		RunJobs:  true,
+		Now:      time.Now().UTC(),
+		Items:    []Item{{Name: "logonly", SQL: "SELECT 1 AS x FROM merge_output", On: "logs"}},
+	})
+	if err == nil {
+		t.Fatal("want bind error for unusable dest")
+	}
+	if strings.Contains(err.Error(), "read_parquet") {
+		t.Fatalf("unusable dest must not call read_parquet: %v", err)
+	}
+}
+
 func TestViewSQLOmitsTierPaths(t *testing.T) {
 	t.Parallel()
 	sql := ViewSQL([]string{"/data/t/materializations/foo/1.parquet"})
@@ -269,3 +368,45 @@ func parquetColumns(t *testing.T, path string) []string {
 	}
 	return cols
 }
+
+func parquetInt(t *testing.T, path, col string) int {
+	t.Helper()
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	var n int
+	q := "SELECT " + col + " FROM read_parquet('" + filepath.ToSlash(path) + "')"
+	if err := db.QueryRowContext(context.Background(), q).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func writeLogsDuckDB(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	slash := filepath.ToSlash(path)
+	q := fmt.Sprintf(`
+		ATTACH '%s' AS exp (STORAGE_VERSION '%s');
+		CREATE TABLE exp.%s AS SELECT 'hello' AS message, 'raw' AS format;
+		CHECKPOINT exp;
+		DETACH exp;
+	`, slash, segformat.DefaultStorageVersion, segformat.LogsTable)
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("write logs duckdb: %v", err)
+	}
+}
+
