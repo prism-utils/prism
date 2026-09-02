@@ -225,9 +225,9 @@ func (p *Planner) logRefreshDue(now time.Time, live []Segment) bool {
 }
 
 // findLogTierPacks packs the lowest tier with enough unsealed same-type
-// segments toward MaxSegmentBytes. Unlike metrics findMergeForTier, it does
-// not require Lucene time-adjacency — log L0 files from merge ticks are often
-// minutes apart (point windows), so adjacency would never form a pack.
+// segments toward MaxSegmentBytes. It does not require time-adjacency —
+// log L0 files from merge ticks are often minutes apart (point windows),
+// so adjacency would never form a pack.
 func (p *Planner) findLogTierPacks(now time.Time, tiers []Segment) []LogMergeAction {
 	byTier := map[int][]Segment{}
 	for _, s := range tiers {

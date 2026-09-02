@@ -1,6 +1,6 @@
 # Spec: Admin logs must-fix (same-type merge, dual-format query, isolation, L0 cold, full billing)
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/admin-logs-must-fix-1cdb`
 - **Owner phase:** developer
@@ -62,6 +62,4 @@ Prod admin (`user-fknjdouh-apps`) holds ~57 GiB of log segments on hot SSD, Graf
 
 ## 7. Reviewer notes
 
-CHANGES_REQUESTED. Test-first holds (`07a28bf` test(store) before `3f61887` fix(store)). `make lint test` green (0 lint issues; `go test -race -tags duckdb_arrow ./...` ok). Forced uncached re-run of changed packages green. `make store-integration` green. Docker was available; compose-backed `make full-tests` (loki/format-matrix/compact e2e) was not re-run — `make store-integration` covers the same integration packages without compose.
-
-Gates 1–2 pass: same-type packs, dest-follows-duckdb-payload, query ATTACH+skip, isolation continue, aged L0 pack/promote, full-tree billing; tests cover mixed sources, fake DUCK skip, real duckdb-at-parquet, young vs aged L0, landing/temps/cold roots. Gates 3–4 fail as above.
+First pass: CHANGES_REQUESTED on Gates 3–4. Docs/comment follow-up is in the next commit (STORE.md/CONFIG.md dest-follows-payload + ATTACH-on-magic; `findLogTierPacks` comment no longer names another function). Re-review those two gates.

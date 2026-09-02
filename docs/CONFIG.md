@@ -788,7 +788,7 @@ see [`STORE.md`](STORE.md).
 | `FLUSH_TICK_SECONDS` | int (seconds) | `30` | Hot→L0 flush ticker interval. |
 | `HOT_SNAPSHOT_SECONDS` | int (seconds) | `15` | Hot snapshot export ticker interval. |
 | `HOT_SEGMENT_FORMAT` | string | `parquet` | On-disk format for the metrics hot snapshot (`hot/current.parquet` or `hot/current.duckdb`). Values: `parquet` \| `duckdb`. Invalid values fail startup. Live `engine.duckdb` is unchanged; this is the sandbox/replica export only. |
-| `MERGE_SEGMENT_FORMAT` | string | `parquet` | On-disk format for metrics flush→L0 and metrics/logs tier merges (`.parquet` or `.duckdb`). Values: `parquet` \| `duckdb`. Invalid values fail startup. |
+| `MERGE_SEGMENT_FORMAT` | string | `parquet` | On-disk format for metrics flush→L0 and parquet-source metrics/logs tier merges (`.parquet` or `.duckdb`). DuckDB-source packs stay `.duckdb` regardless of this value (same-type merge; dest extension follows payload magic). Values: `parquet` \| `duckdb`. Invalid values fail startup. |
 | `DUCKDB_STORAGE_VERSION` | string | `v1.0.0` | `STORAGE_VERSION` pin for newly created `.duckdb` hot/merge artifacts (must be readable by the bundled go-duckdb). |
 | `HOT_WINDOW_MINUTES` | int (minutes) | `10` | Hot-window duration when `HOT_WINDOW_SECONDS` is unset. |
 | `HOT_WINDOW_SECONDS` | int (seconds) | _(unset)_ | Hot-window duration in seconds; overrides minutes when set to a positive integer. |
