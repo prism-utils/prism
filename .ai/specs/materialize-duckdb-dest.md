@@ -1,6 +1,6 @@
 # Spec: Materialize bindMergeViews for DuckDB merge dests
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/materialize-duckdb-dest-1cdb`
 - **Owner phase:** developer
@@ -42,12 +42,12 @@ Bind dest (and sources) by payload magic: ATTACH duckdb, `read_parquet` parquet.
 
 ## 5. Acceptance checklist
 
-- [ ] DuckDB dest → ATTACH READ_ONLY + `SELECT *` from the plane table;
+- [x] DuckDB dest → ATTACH READ_ONLY + `SELECT *` from the plane table;
       parquet dest still `read_parquet`.
-- [ ] DuckDB sources are ATTACHed into `merge_input`, not skipped.
-- [ ] Unusable dest payload does not call `read_parquet`.
-- [ ] Tests written first (a `test:` commit precedes implementation)
-- [ ] `make lint test` green locally
+- [x] DuckDB sources are ATTACHed into `merge_input`, not skipped.
+- [x] Unusable dest payload does not call `read_parquet`.
+- [x] Tests written first (a `test:` commit precedes implementation)
+- [x] `make lint test` green locally
 
 ## 6. Mandatory review gates
 
