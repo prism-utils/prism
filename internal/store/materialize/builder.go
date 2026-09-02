@@ -15,6 +15,7 @@ import (
 	duckdb "github.com/marcboeker/go-duckdb/v2"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/metrics"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 // RunConfig is one merge's materialization pass.
@@ -118,33 +119,77 @@ func (b *builder) bindMergeViews(ctx context.Context, cfg *RunConfig) error {
 	if cfg.DestPath == "" {
 		return fmt.Errorf("materialize: empty dest path")
 	}
-	//nolint:gosec // G201: dest path is a server-owned merge output.
-	outSQL := fmt.Sprintf("CREATE VIEW merge_output AS SELECT * FROM read_parquet(%s)", quotePath(cfg.DestPath))
-	if _, err := b.db.ExecContext(ctx, outSQL); err != nil {
+	if err := b.bindDestView(ctx, cfg.DestPath, cfg.Plane); err != nil {
 		return fmt.Errorf("materialize: merge_output: %w", err)
 	}
-	inSQL := inputViewSQL(cfg.SourcePaths)
+	inSQL, err := b.inputViewSQL(ctx, cfg.SourcePaths, cfg.Plane)
+	if err != nil {
+		return fmt.Errorf("materialize: merge_input: %w", err)
+	}
 	if _, err := b.db.ExecContext(ctx, "CREATE VIEW merge_input AS "+inSQL); err != nil {
 		return fmt.Errorf("materialize: merge_input: %w", err)
 	}
 	return nil
 }
 
-func inputViewSQL(paths []string) string {
+func duckdbRelation(path string, plane Plane) string {
+	if plane == PlaneLogs {
+		return segformat.LogsRelationForPath(path)
+	}
+	return segformat.MetricsTable
+}
+
+func (b *builder) bindDestView(ctx context.Context, dest string, plane Plane) error {
+	switch segformat.Payload(dest) {
+	case segformat.DuckDB:
+		const alias = "merge_dest"
+		//nolint:gosec // G201: dest path is a server-owned merge output.
+		attach := fmt.Sprintf("ATTACH %s AS %s (READ_ONLY)", quotePath(dest), alias)
+		if _, err := b.db.ExecContext(ctx, attach); err != nil {
+			return err
+		}
+		rel := duckdbRelation(dest, plane)
+		//nolint:gosec // G201: alias and relation are package constants, not user input.
+		q := fmt.Sprintf("CREATE VIEW merge_output AS SELECT * FROM %s.%s", alias, rel)
+		_, err := b.db.ExecContext(ctx, q)
+		return err
+	case segformat.Parquet:
+		//nolint:gosec // G201: dest path is a server-owned merge output.
+		q := fmt.Sprintf("CREATE VIEW merge_output AS SELECT * FROM read_parquet(%s)", quotePath(dest))
+		_, err := b.db.ExecContext(ctx, q)
+		return err
+	default:
+		return fmt.Errorf("unusable dest %s", filepath.Base(dest))
+	}
+}
+
+func (b *builder) inputViewSQL(ctx context.Context, paths []string, plane Plane) (string, error) {
 	if len(paths) == 0 {
-		return "SELECT * FROM merge_output WHERE 1=0"
+		return "SELECT * FROM merge_output WHERE 1=0", nil
 	}
 	parts := make([]string, 0, len(paths))
-	for _, p := range paths {
-		if strings.HasSuffix(p, ".duckdb") {
+	for i, p := range paths {
+		switch segformat.Payload(p) {
+		case segformat.Parquet:
+			parts = append(parts, fmt.Sprintf("SELECT * FROM read_parquet(%s)", quotePath(p)))
+		case segformat.DuckDB:
+			alias := fmt.Sprintf("merge_src_%d", i)
+			//nolint:gosec // G201: source path is a server-owned merge input.
+			attach := fmt.Sprintf("ATTACH %s AS %s (READ_ONLY)", quotePath(p), alias)
+			if _, err := b.db.ExecContext(ctx, attach); err != nil {
+				continue
+			}
+			rel := duckdbRelation(p, plane)
+			//nolint:gosec // G201: alias is merge_src_N; relation is a package constant.
+			parts = append(parts, fmt.Sprintf("SELECT * FROM %s.%s", alias, rel))
+		default:
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("SELECT * FROM read_parquet(%s)", quotePath(p)))
 	}
 	if len(parts) == 0 {
-		return "SELECT * FROM merge_output WHERE 1=0"
+		return "SELECT * FROM merge_output WHERE 1=0", nil
 	}
-	return strings.Join(parts, " UNION ALL ")
+	return strings.Join(parts, " UNION ALL "), nil
 }
 
 func (b *builder) writeItem(ctx context.Context, cfg *RunConfig, item Item) error {
