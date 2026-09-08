@@ -1,9 +1,9 @@
 # Spec: Ruler append-only alert_events (Grafana source of truth)
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `cursor/ruler-alert-events-e55a`
-- **Owner phase:** developer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** alerting — persist firing/resolved transitions for Grafana
 
 ## 1. Task
@@ -77,39 +77,31 @@ follow-up PR) will read that table. This prism PR does **not** change Grafana.
 
 ## 6. Mandatory review gates
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-  - `listAlertEventFiles` feeds `read_parquet` paths without `safeTenantParquetInRoots` (metrics/logs reject symlinks and paths outside tenant roots). Filter each listed file with that helper so `/sql` `alert_events` keeps the sandbox contract.
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-  - No test that a symlink under `<ns>/alerts/alert-events/` is omitted from `alert_events` (metrics has `TestSQLSymlinkParquetExcluded`). Add a cross-tenant link case: must not leak rows and must not 5xx/400 the sandbox.
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
 - [x] **Gate 3 — Docs & comments match**
 - [x] **Gate 4 — Comments are atomic** (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
-  - SQL listing skips the tenant-root/symlink filter used by metrics and logs; same fix as gates 1–2.
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-**Verdict: `CHANGES_REQUESTED`** — gates 1, 2, and the full REVIEW.md checklist fail on `/sql` listing safety. Gates 3 and 4 hold. Do not merge.
+**Second pass — verdict `ALL_OK`.** First pass (`ea22786`) requested `safeTenantParquetInRoots` on `listAlertEventFiles` plus a cross-tenant symlink test. `945c817` landed both. Re-checked; gates 1–4 and the REVIEW.md checklist now hold.
 
-### Checks re-run by the reviewer
+### Checks re-run
 
-- History: `848fcb6` `test(store,alert):` before `68745eb` `feat(store,alert):` (then lint fix `84f7c3f`, atomic-comment `87c7ca9`). TDD contract holds.
-- `make lint` → `0 issues`.
-- `make test` (`go test -race -tags duckdb_arrow ./...`) → all packages `ok`.
-- In-process `test/e2e` `TestAlert` → `ok`.
-- `make full-tests` did **not** print `full-tests: OK`: integration compose failed to bind `:18080` (`kubectl` port-forward on this host) and docker e2e (`TestFormatMatrixHotMergeCombos`, `TestPromQLEndToEnd`) failed with `network deploy_default not found`. Those are environment collisions, not product failures from this diff. Not a gate-1/2 blocker.
+- TDD: `848fcb6` `test(store,alert):` (tests only) before `68745eb` `feat(store,alert):`. Follow-ups: lint `84f7c3f`, atomic comment `87c7ca9`, CHANGES_REQUESTED `ea22786`, listing fix `945c817`.
+- `make lint` → `0 issues` (golangci-lint v2.12.0).
+- `make test` → `go test -race -tags duckdb_arrow ./...` all `ok`.
+- `go test -race -tags duckdb_arrow ./internal/store/query/ -run TestSQLAlertEvents` (incl. `TestSQLAlertEventsSymlinkParquetExcluded`) → `ok`.
+- `make store-integration` → `ok`.
+- `go test -timeout 45m -tags e2e,duckdb_arrow ./test/e2e/...` → `ok` (348.628s) after tearing down leftover compose. An earlier concurrent e2e run collided on `deploy-node-exporter-1` / `:18080`; not a product defect.
+- `CGO_ENABLED=0 go build ./cmd/prism-alert` → pass. `go.mod`/`go.sum` tidy — no diff.
 
-### What holds
+### REVIEW.md (pass 2)
 
-- Scope is one slice: ingest `alert-events`, land under `<tenant>/alerts/`, `/sql` `alert_events` stub + rows, ruler persist on pending→firing / firing→resolved only, fail-open vs webhook.
-- Tests describe the behavior (empty 204, unknown tenant/artifact 404, hot-only independent, no logs pollution, no row on resend, persist with nil webhook sink, pending drop, encode round-trip, client fail-open).
-- Docs (`ALERTING.md`, `STORE.md`, `CONFIG.md` `ALLOWED_ARTIFACTS`, `DESIGN.md` §15) match the delivered code. No new env. Comments are atomic after `87c7ca9`.
-- No new deps; `internal/alert/events` is not a pipeline component (Factory N/A). slog, wrapped errors, no panics in library code.
+- Scope is one slice: ingest `alert-events`, land under `<tenant>/alerts/`, `/sql` `alert_events`, ruler persist on pending→firing / firing→resolved only, fail-open vs webhook. Grafana out of scope.
+- Tests describe the behavior (empty 204, unknown tenant/artifact 404, hot-only independent, no logs pollution, no row on resend, persist with nil webhook sink, pending drop, encode round-trip, client fail-open, symlink exclusion).
+- Conventional commits; no `--no-verify`. `internal/alert/events` is not a pipeline Factory (N/A). No new env; CONFIG.md only documents `alert-events` on existing `ALLOWED_ARTIFACTS`.
+- Listing now uses `safeTenantParquetInRoots` (same helper as metrics/logs). Docs match. Comments atomic.
 
-### The blocking item
-
-`internal/store/query/sql_alert_events.go` `listAlertEventFiles` does a bare `ReadDir` of `<root>/alerts/alert-events/*.parquet` and passes those paths into `UNION ALL read_parquet(...)`. Metrics and logs listing run every path through `safeTenantParquetInRoots`, which skips symlinks and anything outside allowed tenant roots (`TestSQLSymlinkParquetExcluded`). A symlink `evil.parquet` → another tenant's parquet under this new plane would be opened. Fix: filter with `safeTenantParquetInRoots` (using the same `AllowedTenantRoots` already computed) and add a test that plants a cross-tenant symlink under `alerts/alert-events/` and asserts `alert_events` does not include those rows (and `/sql` stays 200).
-
-### Non-blocking
-
-- `keep_firing_for`: persist is correctly after the keep-firing window (resolvedAt set only then); a table case would pin it but is not required to clear this review.
-- `EventSink` POSTs synchronously inside `evalRule` (10s client timeout, fail-open). Rare vs eval cadence; do not expand scope.
+Parent opens/merges the PR. Do not delete the worktree until parent confirms merge.
