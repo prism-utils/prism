@@ -45,6 +45,10 @@ type Registry struct {
 	promoteBytes     prometheus.Counter
 	promoteTmp       prometheus.Gauge
 
+	catalogLookup  *prometheus.CounterVec
+	catalogRebuild *prometheus.CounterVec
+	duckdbOpens    *prometheus.CounterVec
+
 	tenants *tenantLabeller
 
 	observe     bool
@@ -75,6 +79,7 @@ func New(cfg Config) *Registry {
 	r.buildQuery()
 	r.buildQueue()
 	r.buildLifecycle()
+	r.buildCatalog()
 
 	collectorsToRegister := []prometheus.Collector{
 		collectors.NewGoCollector(),
@@ -85,6 +90,7 @@ func New(cfg Config) *Registry {
 		r.ticks, r.tickErrors, r.tickDuration, r.tickSuccess,
 		r.tierSegments, r.landingFiles, r.landingLimit, r.compactionCPU,
 		r.promoteAttempts, r.promoteSuccesses, r.promoteRetries, r.promoteBytes, r.promoteTmp,
+		r.catalogLookup, r.catalogRebuild, r.duckdbOpens,
 	}
 	if cfg.Observe {
 		r.buildObserve()

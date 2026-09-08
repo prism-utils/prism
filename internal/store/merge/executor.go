@@ -147,7 +147,23 @@ func (x *Executor) ExecuteMerge(action MergeAction, now time.Time) (Segment, err
 	if err := retireSources(pack, now, x.cfg.DeleteGrace); err != nil {
 		return Segment{}, err
 	}
-	if err := metricsmeta.SyncAfterChangeRoots(context.Background(), x.cfg.DataDir, x.cfg.ColdDir, x.cfg.Tenant); err != nil {
+	fi, err := os.Stat(final)
+	if err != nil {
+		return Segment{}, err
+	}
+	destRel := tierRel(destTier, filepath.Base(final))
+	upsert := []metricsmeta.ManifestFile{{
+		Path:    destRel,
+		MinTsNs: seg.MinTs.UnixNano(),
+		MaxTsNs: seg.MaxTs.UnixNano(),
+		Bytes:   seg.Bytes,
+		MtimeNs: fi.ModTime().UnixNano(),
+	}}
+	drop := make([]string, 0, len(pack))
+	for _, s := range pack {
+		drop = append(drop, tierRel(s.Tier, filepath.Base(s.Path)))
+	}
+	if err := metricsmeta.ApplyDelta(context.Background(), x.cfg.DataDir, x.cfg.ColdDir, x.cfg.Tenant, upsert, drop); err != nil {
 		return Segment{}, fmt.Errorf("merge: metrics catalog: %w", err)
 	}
 	return seg, nil
@@ -351,35 +367,18 @@ func isSegmentFile(name string) bool {
 
 // ScanTier lists segments in a tier directory with stats.
 func ScanTier(dataDir, tenant string, tier int, caps DuckDBCaps) ([]Segment, error) {
-	dir := layout.TierDir(dataDir, tenant, tier)
-	entries, err := os.ReadDir(dir)
+	cat, err := metricsmeta.Load(context.Background(), dataDir, "", tenant)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	retired := layout.CompactedSet(entries)
-	skipped := layout.MergeSkipSet(entries)
-	var out []Segment
-	for _, e := range entries {
-		if e.IsDir() || !isSegmentFile(e.Name()) {
-			continue
-		}
-		if _, held := retired[e.Name()]; held {
-			continue
-		}
-		if _, skip := skipped[e.Name()]; skip {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		seg, err := StatSegment(path, tier, caps)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, seg)
+	segs, _, err := scanTierDir(layout.TierDir(dataDir, tenant, tier), tier, caps, cat)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	if err := cat.Persist(); err != nil {
+		return nil, err
+	}
+	return segs, nil
 }
 
 // ScanAllTiers returns segments from L0..Lmax present on disk.
@@ -389,23 +388,5 @@ func ScanAllTiers(dataDir, tenant string, maxTier int, caps DuckDBCaps) ([]Segme
 
 // ScanAllTiersRoots unions hot and cold tier listings. coldDir is skipped when empty.
 func ScanAllTiersRoots(dataDir, coldDir, tenant string, maxTier int, caps DuckDBCaps) ([]Segment, error) {
-	var all []Segment
-	for tier := 0; tier <= maxTier; tier++ {
-		segs, err := ScanTier(dataDir, tenant, tier, caps)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, segs...)
-	}
-	if coldDir == "" {
-		return all, nil
-	}
-	for tier := 0; tier <= maxTier; tier++ {
-		segs, err := ScanTier(coldDir, tenant, tier, caps)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, segs...)
-	}
-	return all, nil
+	return persistMetricsScan(dataDir, coldDir, tenant, maxTier, caps)
 }

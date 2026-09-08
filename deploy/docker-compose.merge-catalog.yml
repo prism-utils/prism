@@ -1,0 +1,32 @@
+# Merge catalog: idle ticks hit the JSON catalog; compact still packs L0→L1.
+# Bind-mount host data/cold dirs so tests can seed parquet and corrupt _manifest.json.
+services:
+  prism-store:
+    build:
+      context: ..
+      dockerfile: Dockerfile.store.build
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9090"
+      DATA_DIR: "/data"
+      COLD_DATA_DIR: "/cold"
+      ALLOWED_ARTIFACTS: "metrics-raw"
+      AUTH_MODE: "none"
+      RUN_JOBS: "true"
+      METRICS_ENABLED: "true"
+      MERGE_TICK_SECONDS: "2"
+      FLUSH_TICK_SECONDS: "30"
+      HOT_SNAPSHOT_SECONDS: "30"
+      HOT_WINDOW_SECONDS: "30"
+      SEGMENTS_PER_TIER: "2"
+      COMPACT_AGE_CATCHUP: "false"
+    user: "${CATALOG_UID:-472}:${CATALOG_GID:-472}"
+    volumes:
+      - ${CATALOG_DATA_DIR}:/data
+      - ${CATALOG_COLD_DIR}:/cold
+    ports:
+      - "19095:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 40

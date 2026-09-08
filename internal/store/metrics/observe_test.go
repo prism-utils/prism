@@ -30,7 +30,7 @@ func observeNames() []string {
 		"prism_store_cgroup_memory_bytes",
 		"prism_store_gomemlimit_bytes",
 		"prism_store_duckdb_memory_limit_bytes",
-		"prism_store_duckdb_open",
+		"# TYPE prism_store_duckdb_open gauge",
 		"prism_store_job_rss_bytes",
 		"prism_store_job_cgroup_current_bytes",
 		"prism_store_job_heap_alloc_bytes",
@@ -151,7 +151,7 @@ func TestDuckDBOpenIsNoopWhenObserveOff(t *testing.T) {
 	t.Cleanup(metrics.ResetObserveForTest)
 	reg := metrics.New(enabledConfig())
 	metrics.DuckDBOpen(metrics.RoleEngine)
-	assertAbsent(t, scrape(t, reg), "prism_store_duckdb_open")
+	assertAbsent(t, scrape(t, reg), "# TYPE prism_store_duckdb_open gauge")
 }
 
 func TestUnsetMemoryLimitsExportZero(t *testing.T) {

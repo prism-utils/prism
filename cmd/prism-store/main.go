@@ -649,6 +649,7 @@ var startBackgroundLoop backgroundLoopStartFunc = defaultBackgroundLoopStart
 func runStore(ctx context.Context, cfg *serverConfig, logger *slog.Logger) error {
 	cfg.metricsReg = metrics.New(cfg.metrics)
 	cfg.metricsReg.SetLogger(logger)
+	metrics.Bind(cfg.metricsReg)
 	rbac, err := buildRBACStack(ctx, cfg.rbac, logger)
 	if err != nil {
 		return err

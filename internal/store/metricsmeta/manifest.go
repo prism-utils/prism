@@ -30,6 +30,7 @@ type ManifestFile struct {
 	MinTsNs int64  `json:"min_ts_ns"`
 	MaxTsNs int64  `json:"max_ts_ns"`
 	Bytes   int64  `json:"bytes"`
+	MtimeNs int64  `json:"mtime_ns"`
 }
 
 // Manifest is the tenant-level open-set catalog written on flush/merge/retention.
@@ -148,7 +149,7 @@ func RebuildManifest(ctx context.Context, dataDir, tenant string, version uint64
 	return RebuildManifestRoots(ctx, dataDir, "", tenant, version)
 }
 
-// RebuildManifestRoots also lists compacted L1+ that already live on coldDir.
+// RebuildManifestRoots also lists live cold-root segments, including L0.
 func RebuildManifestRoots(ctx context.Context, dataDir, coldDir, tenant string, version uint64) (Manifest, error) {
 	tenantRoot := filepath.Join(dataDir, tenant)
 	var files []ManifestFile
@@ -174,6 +175,7 @@ func RebuildManifestRoots(ctx context.Context, dataDir, coldDir, tenant string, 
 			MinTsNs: minNs,
 			MaxTsNs: maxNs,
 			Bytes:   fi.Size(),
+			MtimeNs: fi.ModTime().UnixNano(),
 		})
 		return nil
 	}
@@ -214,7 +216,7 @@ func RebuildManifestRoots(ctx context.Context, dataDir, coldDir, tenant string, 
 		return Manifest{}, err
 	}
 	if layout.ColdEnabled(coldDir) {
-		if err := scanTiers(coldDir, 1); err != nil {
+		if err := scanTiers(coldDir, 0); err != nil {
 			return Manifest{}, err
 		}
 	}
@@ -239,18 +241,7 @@ func SyncAfterChange(ctx context.Context, dataDir, tenant string) error {
 	return SyncAfterChangeRoots(ctx, dataDir, "", tenant)
 }
 
-// SyncAfterChangeRoots rebuilds the catalog across hot and cold roots.
+// SyncAfterChangeRoots persists catalog deltas across hot and cold roots.
 func SyncAfterChangeRoots(ctx context.Context, dataDir, coldDir, tenant string) error {
-	if err := Bump(dataDir, tenant); err != nil {
-		return err
-	}
-	gen, err := ReadGeneration(dataDir, tenant)
-	if err != nil {
-		return err
-	}
-	m, err := RebuildManifestRoots(ctx, dataDir, coldDir, tenant, gen)
-	if err != nil {
-		return err
-	}
-	return WriteManifest(dataDir, tenant, m)
+	return ApplyDelta(ctx, dataDir, coldDir, tenant, nil, nil)
 }

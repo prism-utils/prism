@@ -41,7 +41,7 @@ func TestMemoryObserveOnExportsSeriesAfterIngest(t *testing.T) {
 	for _, name := range []string{
 		"prism_store_gomemlimit_bytes",
 		"prism_store_duckdb_memory_limit_bytes",
-		"prism_store_duckdb_open",
+		"# TYPE prism_store_duckdb_open gauge",
 	} {
 		if !strings.Contains(body, name) {
 			t.Fatalf("observe-on scrape missing %s:\n%s", name, body)
@@ -66,7 +66,7 @@ func TestMemoryObserveOffOmitsNewFamilies(t *testing.T) {
 		"prism_store_cgroup_memory_bytes",
 		"prism_store_gomemlimit_bytes",
 		"prism_store_duckdb_memory_limit_bytes",
-		"prism_store_duckdb_open",
+		"# TYPE prism_store_duckdb_open gauge",
 		"prism_store_job_rss_bytes",
 		"prism_store_job_cgroup_current_bytes",
 		"prism_store_job_heap_alloc_bytes",
