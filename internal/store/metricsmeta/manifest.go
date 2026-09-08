@@ -149,7 +149,7 @@ func RebuildManifest(ctx context.Context, dataDir, tenant string, version uint64
 	return RebuildManifestRoots(ctx, dataDir, "", tenant, version)
 }
 
-// RebuildManifestRoots also lists compacted L1+ that already live on coldDir.
+// RebuildManifestRoots also lists live cold-root segments, including L0.
 func RebuildManifestRoots(ctx context.Context, dataDir, coldDir, tenant string, version uint64) (Manifest, error) {
 	tenantRoot := filepath.Join(dataDir, tenant)
 	var files []ManifestFile

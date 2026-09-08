@@ -6,7 +6,7 @@
   homelab-gitops#1229 (pin + Argo + prod verify).
 -->
 
-Status: READY
+Status: IN_REVIEW
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/merge-catalog-cache-1cdb`
@@ -71,20 +71,20 @@ Ship: tests-first PR → CI → squash-merge → tag `v1.0.20` (or next) → git
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] `ManifestFile` includes `mtime_ns`; query catalog readers still work
-- [ ] `ScanAllTiersRoots` / `ScanLogTiersRoots` hit catalog on matching path+size+mtime (no DuckDB)
-- [ ] Miss (new file, size/mtime change) stats that file once, upserts, later hits
-- [ ] Vanished files are dropped from the catalog (promote/purge/retention)
-- [ ] Compact/flush/promote persist incrementally — **no** `RebuildManifestRoots` on those paths
-- [ ] Corrupt JSON: one full rebuild, ERROR log with `reason=corrupt`, `prism_store_catalog_rebuild_total` +1; next idle scan does not increment it
-- [ ] Missing manifest: no rebuild counter; files filled via misses
-- [ ] Cold L0 files are in the catalog and in the merge scan set
-- [ ] Unsealed cold files still planned when Lucene/catch-up/daily would; sealed files still skipped
-- [ ] `prism_store_catalog_lookup_total{plane,result}` increments
-- [ ] `docs/STORE.md` + `docs/TESTING.md` describe behavior and `make merge-catalog-e2e`
-- [ ] Compose e2e (#173): idle ticks are catalog hits; pack still creates L1; corrupt JSON rebuilds once and is logged
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` including merge-catalog compose)
+- [x] `ManifestFile` includes `mtime_ns`; query catalog readers still work
+- [x] `ScanAllTiersRoots` / `ScanLogTiersRoots` hit catalog on matching path+size+mtime (no DuckDB)
+- [x] Miss (new file, size/mtime change) stats that file once, upserts, later hits
+- [x] Vanished files are dropped from the catalog (promote/purge/retention)
+- [x] Compact/flush/promote persist incrementally — **no** `RebuildManifestRoots` on those paths
+- [x] Corrupt JSON: one full rebuild, ERROR log with `reason=corrupt`, `prism_store_catalog_rebuild_total` +1; next idle scan does not increment it
+- [x] Missing manifest: no rebuild counter; files filled via misses
+- [x] Cold L0 files are in the catalog and in the merge scan set
+- [x] Unsealed cold files still planned when Lucene/catch-up/daily would; sealed files still skipped
+- [x] `prism_store_catalog_lookup_total{plane,result}` increments
+- [x] `docs/STORE.md` + `docs/TESTING.md` describe behavior and `make merge-catalog-e2e`
+- [x] Compose e2e (#173): idle ticks are catalog hits; pack still creates L1; corrupt JSON rebuilds once and is logged
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1
+- [x] `make lint test` green locally (+ `make full-tests` including merge-catalog compose)
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 

@@ -94,7 +94,7 @@ func RebuildManifest(dataDir, tenant, artifact string, version uint64) (Manifest
 	return RebuildManifestRoots(dataDir, "", tenant, artifact, version)
 }
 
-// RebuildManifestRoots also lists log L1+ files that already live on coldDir.
+// RebuildManifestRoots also lists live cold-root log segments, including L0.
 func RebuildManifestRoots(dataDir, coldDir, tenant, artifact string, version uint64) (Manifest, error) {
 	artifactRoot := layout.LogsLandingDir(dataDir, tenant, artifact)
 	var files []ManifestFile
