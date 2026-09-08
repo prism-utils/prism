@@ -144,7 +144,7 @@ func Encode(alerts []notify.Alert) ([]byte, error) {
 		appendStr(lblB, labelsJSON(lbls))
 	}
 
-	rec := bldr.NewRecord()
+	rec := bldr.NewRecordBatch()
 	defer rec.Release()
 
 	var buf bytes.Buffer
@@ -166,7 +166,7 @@ func Encode(alerts []notify.Alert) ([]byte, error) {
 func colString(col *arrow.Chunked, i int) string {
 	off := i
 	for _, ch := range col.Chunks() {
-		n := int(ch.Len())
+		n := ch.Len()
 		if off < n {
 			if ch.IsNull(off) {
 				return ""
@@ -181,7 +181,7 @@ func colString(col *arrow.Chunked, i int) string {
 func colTS(col *arrow.Chunked, i int) time.Time {
 	off := i
 	for _, ch := range col.Chunks() {
-		n := int(ch.Len())
+		n := ch.Len()
 		if off < n {
 			if ch.IsNull(off) {
 				return time.Time{}

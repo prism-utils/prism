@@ -381,7 +381,8 @@ func WriteAlertEventsFile(t testing.TB, path string, rows []AlertEventRow) {
 	defer func() { _ = db.Close() }()
 
 	parts := make([]string, len(rows))
-	for i, r := range rows {
+	for i := range rows {
+		r := &rows[i]
 		ends := "CAST(NULL AS TIMESTAMP)"
 		if !r.EndsAt.IsZero() {
 			ends = fmt.Sprintf("CAST('%s' AS TIMESTAMP)", r.EndsAt.UTC().Format("2006-01-02 15:04:05.999999999"))
