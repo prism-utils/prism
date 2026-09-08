@@ -144,6 +144,55 @@ func TestSQLAlertEventsUnaffectedByHotOnly(t *testing.T) {
 	}
 }
 
+func TestSQLAlertEventsSymlinkParquetExcluded(t *testing.T) {
+	dataDir, eng := newLogsSQLFixture(t)
+	victim := "user-alerts-victim-a1"
+	leaker := "user-alerts-leaker-b2"
+	if err := os.MkdirAll(filepath.Join(dataDir, victim), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, leaker), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	fired := time.Date(2026, 9, 8, 15, 0, 0, 0, time.UTC)
+	landAlertEvents(t, eng, dataDir, leaker, []testparquet.AlertEventRow{{
+		Ts:          fired,
+		Fingerprint: "deadbeefcafebabe",
+		Alertname:   "SecretAlert",
+		Severity:    "critical",
+		Status:      "firing",
+		StartsAt:    fired,
+		Labels:      `{"alertname":"SecretAlert"}`,
+	}})
+	src, err := filepath.Glob(filepath.Join(dataDir, leaker, "alerts", "alert-events", "*.parquet"))
+	if err != nil || len(src) == 0 {
+		t.Fatalf("leaker parquet: %v files=%v", err, src)
+	}
+	linkDir := filepath.Join(dataDir, victim, "alerts", "alert-events")
+	if err := os.MkdirAll(linkDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(src[0], filepath.Join(linkDir, "evil.parquet")); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := testSQLServer(t, dataDir, nil, eng)
+	code, out := execSQL(t, srv, victim, "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM alert_events")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (sandbox must not 5xx/400 on a dangling cross-tenant link)", code)
+	}
+	if got := numericCell(t, out.Rows[0][0]); got != 0 {
+		t.Fatalf("victim alert_events count = %v, want 0 (symlink must not leak leaker rows)", got)
+	}
+	code, out = execSQL(t, srv, leaker, "SELECT CAST(COUNT(*) AS BIGINT) AS n FROM alert_events")
+	if code != http.StatusOK {
+		t.Fatalf("leaker status = %d, want 200", code)
+	}
+	if got := numericCell(t, out.Rows[0][0]); got != 1 {
+		t.Fatalf("leaker alert_events count = %v, want 1", got)
+	}
+}
+
 func TestSQLAlertEventsDoesNotAppearInLogs(t *testing.T) {
 	dataDir, eng := newLogsSQLFixture(t)
 	fired := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)

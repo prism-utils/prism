@@ -1,6 +1,6 @@
 # Spec: Ruler append-only alert_events (Grafana source of truth)
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/ruler-alert-events-e55a`
 - **Owner phase:** developer

@@ -74,7 +74,15 @@ func listAlertEventFiles(tenantRoot, coldDir string) ([]string, error) {
 			if !strings.HasSuffix(name, ".parquet") {
 				continue
 			}
-			out = append(out, filepath.Join(dir, name))
+			p := filepath.Join(dir, name)
+			ok, err := safeTenantParquetInRoots(roots, p)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			out = append(out, p)
 		}
 	}
 	sort.Strings(out)
