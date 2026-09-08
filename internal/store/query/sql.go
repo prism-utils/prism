@@ -34,6 +34,7 @@ const (
 	sandboxLogsRawView      = "logs_raw"
 	sandboxLogsTemplateView = "logs_template"
 	sandboxLogsSummaryView  = "logs_summary"
+	sandboxAlertEventsView  = "alert_events"
 	arrowStreamMediaType    = "application/vnd.apache.arrow.stream"
 	truncatedTrailer        = "X-Prism-Truncated"
 )
@@ -312,7 +313,7 @@ func prepareMetricsSandbox(ctx context.Context, tenantRoot string, opts *metrics
 	return conn, cleanup, nil
 }
 
-// prepareSandboxConn opens the /sql sandbox: metrics + logs views.
+// prepareSandboxConn opens the /sql sandbox: metrics + logs + alert_events views.
 func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpenOpts, limits sandboxLimits) (*sql.Conn, func(), error) {
 	if opts == nil {
 		opts = &metricsOpenOpts{}
@@ -349,6 +350,10 @@ func prepareSandboxConn(ctx context.Context, tenantRoot string, opts *metricsOpe
 		return nil, nil, wrapSandboxErr(err)
 	}
 	if err := bindLogsSandboxViews(ctx, conn, logFiles, catalogOpts); err != nil {
+		cleanup()
+		return nil, nil, wrapSandboxErr(err)
+	}
+	if err := bindAlertEventsView(ctx, conn, tenantRoot, limits.ColdDir); err != nil {
 		cleanup()
 		return nil, nil, wrapSandboxErr(err)
 	}
@@ -610,6 +615,22 @@ const emptyLogsViewSQL = `SELECT ` +
 	`CAST(NULL AS VARCHAR) AS format, ` +
 	`CAST(NULL AS VARCHAR) AS template, ` +
 	`CAST(NULL AS BIGINT) AS count ` +
+	`WHERE 1=0`
+
+// emptyAlertEventsViewSQL is the body of the sandbox `alert_events` view when a
+// tenant has no landed alert-events windows: zero rows with the guaranteed columns.
+const emptyAlertEventsViewSQL = `SELECT ` +
+	`CAST(NULL AS TIMESTAMP) AS ts, ` +
+	`CAST(NULL AS VARCHAR) AS fingerprint, ` +
+	`CAST(NULL AS VARCHAR) AS alertname, ` +
+	`CAST(NULL AS VARCHAR) AS severity, ` +
+	`CAST(NULL AS VARCHAR) AS status, ` +
+	`CAST(NULL AS VARCHAR) AS summary, ` +
+	`CAST(NULL AS VARCHAR) AS description, ` +
+	`CAST(NULL AS VARCHAR) AS recommendation, ` +
+	`CAST(NULL AS TIMESTAMP) AS starts_at, ` +
+	`CAST(NULL AS TIMESTAMP) AS ends_at, ` +
+	`CAST(NULL AS VARCHAR) AS labels ` +
 	`WHERE 1=0`
 
 const hotSnapshotRel = "hot/current.parquet"

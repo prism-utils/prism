@@ -184,6 +184,16 @@ func (s *FlightServer) doPutDuckDB(stream flight.FlightService_DoPutServer, firs
 		}
 		return stream.Send(&flight.PutResult{})
 	}
+	if isAlertArtifact(artifact) {
+		n, err := s.eng.LandAlertWindow(tenant, artifact, bytes.NewReader(body))
+		if err != nil {
+			return status.Errorf(codes.Internal, "ingest: land alert: %v", err)
+		}
+		if n > 0 {
+			s.log.Debug("flight landed alert window", "ns", tenant, "artifact", artifact, "bytes", n)
+		}
+		return stream.Send(&flight.PutResult{})
+	}
 	n, err := s.eng.IngestDuckDB(tenant, bytes.NewReader(body))
 	if err != nil {
 		if errors.Is(err, engine.ErrIncompatibleDuckDBStorage) {
@@ -246,6 +256,16 @@ func (s *FlightServer) doPutArrow(stream flight.FlightService_DoPutServer, first
 		}
 		if n > 0 {
 			s.log.Debug("flight landed log window", "ns", tenant, "artifact", artifact, "bytes", n)
+		}
+		return stream.Send(&flight.PutResult{})
+	}
+	if isAlertArtifact(artifact) {
+		n, err := s.eng.LandAlertWindow(tenant, artifact, bytes.NewReader(parquetBytes))
+		if err != nil {
+			return status.Errorf(codes.Internal, "ingest: land alert: %v", err)
+		}
+		if n > 0 {
+			s.log.Debug("flight landed alert window", "ns", tenant, "artifact", artifact, "bytes", n)
 		}
 		return stream.Send(&flight.PutResult{})
 	}

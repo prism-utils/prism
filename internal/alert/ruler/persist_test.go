@@ -110,31 +110,27 @@ groups:
 	q := &fakeQuery{}
 	q.set(oneSample("n1", 1), nil)
 	p := &persistSink{}
-	var sinkCalls int
-	failingSink := func(_ time.Time, _ []notify.Alert) {
-		sinkCalls++
-		// Fail-open: a webhook error must not prevent persist (persist already ran).
-	}
 	r, err := New(Config{
 		RulesDir:           dir,
 		EvaluationInterval: time.Second,
 		EventSink:          p.fn,
-	}, q.fn, failingSink, nil, nil)
+	}, q.fn, nil, nil, nil)
 	require.NoError(t, err)
 	ctx := context.Background()
 	base := time.Unix(3000, 0).UTC()
 
-	_, err = r.evalRule(ctx, r.rules[0], base)
+	toSend, err := r.evalRule(ctx, r.rules[0], base)
 	require.NoError(t, err)
-	require.Len(t, p.snapshot(), 1, "persist at ruler transition even if webhook path is a no-op")
-	assert.Equal(t, 1, sinkCalls)
+	require.Len(t, toSend, 1, "webhook batch is still produced")
+	require.Len(t, p.snapshot(), 1, "persist at ruler transition even when AlertSink is nil")
 
 	q.set(promql.Vector{}, nil)
-	_, err = r.evalRule(ctx, r.rules[0], base.Add(time.Second))
+	toSend, err = r.evalRule(ctx, r.rules[0], base.Add(time.Second))
 	require.NoError(t, err)
+	require.Len(t, toSend, 1)
+	require.True(t, toSend[0].Resolved)
 	require.Len(t, p.snapshot(), 2)
 	assert.True(t, p.snapshot()[1].Resolved)
-	assert.Equal(t, 2, sinkCalls)
 }
 
 func TestPersistNotOnPendingDrop(t *testing.T) {

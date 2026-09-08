@@ -800,14 +800,16 @@ config (`storage/remote` sigv4 → AWS/Azure/GCP SDKs, ~124 packages), bloating 
 binary that keeps no TSDB and talks to exactly one notifier over one webhook.
 The ruler is pure Go (`CGO_ENABLED=0`) like the agent.
 
-**Decision — package + transport.** `internal/alert/{config,ruler,notify}`:
+**Decision — package + transport.** `internal/alert/{config,ruler,notify,events}`:
 `ruler` owns rule compilation, the HTTP PromQL `QueryFunc` (reader JWT read
 fresh per request from a mounted file so rotation needs no restart), and the
 state machine; `notify` owns the Alertmanager-style dispatcher (`group_wait` /
 `group_interval` / `repeat_interval` / `resolve_timeout`) and the v4 webhook
-client (bearer auth, ≥256 KiB payload chunking, bounded backoff). Query failures
+client (bearer auth, ≥256 KiB payload chunking, bounded backoff); `events`
+POSTs one parquet row to prism-store ingest on pending→firing and
+firing→resolved only (`alert_events` `/sql` relation). Query failures
 **fail open** — a rule's alert state is left untouched rather than spuriously
-resolved.
+resolved. Persist and webhook delivery are independently fail-open.
 
 **References:** Prometheus alerting rules & `for`/`keep_firing_for` semantics —
 https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/ ;

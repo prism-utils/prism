@@ -1,6 +1,6 @@
 # Spec: Ruler append-only alert_events (Grafana source of truth)
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/ruler-alert-events-e55a`
 - **Owner phase:** developer
@@ -57,21 +57,21 @@ follow-up PR) will read that table. This prism PR does **not** change Grafana.
 
 ## 5. Acceptance checklist  (developer checks these off)
 
-- [ ] Tests first (`test:` commit before implementation) — CONTRIBUTING.md §1
-- [ ] `POST /{ns}/ingest/alert-events` lands parquet under
+- [x] Tests first (`test:` commit before implementation) — CONTRIBUTING.md §1
+- [x] `POST /{ns}/ingest/alert-events` lands parquet under
       `<DATA_DIR>/<ns>/alerts/alert-events/` (empty body 204 no-op; unknown
       tenant 404; artifact not in ALLOWED_ARTIFACTS 404)
-- [ ] `/sql` `SELECT * FROM alert_events` works with **zero files** (empty
+- [x] `/sql` `SELECT * FROM alert_events` works with **zero files** (empty
       typed relation, not 400)
-- [ ] `/sql` returns ingested rows with columns:
+- [x] `/sql` returns ingested rows with columns:
       `ts`, `fingerprint`, `alertname`, `severity`, `status`, `summary`,
       `description`, `recommendation`, `starts_at`, `ends_at`, `labels`
       (`status` is `firing` or `resolved`; `ends_at` null/zero while firing)
-- [ ] `alert_events` is **unaffected by `QUERY_HOT_ONLY`** (like `logs`)
-- [ ] Ruler appends **one row on pending→firing** and **one row on
+- [x] `alert_events` is **unaffected by `QUERY_HOT_ONLY`** (like `logs`)
+- [x] Ruler appends **one row on pending→firing** and **one row on
       firing→resolved**; no row on repeated identical firing evals
-- [ ] Persist is independent of webhook `Send` success (both fail-open)
-- [ ] `docs/ALERTING.md` documents the ingest; `STORE.md` documents the
+- [x] Persist is independent of webhook `Send` success (both fail-open)
+- [x] `docs/ALERTING.md` documents the ingest; `STORE.md` documents the
       artifact + SQL relation; `CONFIG.md` if new env is added (prefer none)
 - [ ] `make lint test` green; `make full-tests` if ingest/SQL wiring touched
 
