@@ -194,7 +194,7 @@ func colTS(col *arrow.Chunked, i int) time.Time {
 	return time.Time{}
 }
 
-// DecodeForTest reads an Encode() parquet window back into rows.
+// DecodeForTest reads a parquet alert-events window back into rows.
 func DecodeForTest(body []byte) ([]Row, error) {
 	if len(body) == 0 {
 		return nil, nil
