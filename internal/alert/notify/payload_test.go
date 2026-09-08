@@ -21,6 +21,8 @@ func TestFingerprintStableAndLabelOrderIndependent(t *testing.T) {
 	assert.Equal(t, f1, f2)
 	assert.Len(t, f1, 16) // 64-bit fingerprint rendered as 16 hex digits
 	assert.NotEqual(t, f1, fingerprint(map[string]string{"alertname": "A", "instance": "n2"}))
+	assert.Equal(t, f1, Fingerprint(map[string]string{"alertname": "A", "instance": "n1"}),
+		"exported Fingerprint must match the webhook identifier")
 }
 
 func TestGroupLabelsForProjectsOnlyPresentLabels(t *testing.T) {

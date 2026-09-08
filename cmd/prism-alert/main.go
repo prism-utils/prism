@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/prism-utils/prism/internal/alert/config"
+	"github.com/prism-utils/prism/internal/alert/events"
 	"github.com/prism-utils/prism/internal/alert/notify"
 	"github.com/prism-utils/prism/internal/alert/ruler"
 	"github.com/prism-utils/prism/internal/version"
@@ -94,10 +95,16 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 	webhook := notify.NewWebhookClient(notify.WebhookConfig{URL: cfg.NotifierWebhookURL, Secret: cfg.WebhookSecret}, logger)
 	dispatcher := notify.NewDispatcher(dispatcherOptions(cfg), webhook, logger)
 
+	persist, err := events.NewClient(cfg.StoreBaseURL, cfg.RoutePrefix, cfg.TenantNS, cfg.StoreTokenFile, nil, logger)
+	if err != nil {
+		return fmt.Errorf("build alert-events client: %w", err)
+	}
+
 	r, err := ruler.New(ruler.Config{
 		RulesDir:           cfg.RulesDir,
 		EvaluationInterval: cfg.EvaluationInterval,
 		ExternalURL:        cfg.ExternalURL,
+		EventSink:          persist.Persist,
 	}, client.Query, dispatcher.Ingest, logger, time.Now)
 	if err != nil {
 		return fmt.Errorf("build ruler: %w", err)

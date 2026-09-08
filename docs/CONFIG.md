@@ -768,7 +768,7 @@ see [`STORE.md`](STORE.md).
 |---|---|---|---|
 | `ADMIN_LISTEN_ADDR` | string | _(empty — off)_ | When set, binds `/admin/*` (including `/admin/queue`), `/stats`, and query/SQL on a second HTTP server; public `LISTEN_ADDR` keeps ingest + health only. Unset = single mux (dev). |
 | `ADMIN_TOKEN` | string | _(empty — off)_ | Static bearer for admin-plane routes when RBAC is off. Constant-time compare. Superseded when `AUTHZ_POLICY_FILE` is set. |
-| `ALLOWED_ARTIFACTS` | string (comma-separated) | `metrics-raw` | Artifact types accepted on ingest routes. Logs (`logs-raw`/`logs-template`/`logs-summary`) are landed as files and queried via the `logs` relation; add them here to enable (e.g. `metrics-raw,logs-summary`). |
+| `ALLOWED_ARTIFACTS` | string (comma-separated) | `metrics-raw` | Artifact types accepted on ingest routes. Logs (`logs-raw`/`logs-template`/`logs-summary`) land under `<tenant>/logs/` and query via `logs`. `alert-events` lands under `<tenant>/alerts/alert-events/` and queries via `alert_events`. Add them here to enable (e.g. `metrics-raw,logs-summary,alert-events`). |
 | `AUTH_MODE` | string | `none` | Ingest/Flight auth when RBAC is off: `none`, `bearer`, `mtls`, `trusted-header`. HTTP ingest ignores this when RBAC is on (JWT). Flight always uses `AUTH_MODE`. |
 | `AUTHZ_POLICY_FILE` | string | _(empty — off)_ | Path to deny-by-default RBAC policy YAML. When set, enables JWT/OIDC + RBAC on HTTP query/ingest/admin routes. |
 | `AUTHZ_RELOAD_SECONDS` | int (seconds) | `15` | Policy file reload poll interval. |

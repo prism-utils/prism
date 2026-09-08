@@ -346,3 +346,72 @@ func WriteWindow(t testing.TB, dir, name string, rows []Row) string {
 	WriteFile(t, path, rows)
 	return path
 }
+
+// AlertEventRow is one alert_events parquet row (ruler firing/resolved transition).
+type AlertEventRow struct {
+	Ts             time.Time
+	Fingerprint    string
+	Alertname      string
+	Severity       string
+	Status         string
+	Summary        string
+	Description    string
+	Recommendation string
+	StartsAt       time.Time
+	EndsAt         time.Time // zero means SQL NULL
+	Labels         string
+}
+
+// WriteAlertEventsFile writes rows to path as an alert-events parquet. Empty
+// rows is a no-op.
+func WriteAlertEventsFile(t testing.TB, path string, rows []AlertEventRow) {
+	t.Helper()
+	if len(rows) == 0 {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatalf("connector: %v", err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+
+	parts := make([]string, len(rows))
+	for i := range rows {
+		r := &rows[i]
+		ends := "CAST(NULL AS TIMESTAMP)"
+		if !r.EndsAt.IsZero() {
+			ends = fmt.Sprintf("CAST('%s' AS TIMESTAMP)", r.EndsAt.UTC().Format("2006-01-02 15:04:05.999999999"))
+		}
+		parts[i] = fmt.Sprintf(
+			"(CAST('%s' AS TIMESTAMP), '%s', '%s', '%s', '%s', '%s', '%s', '%s', CAST('%s' AS TIMESTAMP), %s, '%s')",
+			r.Ts.UTC().Format("2006-01-02 15:04:05.999999999"),
+			escape(r.Fingerprint), escape(r.Alertname), escape(r.Severity), escape(r.Status),
+			escape(r.Summary), escape(r.Description), escape(r.Recommendation),
+			r.StartsAt.UTC().Format("2006-01-02 15:04:05.999999999"),
+			ends,
+			escape(r.Labels),
+		)
+	}
+	values := parts[0]
+	for _, p := range parts[1:] {
+		values += ", " + p
+	}
+	tmp := path + ".tmp"
+	//nolint:gosec // G201: test fixture SQL with controlled literals only.
+	q := fmt.Sprintf(`
+		COPY (
+			SELECT * FROM (VALUES %s) AS t(ts, fingerprint, alertname, severity, status, summary, description, recommendation, starts_at, ends_at, labels)
+		) TO '%s' (FORMAT parquet)
+	`, values, filepath.ToSlash(tmp))
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("copy alert events: %v", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+}

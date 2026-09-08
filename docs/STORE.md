@@ -271,6 +271,18 @@ returns **`400`** with an actionable error (not `500`). Per-window success lines
 immutable file under `<tenant>/logs/<artifact>/` (`.parquet` or `.duckdb` by
 magic) and read back through the `logs` relation on `/sql`. Metrics ingest
 inserts into `hot_current`. Both HTTP and Flight ingest land logs the same way.
+
+**Alert-events artifact** (`alert-events`, opt-in via `ALLOWED_ARTIFACTS`) is a
+separate file-backed plane: each window lands under
+`<tenant>/alerts/alert-events/` as immutable parquet (not under `logs/`, not
+the metrics hot catalog). `/sql` exposes relation `alert_events` with columns
+`ts`, `fingerprint`, `alertname`, `severity`, `status`, `summary`,
+`description`, `recommendation`, `starts_at`, `ends_at`, `labels`. Zero files
+yield a typed empty stub (HTTP 200, zero rows). `QUERY_HOT_ONLY` does not
+hide this relation. `status` is `firing` or `resolved`; `ends_at` is null
+while firing. prism-alert POSTs one row per pending→firing and firing→resolved
+transition (see [`ALERTING.md`](ALERTING.md)).
+
 After land, `HOT_SEGMENT_FORMAT` governs the metrics hot export. Merge dest for
 DuckDB sources follows payload magic (`.duckdb`); parquet sources honor
 `MERGE_SEGMENT_FORMAT`.
@@ -298,7 +310,7 @@ HTTP ingest under RBAC uses JWT; Flight keeps the operator `AUTH_MODE` unchanged
 4. HTTP body over `MAX_BODY_BYTES` → `413 window too large`
 5. Client closed mid-body (`unexpected EOF` / canceled) → `499 client closed`
    (nginx-style; not a server fault — agents must not retry-storm on it)
-6. Success → `204 No Content` (rows in `hot_current` or log window landed)
+6. Success → `204 No Content` (rows in `hot_current`, log window landed, or alert-events window landed)
 
 `logs/.meta_generation` bump is concurrency-safe (unique tmp + per-tenant
 mutex) so parallel land/merge/retention cannot 500 on rename ENOENT.

@@ -22,6 +22,10 @@ rule YAML ──► ruler ──(PromQL /{ns}/api/v1/query)──► prism-store
                 │◄────────────── instant vector ─────────┘
                 ▼
         for / keep_firing_for / resolve state machine
+                │
+                ├── pending→firing / firing→resolved only
+                │     POST /{ns}/ingest/alert-events  ──►  prism-store
+                │     (parquet under <tenant>/alerts/alert-events/)
                 ▼
         Alertmanager-style dispatcher (group_by / group_wait /
         group_interval / repeat_interval / resolve_timeout)
@@ -31,7 +35,13 @@ rule YAML ──► ruler ──(PromQL /{ns}/api/v1/query)──► prism-store
 
 The ruler holds no TSDB. It reads the store over HTTP (optionally with a reader
 JWT read fresh per request from `STORE_TOKEN_FILE`, so rotation needs no
-restart) and writes to exactly one notifier webhook.
+restart) and writes to exactly one notifier webhook. On **pending→firing** and
+**firing→resolved** only, it also POSTs one parquet row to
+`{STORE_BASE_URL}{ROUTE_PREFIX}/{TENANT_NS}/ingest/alert-events` using the same
+reader token. Unchanged firing evals and `repeat_interval` resends do not
+append a row. Persist is fail-open and independent of webhook `Send`: a store
+or notifier blip is logged and dropped, never fatal. Grafana reads the
+`alert_events` `/sql` relation (homelab follow-up).
 
 ### Hot-only evaluation
 

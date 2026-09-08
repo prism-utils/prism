@@ -69,6 +69,11 @@ func fingerprint(lbls map[string]string) string {
 	return ls.Fingerprint().String()
 }
 
+// Fingerprint renders a 64-bit label-set identity as 16 lowercase hex digits.
+func Fingerprint(lbls map[string]string) string {
+	return fingerprint(lbls)
+}
+
 // groupKeyFor renders a deterministic, Alertmanager-shaped opaque key from the
 // group's label tuple: {k1="v1",k2="v2"} with keys sorted.
 func groupKeyFor(groupLabels map[string]string) string {

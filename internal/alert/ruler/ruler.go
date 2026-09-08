@@ -47,6 +47,10 @@ type QueryFunc func(ctx context.Context, q string, t time.Time) (promql.Vector, 
 // the evaluation clock.
 type AlertSink func(now time.Time, alerts []notify.Alert)
 
+// EventSink receives one alert per pending→firing or firing→resolved
+// transition. Unchanged firing evals and resends are not delivered here.
+type EventSink func(ctx context.Context, alerts []notify.Alert)
+
 // Config is the ruler's evaluation configuration.
 type Config struct {
 	RulesDir           string
@@ -55,6 +59,9 @@ type Config struct {
 	// ResendDelay is how often an unchanged firing alert is re-sent; 0 falls
 	// back to EvaluationInterval.
 	ResendDelay time.Duration
+	// EventSink, when set, is invoked at pending→firing and firing→resolved
+	// only.
+	EventSink EventSink
 }
 
 // Ruler evaluates alerting rules on a fixed cadence.
@@ -69,6 +76,7 @@ type Ruler struct {
 	externalURLStr string
 	logger         *slog.Logger
 	files          []string
+	eventSink      EventSink
 }
 
 // alertRule is one compiled alerting rule plus its active-alert state.
@@ -134,6 +142,7 @@ func New(cfg Config, query QueryFunc, sink AlertSink, logger *slog.Logger, clock
 		externalURLStr: cfg.ExternalURL,
 		logger:         logger,
 		files:          files,
+		eventSink:      cfg.EventSink,
 	}, nil
 }
 
@@ -188,6 +197,7 @@ func (r *Ruler) evalRule(ctx context.Context, rule *alertRule, ts time.Time) ([]
 	}
 
 	resultFPs := make(map[uint64]struct{}, len(vec))
+	var toPersist []notify.Alert
 	for _, smpl := range vec {
 		lbs, annos := r.expand(ctx, rule, smpl, ts)
 		h := lbs.Hash()
@@ -206,8 +216,11 @@ func (r *Ruler) evalRule(ctx context.Context, rule *alertRule, ts time.Time) ([]
 		if ts.Sub(a.activeAt) >= rule.forDur {
 			if !a.firing {
 				a.firedAt = ts
+				a.firing = true
+				toPersist = append(toPersist, r.notifyAlert(rule, a, false))
+			} else {
+				a.firing = true
 			}
-			a.firing = true
 		} else {
 			a.firing = false // still pending
 		}
@@ -233,6 +246,7 @@ func (r *Ruler) evalRule(ctx context.Context, rule *alertRule, ts time.Time) ([]
 		}
 		if a.resolvedAt.IsZero() {
 			a.resolvedAt = ts
+			toPersist = append(toPersist, r.notifyAlert(rule, a, true))
 		}
 		a.firing = false
 	}
@@ -261,6 +275,9 @@ func (r *Ruler) evalRule(ctx context.Context, rule *alertRule, ts time.Time) ([]
 		if resolved && !a.lastSentAt.Before(a.resolvedAt) {
 			delete(rule.active, h)
 		}
+	}
+	if r.eventSink != nil && len(toPersist) > 0 {
+		r.eventSink(ctx, toPersist)
 	}
 	return toSend, nil
 }

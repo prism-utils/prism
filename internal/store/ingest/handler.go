@@ -58,6 +58,11 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 			landLogWindow(w, r, cfg, eng, logger, ns, artifact)
 			return
 		}
+		if isAlertArtifact(artifact) {
+			//nolint:contextcheck // engine.LandAlertWindow is a filesystem write
+			landAlertWindow(w, r, cfg, eng, logger, ns, artifact)
+			return
+		}
 
 		body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
 		isDuckDB, stream, err := classifyMetricsBody(r.Header.Get("Content-Type"), body)
@@ -91,6 +96,12 @@ func Handler(cfg *Config, eng *engine.Engine, logger *slog.Logger) http.Handler 
 // takes the land-as-file path instead of the metrics hot-catalog insert.
 func isLogArtifact(artifact string) bool {
 	return strings.HasPrefix(artifact, "logs-")
+}
+
+// isAlertArtifact reports whether an artifact is the alert-events window, which
+// lands as an immutable file under alerts/ rather than the metrics hot catalog.
+func isAlertArtifact(artifact string) bool {
+	return artifact == "alert-events"
 }
 
 // classifyMetricsBody decides duckdb vs parquet from Content-Type, peeking only
@@ -134,6 +145,23 @@ func landLogWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *eng
 		return
 	}
 	logger.Debug("landed log window", "ns", ns, "artifact", artifact, "bytes", n)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// landAlertWindow persists an alert-events window as a file and writes the
+// ingest response (204 on success or empty no-op; 413 when the body is too large).
+func landAlertWindow(w http.ResponseWriter, r *http.Request, cfg *Config, eng *engine.Engine, logger *slog.Logger, ns, artifact string) {
+	body := http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
+	n, err := eng.LandAlertWindow(ns, artifact, body)
+	if err != nil {
+		writeIngestError(w, logger, ns, artifact, "alert ingest failed", err)
+		return
+	}
+	if n == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	logger.Debug("landed alert window", "ns", ns, "artifact", artifact, "bytes", n)
 	w.WriteHeader(http.StatusNoContent)
 }
 
