@@ -73,7 +73,7 @@ follow-up PR) will read that table. This prism PR does **not** change Grafana.
 - [x] Persist is independent of webhook `Send` success (both fail-open)
 - [x] `docs/ALERTING.md` documents the ingest; `STORE.md` documents the
       artifact + SQL relation; `CONFIG.md` if new env is added (prefer none)
-- [ ] `make lint test` green; `make full-tests` if ingest/SQL wiring touched
+- [x] `make lint test` green; `make full-tests` if ingest/SQL wiring touched
 
 ## 6. Mandatory review gates
 
