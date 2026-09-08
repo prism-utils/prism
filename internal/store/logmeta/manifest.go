@@ -20,6 +20,7 @@ type ManifestFile struct {
 	MinTsNs int64  `json:"min_ts_ns"`
 	MaxTsNs int64  `json:"max_ts_ns"`
 	Bytes   int64  `json:"bytes"`
+	MtimeNs int64  `json:"mtime_ns"`
 }
 
 // Manifest is the artifact-level open-set catalog written on land/merge/retention.
@@ -136,6 +137,7 @@ func RebuildManifestRoots(dataDir, coldDir, tenant, artifact string, version uin
 				MinTsNs: minNs,
 				MaxTsNs: maxNs,
 				Bytes:   fi.Size(),
+				MtimeNs: fi.ModTime().UnixNano(),
 			})
 		}
 		return nil
@@ -151,9 +153,6 @@ func RebuildManifestRoots(dataDir, coldDir, tenant, artifact string, version uin
 		}
 		for _, te := range tierEntries {
 			if !te.IsDir() || !strings.HasPrefix(te.Name(), "L") {
-				continue
-			}
-			if root != dataDir && te.Name() == "L0" {
 				continue
 			}
 			if err := walk(filepath.Join(tiersRoot, te.Name()), filepath.Join("tiers", te.Name())); err != nil {
@@ -178,17 +177,9 @@ func SyncManifest(dataDir, tenant, artifact string) error {
 	return SyncManifestRoots(dataDir, "", tenant, artifact)
 }
 
-// SyncManifestRoots rebuilds the artifact catalog across hot and cold roots.
+// SyncManifestRoots persists catalog deltas across hot and cold roots.
 func SyncManifestRoots(dataDir, coldDir, tenant, artifact string) error {
-	gen, err := Read(dataDir, tenant)
-	if err != nil {
-		return err
-	}
-	m, err := RebuildManifestRoots(dataDir, coldDir, tenant, artifact, gen)
-	if err != nil {
-		return err
-	}
-	return WriteManifest(dataDir, tenant, artifact, m)
+	return ApplyDelta(dataDir, coldDir, tenant, artifact, nil, nil)
 }
 
 func fileTimeBounds(path string, mtime time.Time) (minNs, maxNs int64) {

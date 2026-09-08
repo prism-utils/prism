@@ -163,12 +163,7 @@ func TestScanLogTiersHitsCatalogWithoutRestat(t *testing.T) {
 	artifact := "logs-raw"
 	name := "1786140844863329878-a.parquet"
 	p := filepath.Join(dataDir, tenant, "logs", artifact, "tiers", "L0", name)
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte("fixture"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testparquet.WriteLogsRawFile(t, p, []testparquet.LogRow{{Message: "catalog-hit", Format: "none"}})
 
 	var stats atomic.Int64
 	orig := statLogSegment

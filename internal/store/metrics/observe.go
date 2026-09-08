@@ -78,6 +78,9 @@ func roleIndex(role string) (int, bool) {
 // DuckDBOpen records one live instance. When observation is off this is a
 // single atomic load and returns without taking a lock.
 func DuckDBOpen(role string) {
+	if r := Bound(); r != nil {
+		r.ObserveDuckDBOpen(role)
+	}
 	if !observeArmed.Load() {
 		return
 	}

@@ -384,11 +384,14 @@ Runtime and process series come from the standard collectors (`go_*`,
 | `prism_store_log_landing_files` | gauge | `tenant`, `artifact` | Landing depth vs the cap |
 | `prism_store_log_landing_files_limit` | gauge | — | `MAX_LOG_FILES` (`0` = off) |
 | `prism_store_compaction_cpu_seconds_total` | counter | `tenant` | Compaction cost per tenant |
+| `prism_store_catalog_lookup_total` | counter | `plane`, `result` | Merge-scan catalog lookups; `plane` ∈ `metrics` \| `logs`, `result` ∈ `hit` \| `miss` |
+| `prism_store_catalog_rebuild_total` | counter | `plane`, `reason` | Full catalog rebuilds; production `reason` is `corrupt` |
 | `prism_store_memory_observe` | gauge | — | **Opt-in** (`MEMORY_OBSERVE=true`): 1 while extra memory series are registered |
 | `prism_store_cgroup_memory_bytes` | gauge | `kind` ∈ `current`,`peak`,`max` | cgroup v2 (kind omitted if the file is missing) |
 | `prism_store_gomemlimit_bytes` | gauge | — | Parsed `GOMEMLIMIT` (`0` if unset) |
 | `prism_store_duckdb_memory_limit_bytes` | gauge | — | Parsed `DUCKDB_MEMORY_LIMIT` (`0` if unset) |
 | `prism_store_duckdb_open` | gauge | `role` | Live DuckDB instances (`engine`,`merge`,`rollup`,`materialize`,`sql`,`promql`,`loki`,`bounds`,`stat`) |
+| `prism_store_duckdb_opens_total` | counter | `role` | DuckDB instances opened (`stat` is merge-scan bounds) |
 | `prism_store_job_rss_bytes` | gauge | `job`,`phase` ∈ `start`,`end` | RSS at the last lifecycle pass boundary |
 | `prism_store_job_cgroup_current_bytes` | gauge | `job`,`phase` | cgroup `memory.current` at the last pass boundary (omitted without cgroup) |
 | `prism_store_job_heap_alloc_bytes` | gauge | `job`,`phase` | `HeapAlloc` at the last pass boundary |
@@ -466,7 +469,7 @@ DATA_DIR/
     engine.duckdb          # embedded DuckDB catalog (hot + view definitions)
     hot/                   # current hot-window Parquet snapshot
     tiers/
-      _manifest.json       # metrics open-set catalog (per-file min/max ts)
+      _manifest.json       # metrics open-set catalog (per-file min/max ts, bytes, mtime_ns)
       .meta_generation     # bump stamp so planners rescan after flush/merge
       L0/ … L7/            # immutable merged segments, coarsest at L7
     rollups/
@@ -602,6 +605,18 @@ Background work runs in one goroutine with four independent tickers started from
 
 Lucene **TieredMergePolicy** analogue over immutable Parquet tiers. Merge DuckDB
 connections honor `DUCKDB_THREADS` and `DUCKDB_MEMORY_LIMIT` from the store config.
+
+Each merge tick **readdirs** hot and cold tier directories, then looks up each
+live file in `_manifest.json` by relative path + size + `mtime_ns`. A hit builds
+the planner segment from stored min/max/bytes (no DuckDB). A miss stats that
+file once and upserts. Compact, flush, and promote persist dest upserts and
+source drops incrementally. A **full rebuild** (`RebuildManifestRoots`) runs
+only when the JSON file exists and `json.Unmarshal` fails: the process logs
+`ERROR` `metrics catalog full rebuild` / `logs catalog full rebuild` with
+`reason=corrupt` and increments `prism_store_catalog_rebuild_total`. A missing
+manifest is an empty catalog filled by misses, not a rebuild. Cold L0 files are
+catalogued. Planner policy is unchanged: unsealed cold files remain merge
+candidates; `Bytes >= MaxSegmentBytes` still skips.
 
 - **Seal:** segments with `Bytes ≥ MAX_SEGMENT_BYTES` (default 2 GiB) are never merge inputs (metrics tiers **and** logs landing / log tiers).
 - **Trigger:** when a tier (or logs landing) has ≥ `SEGMENTS_PER_TIER` (default 6) **unsealed** live segments, compaction may start. `SEGMENTS_PER_TIER` is the trigger only — not the pack size. Logs landing has a second, age-based trigger (`LOGS_REFRESH_INTERVAL`, below).

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/logmeta"
 	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
@@ -99,38 +100,18 @@ func ScanLogLanding(dataDir, tenant, artifact string) ([]Segment, error) {
 
 // ScanLogTier lists segments in one logs tier directory.
 func ScanLogTier(dataDir, tenant, artifact string, tier int) ([]Segment, error) {
-	dir := layout.LogsTierDir(dataDir, tenant, artifact, tier)
-	entries, err := os.ReadDir(dir)
+	cat, err := logmeta.Load(context.Background(), dataDir, "", tenant, artifact)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	retired := layout.CompactedSet(entries)
-	skipped := layout.MergeSkipSet(entries)
-	var out []Segment
-	for _, e := range entries {
-		if e.IsDir() || !isSegmentFile(e.Name()) {
-			continue
-		}
-		if _, held := retired[e.Name()]; held {
-			continue
-		}
-		if _, skip := skipped[e.Name()]; skip {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		seg, err := StatLogSegment(path, tier)
-		if err != nil {
-			return nil, err
-		}
-		if segformat.SkipOpen(path, seg.Bytes) {
-			continue
-		}
-		out = append(out, seg)
+	segs, _, err := scanLogTierDir(layout.LogsTierDir(dataDir, tenant, artifact, tier), tier, cat)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	if err := cat.Persist(); err != nil {
+		return nil, err
+	}
+	return segs, nil
 }
 
 // ScanLogTiers returns segments from L0..maxTier for one logs artifact.
@@ -140,25 +121,7 @@ func ScanLogTiers(dataDir, tenant, artifact string, maxTier int) ([]Segment, err
 
 // ScanLogTiersRoots unions hot and cold log tiers including L0.
 func ScanLogTiersRoots(dataDir, coldDir, tenant, artifact string, maxTier int) ([]Segment, error) {
-	var all []Segment
-	for tier := 0; tier <= maxTier; tier++ {
-		segs, err := ScanLogTier(dataDir, tenant, artifact, tier)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, segs...)
-	}
-	if coldDir == "" {
-		return all, nil
-	}
-	for tier := 0; tier <= maxTier; tier++ {
-		segs, err := ScanLogTier(coldDir, tenant, artifact, tier)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, segs...)
-	}
-	return all, nil
+	return persistLogScan(dataDir, coldDir, tenant, artifact, maxTier)
 }
 
 // FindLogMerges plans log compaction as of now. Landing refreshes are planned
@@ -485,6 +448,25 @@ func (x *Executor) ExecuteLogMerge(artifact string, action LogMergeAction, now t
 	}
 	if err := retireSources(action.Sources, now, x.cfg.DeleteGrace); err != nil {
 		return Segment{}, err
+	}
+	destRel := tierRel(action.DestTier, filepath.Base(final))
+	upsert := []logmeta.ManifestFile{{
+		Path:    destRel,
+		MinTsNs: minTs.UnixNano(),
+		MaxTsNs: maxTs.UnixNano(),
+		Bytes:   info.Size(),
+		MtimeNs: info.ModTime().UnixNano(),
+	}}
+	drop := make([]string, 0, len(action.Sources))
+	for _, s := range action.Sources {
+		if s.Tier < 0 {
+			drop = append(drop, filepath.Base(s.Path))
+			continue
+		}
+		drop = append(drop, tierRel(s.Tier, filepath.Base(s.Path)))
+	}
+	if err := logmeta.ApplyDelta(x.cfg.DataDir, x.cfg.ColdDir, x.cfg.Tenant, artifact, upsert, drop); err != nil {
+		return Segment{}, fmt.Errorf("log merge: catalog: %w", err)
 	}
 	return seg, nil
 }

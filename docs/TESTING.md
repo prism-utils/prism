@@ -81,6 +81,7 @@ make promql-e2e     # PromQL full-stack: real node-exporter -> agent -> store ->
 make loki-e2e      # Logs full-stack: agent -> writer store -> read-only reader -> Loki API (docker)
 make format-matrix-e2e  # HOT×MERGE format matrix (parquet|duckdb) metrics+logs /sql (docker)
 make agent-duckdb-e2e   # Agent duckdb encoder → store ingest (+ mixed hot) via docker
+make merge-catalog-e2e  # Merge planner catalog hits, L1 pack, corrupt rebuild (docker)
 make fuzz           # longer fuzz soak (FUZZTIME overridable)
 make golden-update  # regenerate golden files (review the diff!)
 make clean
@@ -112,6 +113,10 @@ make clean
   (`application/vnd.duckdb`) → `/sql`, including at least one mixed
   `HOT_SEGMENT_FORMAT=duckdb` combo (`deploy/docker-compose.agent-duckdb-e2e.yml`,
   CGO agent image).
+- `make merge-catalog-e2e` proves merge ticks use `_manifest.json` bounds:
+  idle ticks increase `catalog_lookup_total{result="hit"}` without a rebuild,
+  a low `SEGMENTS_PER_TIER` pack still writes L1, and a corrupt manifest
+  rebuilds once (`deploy/docker-compose.merge-catalog.yml`).
 - `test/e2e/alert_e2e_test.go` drives `prism-alert` end to end (no Docker): the
   canonical `promql` engine evaluates a real `up == 1` expression over an
   in-memory `storage.Queryable` serving the store's `/{ns}/api/v1/query` shape,

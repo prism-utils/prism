@@ -130,6 +130,11 @@ agent-duckdb-e2e: ## Agent duckdb encode → store ingest (+ mixed hot) via dock
 	@command -v docker >/dev/null 2>&1 || { echo "docker required for make agent-duckdb-e2e"; exit 1; }
 	CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestAgentDuckDBTransferIngest -timeout 45m -v ./test/e2e/...
 
+.PHONY: merge-catalog-e2e
+merge-catalog-e2e: ## Merge planner catalog hits, pack dest, corrupt rebuild (docker)
+	@command -v docker >/dev/null 2>&1 || { echo "docker required for make merge-catalog-e2e"; exit 1; }
+	CGO_ENABLED=1 go test $(GOFLAGS) -tags e2e,$(STORE_TAGS) -run TestMergeCatalogIdleHitsPackAndCorruptRebuild -timeout 20m -v ./test/e2e/...
+
 .PHONY: full-tests
 full-tests: lint test integration e2e ## The phase-completion gate: everything
 	@echo "full-tests: OK"
