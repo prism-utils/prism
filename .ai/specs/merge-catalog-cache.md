@@ -6,7 +6,7 @@
   homelab-gitops#1229 (pin + Argo + prod verify).
 -->
 
-Status: IN_REVIEW
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
 
 - **Slug / branch:** `cursor/merge-catalog-cache-1cdb`
@@ -90,15 +90,18 @@ Ship: tests-first PR → CI → squash-merge → tag `v1.0.20` (or next) → git
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+- History: `test:` `e4c5dbd` before `feat:` `1d9a45d`. Follow-up `test(e2e):` `63c8eae` after compose showed SEGMENTS_PER_TIER=2 leaving one L0.
+- `make lint test` green. `go test -count=1` on merge/metricsmeta/logmeta/metrics green. `make merge-catalog-e2e` PASS (43s).
+- Catalog hit/miss/corrupt/missing/cold L0/delta covered. Planner policy unchanged.
+- No §3.8 comment location refs in new catalog files. STORE.md + TESTING.md match.
 
 ## 8. Ship after ALL_OK (orchestrator — no human gate)
 
