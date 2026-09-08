@@ -118,12 +118,14 @@ func TestMergeCatalogIdleHitsPackAndCorruptRebuild(t *testing.T) {
 		if !strings.Contains(s, "tiers/L1/") {
 			return false
 		}
+		dropped := 0
 		for i := 0; i <= 2; i++ {
-			if strings.Contains(s, fmt.Sprintf("seed-%d.parquet", i)) {
-				return false
+			if !strings.Contains(s, fmt.Sprintf("seed-%d.parquet", i)) {
+				dropped++
 			}
 		}
-		return true
+		// SEGMENTS_PER_TIER=2 packs two of three L0s; at least those sources leave.
+		return dropped >= 2
 	}, 30*time.Second, 500*time.Millisecond, "catalog did not keep dest and drop packed sources")
 
 	rebuildBefore := catalogRebuildTotal(mustScrapeCatalog(t))
@@ -198,6 +200,7 @@ func dumpCatalogComposeLogs(t *testing.T) {
 func catalogComposeLogs(t *testing.T) string {
 	t.Helper()
 	cmd := exec.Command("docker", "compose", "-p", catalogComposeProject, "-f", catalogComposeFile, "logs", "--no-color", "--tail", "200")
+	cmd.Env = append(os.Environ(), catalogComposeEnv(os.TempDir(), os.TempDir())...)
 	out, _ := cmd.CombinedOutput()
 	return string(out)
 }
