@@ -1,8 +1,7 @@
 # Spec: Promote converts hot DuckDB L1+ to cold Parquet
 
-Status: READY
+Status: ALL_OK
 <!-- one of: DRAFT | READY | IN_REVIEW | CHANGES_REQUESTED | ALL_OK -->
-<!-- developer: acceptance items checked; full-tests pending before IN_REVIEW -->
 
 - **Slug / branch:** `cursor/hot-duckdb-cold-parquet-2fb0`
 - **Owner phase:** orchestrator
@@ -137,19 +136,24 @@ Resolved in the intake request. Do not re-ask.
 - [x] Docs match (`CONFIG.md`, `STORE.md`; recommended writer env).
 - [x] Tests written first (a `test:` commit precedes implementation) —
       CONTRIBUTING.md §1
-- [ ] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring
-      touched) — `make lint test` green; `make full-tests` pending
+- [x] `make lint test` green locally (+ `make full-tests` if I/O/encoding/wiring
+      touched) — `make lint test` 0 issues; `make integration` + `make e2e` OK
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+History: `test(store/promote)` (415acb3) precedes `feat(store/promote)` (8dd78f0).
+Re-ran `make lint test` (0 issues, race green) plus `make integration` and
+`make e2e` (I/O). Convert failure, L0 skip, leftover duckdb, valid-parquet
+recover, GC of `*.promote.tmp`, and AfterPromote dest path are covered.
+No DESIGN.md drift (cold promote lives in STORE.md). Comments describe local
+crash-safety; they do not point at other symbols.
