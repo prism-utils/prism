@@ -35,10 +35,12 @@
 // (snapshot, flush, merge, rollups, retention). Default true. Ingest and query
 // still run; hot data will not flush or compact and retention will not delete.
 // Grafana print-view-sql is unaffected.
-// Cold tier: COLD_DATA_DIR names a second root for compacted L1+ parquet (L0
-// and hot stay on DATA_DIR). COLD_AFTER (Go duration, default 12h) is the
-// eligibility clock from each file's max timestamp. Empty COLD_DATA_DIR keeps
-// today's single-root layout. RUN_JOBS=false still reads both roots.
+// Cold tier: COLD_DATA_DIR names a second root for compacted parquet (hot
+// snapshots stay on DATA_DIR). Aged leftover L0 parquet may promote; L0
+// DuckDB never leaves hot. L1+ DuckDB is converted to parquet on cold (not
+// byte-copied). COLD_AFTER (Go duration, default 12h) is the eligibility
+// clock from each file's max timestamp. Empty COLD_DATA_DIR keeps today's
+// single-root layout. RUN_JOBS=false still reads both roots.
 // Merge-time materializations: MATERIALIZATIONS_FILE points at a YAML list of
 // named SELECT queries run after each merge (see docs/STORE.md). Unset = off.
 // Invalid file/SQL at load fails start; a runtime SQL error skips that name.

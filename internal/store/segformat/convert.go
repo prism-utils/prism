@@ -12,9 +12,10 @@ import (
 	"github.com/prism-utils/prism/internal/store/layout"
 )
 
-// ConvertDuckDBToParquet rewrites one checkpointed .duckdb segment to .parquet
-// by projecting the named table through COPY … FORMAT parquet.
-func ConvertDuckDBToParquet(src, dst, table string) error {
+// WriteParquetFile projects the named table from a checkpointed .duckdb file
+// onto dst via COPY … FORMAT parquet. dst is the exact output path (callers
+// that need crash-safety pass a unique temp on the destination filesystem).
+func WriteParquetFile(src, dst, table string) error {
 	if table == "" {
 		return fmt.Errorf("segformat: convert: empty table name")
 	}
@@ -29,8 +30,6 @@ func ConvertDuckDBToParquet(src, dst, table string) error {
 	ctx := context.Background()
 	alias := "cvt"
 	srcSlash := layout.ToSlash(src)
-	dstTmp := dst + ".tmp"
-	_ = os.Remove(dstTmp)
 
 	attach := fmt.Sprintf("ATTACH '%s' AS %s (READ_ONLY)", srcSlash, alias)
 	if _, err := db.ExecContext(ctx, attach); err != nil {
@@ -39,14 +38,26 @@ func ConvertDuckDBToParquet(src, dst, table string) error {
 	//nolint:gosec // G201: alias/table are package consts; dst path is server-owned.
 	copySQL := fmt.Sprintf(
 		`COPY (SELECT * FROM %s.%s) TO '%s' (FORMAT parquet)`,
-		alias, table, layout.ToSlash(dstTmp),
+		alias, table, layout.ToSlash(dst),
 	)
 	if _, err := db.ExecContext(ctx, copySQL); err != nil {
-		_ = os.Remove(dstTmp)
+		_ = os.Remove(dst)
 		_, _ = db.ExecContext(ctx, "DETACH "+alias)
 		return fmt.Errorf("segformat: copy to parquet: %w", err)
 	}
 	if _, err := db.ExecContext(ctx, "DETACH "+alias); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
+}
+
+// ConvertDuckDBToParquet rewrites one checkpointed .duckdb segment to .parquet
+// by projecting the named table through COPY … FORMAT parquet.
+func ConvertDuckDBToParquet(src, dst, table string) error {
+	dstTmp := dst + ".tmp"
+	_ = os.Remove(dstTmp)
+	if err := WriteParquetFile(src, dstTmp, table); err != nil {
 		_ = os.Remove(dstTmp)
 		return err
 	}
@@ -78,7 +89,7 @@ func ConvertTenantDuckDBToParquet(dataDir, tenant string) (int, error) {
 		if filepath.Ext(name) != ".duckdb" {
 			return nil
 		}
-		table := tableForPath(path)
+		table := TableForPath(path)
 		dst := strings.TrimSuffix(path, ".duckdb") + ".parquet"
 		if err := ConvertDuckDBToParquet(path, dst, table); err != nil {
 			return fmt.Errorf("segformat: convert %s: %w", path, err)
@@ -94,7 +105,9 @@ func ConvertTenantDuckDBToParquet(dataDir, tenant string) (int, error) {
 	return converted, err
 }
 
-func tableForPath(path string) string {
+// TableForPath returns the DuckDB relation to project from a segment path.
+// Logs-plane files live under /logs/; everything else is metrics.
+func TableForPath(path string) string {
 	slash := filepath.ToSlash(path)
 	if strings.Contains(slash, "/logs/") {
 		return LogsTable

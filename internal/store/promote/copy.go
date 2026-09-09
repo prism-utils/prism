@@ -13,6 +13,7 @@ import (
 
 	"github.com/prism-utils/prism/internal/duckdbfile"
 	"github.com/prism-utils/prism/internal/store/layout"
+	"github.com/prism-utils/prism/internal/store/segformat"
 )
 
 const parquetMagic = "PAR1"
@@ -65,6 +66,52 @@ func CopyAtomic(src, dest string) error {
 	}
 	if err := fsyncDir(filepath.Dir(dest)); err != nil {
 		return fmt.Errorf("promote: fsync dest dir: %w", err)
+	}
+	return nil
+}
+
+// ConvertAtomic projects a hot .duckdb segment to dest as parquet on dest's
+// filesystem: unique temp, COPY, fsync, PAR1 check, then rename. The source is
+// never removed here. A failure leaves dest unpublished (temp removed).
+func ConvertAtomic(src, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+		return fmt.Errorf("promote: mkdir dest: %w", err)
+	}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return fmt.Errorf("promote: tmp id: %w", err)
+	}
+	tmp := layout.PromoteTempPath(filepath.Dir(dest), filepath.Base(dest), id[:])
+	if err := segformat.WriteParquetFile(src, tmp, segformat.TableForPath(src)); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := fsyncFile(tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := verifyParquetMagic(tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("promote: rename: %w", err)
+	}
+	if err := fsyncDir(filepath.Dir(dest)); err != nil {
+		return fmt.Errorf("promote: fsync dest dir: %w", err)
+	}
+	return nil
+}
+
+func fsyncFile(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // G304: path is a unique promote temp
+	if err != nil {
+		return fmt.Errorf("promote: fsync open: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("promote: fsync temp: %w", err)
 	}
 	return nil
 }

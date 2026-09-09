@@ -1,6 +1,7 @@
 package promote
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -92,7 +93,7 @@ func TestTenantParquetL1ByteCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(body) {
+	if !bytes.Equal(got, body) {
 		t.Fatal("parquet L1 must be a byte-copy, not a convert")
 	}
 }
@@ -123,6 +124,27 @@ func TestTenantNeverPromotesL0DuckDB(t *testing.T) {
 	if err := verifyParquetMagic(dest); err != nil {
 		t.Fatalf("L1 duckdb should still convert: %v", err)
 	}
+}
+
+func TestTenantPromotesLogsL1DuckDBToColdParquet(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.LogsTierDir(hot, tenant, "logs-raw", 1), "seg.duckdb")
+	writeLogsDuckDB(t, src)
+	cfg := agedPromoteCfg(hot, cold, now)
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatal("hot logs L1 duckdb must be unlinked after dest verifies")
+	}
+	dest := filepath.Join(layout.LogsTierDir(cold, tenant, "logs-raw", 1), "seg.parquet")
+	if err := verifyParquetMagic(dest); err != nil {
+		t.Fatalf("cold logs dest parquet magic: %v", err)
+	}
+	assertParquetRowCount(t, dest, 1)
 }
 
 func TestConvertFailureLeavesSourceUnpublishedDest(t *testing.T) {
@@ -175,7 +197,7 @@ func TestRecoverValidParquetSkipsDuckDBConvert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(parquetFixture("already-cold")) {
+	if !bytes.Equal(got, parquetFixture("already-cold")) {
 		t.Fatal("valid dest parquet must not be SHA-replaced or reconverted")
 	}
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
@@ -292,6 +314,49 @@ func assertParquetValue(t *testing.T, path string, want float64) {
 	}
 	if got != want {
 		t.Fatalf("parquet value=%g, want %g", got, want)
+	}
+}
+
+func writeLogsDuckDB(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	slash := filepath.ToSlash(path)
+	q := fmt.Sprintf(`
+		ATTACH '%s' AS exp (STORAGE_VERSION '%s');
+		CREATE TABLE exp.%s AS SELECT 'hello' AS message, 'raw' AS format;
+		CHECKPOINT exp;
+		DETACH exp;
+	`, slash, segformat.DefaultStorageVersion, segformat.LogsTable)
+	if _, err := db.ExecContext(context.Background(), q); err != nil {
+		t.Fatalf("write logs duckdb: %v", err)
+	}
+}
+
+func assertParquetRowCount(t *testing.T, path string, want int) {
+	t.Helper()
+	connector, err := duckdb.NewConnector("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = connector.Close() }()
+	db := sql.OpenDB(connector)
+	defer func() { _ = db.Close() }()
+	var n int
+	q := fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", filepath.ToSlash(path))
+	if err := db.QueryRowContext(context.Background(), q).Scan(&n); err != nil {
+		t.Fatalf("read parquet: %v", err)
+	}
+	if n != want {
+		t.Fatalf("parquet rows=%d, want %d", n, want)
 	}
 }
 
