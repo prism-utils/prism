@@ -44,6 +44,31 @@ func TestTenantPromotesL1DuckDBToColdParquet(t *testing.T) {
 	}
 }
 
+func TestAfterPromoteSeesColdParquet(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.TierDir(hot, tenant, 1), "seg.duckdb")
+	writeMetricsDuckDB(t, src, 5)
+	var called bool
+	cfg := agedPromoteCfg(hot, cold, now)
+	cfg.AfterPromote = func(string) error {
+		called = true
+		dest := filepath.Join(layout.TierDir(cold, tenant, 1), "seg.parquet")
+		if err := verifyParquetMagic(dest); err != nil {
+			t.Fatalf("AfterPromote dest parquet: %v", err)
+		}
+		return nil
+	}
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if !called {
+		t.Fatal("AfterPromote must run once dest parquet is durable")
+	}
+}
+
 func TestTenantPromotesL1DuckDBHoldSource(t *testing.T) {
 	hot := t.TempDir()
 	cold := t.TempDir()
