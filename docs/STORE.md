@@ -491,12 +491,26 @@ DATA_DIR/
     .metering.json         # on-disk usage / compaction metering (operator-facing)
 ```
 
-When `COLD_DATA_DIR` is set, compacted **L0+** metrics and logs are copied there after
-their max timestamp is older than `COLD_AFTER` (default 12h). Aged L0 is force-packed
-same-type when a pack exists, then leftover L0 is still eligible. `hot/`, rollups,
-materializations, and `_manifest.json` stay on `DATA_DIR`. Query, PromQL, Loki, and
-`/sql` union both roots. Merge still writes new L1+ onto `DATA_DIR`, then the promote
-pass copies. Empty `COLD_DATA_DIR` is a no-op.
+When `COLD_DATA_DIR` is set, compacted metrics and logs land there after their max
+timestamp is older than `COLD_AFTER` (default 12h). Aged L0 is force-packed
+same-type when a pack exists, then leftover L0 parquet is still eligible.
+**Hot stays DuckDB when configured; cold is always parquet.** Promote byte-copies
+`.parquet` sources (SHA-256 + `PAR1`). Compacted **L1+** `.duckdb` sources are
+converted on the cold filesystem (`COPY … FORMAT parquet` into `*.promote.tmp`,
+then rename) — they are not byte-copied onto HDD. **L0 `.duckdb` never leaves**
+`DATA_DIR` (ATTACH stays on SSD). `hot/`, rollups, materializations, and
+`_manifest.json` stay on `DATA_DIR`. Query, PromQL, Loki, and `/sql` union both
+roots (ATTACH duckdb + `read_parquet`; no Grafana glob change). Merge still writes
+new L1+ onto `DATA_DIR`, then the promote pass places them. Empty `COLD_DATA_DIR`
+is a no-op.
+
+Recommended writer env (binary defaults remain parquet for back-compat):
+
+```
+HOT_SEGMENT_FORMAT=duckdb
+MERGE_SEGMENT_FORMAT=duckdb
+COLD_DATA_DIR=/path/to/hdd
+```
 
 Each new L0 flush is one hot-window of rows (default 10 minutes), catalogued with
 `min_ts_ns` / `max_ts_ns`. Existing large files stay until merge; planners skip

@@ -82,9 +82,11 @@ type Stats struct {
 	TmpFiles  int
 }
 
-// Tenant copies eligible L1+ files for one tenant from the hot root to cold.
-// Each file is attempted once per call; a failure leaves the hot source in
-// place so a later call retries. Empty ColdDir is a no-op.
+// Tenant places eligible compacted files for one tenant from the hot root onto
+// cold. Parquet sources are byte-copied; L1+ DuckDB sources are converted to
+// parquet on the cold filesystem. L0 DuckDB stays on hot. Each file is
+// attempted once per call; a failure leaves the hot source in place so a later
+// call retries. Empty ColdDir is a no-op.
 func Tenant(c *Config, tenant string) (Stats, error) {
 	var st Stats
 	if c == nil || !Enabled(c.ColdDir) {
@@ -103,6 +105,9 @@ func Tenant(c *Config, tenant string) (Stats, error) {
 	for _, f := range files {
 		maxTs, ok := c.maxTs(f.Path)
 		if !ok || !Eligible(f.Tier, maxTs, now, c.after()) {
+			continue
+		}
+		if filepath.Ext(f.Path) == ".duckdb" && f.Tier < 1 {
 			continue
 		}
 		st.Attempts++
@@ -227,7 +232,7 @@ func listSegmentFiles(dir, relPrefix string, tier int) ([]fileRef, error) {
 }
 
 func promoteOne(c *Config, tenant string, f fileRef, now time.Time) (int64, bool, error) {
-	dest := filepath.Join(c.ColdDir, tenant, filepath.FromSlash(f.Rel))
+	dest := coldDest(c.ColdDir, tenant, f)
 	retried, err := recoverOrCopy(f.Path, dest)
 	if err != nil {
 		return 0, retried, err
@@ -250,7 +255,18 @@ func promoteOne(c *Config, tenant string, f fileRef, now time.Time) (int64, bool
 	return fi.Size(), retried, nil
 }
 
+func coldDest(coldDir, tenant string, f fileRef) string {
+	rel := f.Rel
+	if filepath.Ext(rel) == ".duckdb" {
+		rel = strings.TrimSuffix(rel, ".duckdb") + ".parquet"
+	}
+	return filepath.Join(coldDir, tenant, filepath.FromSlash(rel))
+}
+
 func recoverOrCopy(src, dest string) (bool, error) {
+	if filepath.Ext(src) == ".duckdb" {
+		return recoverOrConvert(src, dest)
+	}
 	if fi, err := os.Lstat(dest); err == nil && fi.Mode().IsRegular() {
 		srcSum, err := sha256File(src)
 		if err != nil {
@@ -269,4 +285,27 @@ func recoverOrCopy(src, dest string) (bool, error) {
 		return true, CopyAtomic(src, dest)
 	}
 	return false, CopyAtomic(src, dest)
+}
+
+func recoverOrConvert(src, dest string) (bool, error) {
+	retried := false
+	leftover := strings.TrimSuffix(dest, filepath.Ext(dest)) + ".duckdb"
+	if leftover != dest {
+		if fi, err := os.Lstat(leftover); err == nil && fi.Mode().IsRegular() {
+			if err := os.Remove(leftover); err != nil {
+				return true, fmt.Errorf("promote: remove leftover duckdb dest: %w", err)
+			}
+			retried = true
+		}
+	}
+	if fi, err := os.Lstat(dest); err == nil && fi.Mode().IsRegular() {
+		if err := verifyParquetMagic(dest); err == nil {
+			return retried, nil
+		}
+		if err := os.Remove(dest); err != nil {
+			return true, fmt.Errorf("promote: remove broken dest: %w", err)
+		}
+		return true, ConvertAtomic(src, dest)
+	}
+	return retried, ConvertAtomic(src, dest)
 }
