@@ -267,6 +267,43 @@ func TestTickRetentionDeletesUnreadableOlderThanRetention(t *testing.T) {
 	}
 }
 
+func TestTickRetentionLeavesCompactedHeldSegment(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tenant := "user-retcmp01-apps"
+	l0 := layout.TierDir(dataDir, tenant, 0)
+	if err := os.MkdirAll(l0, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-16 * 24 * time.Hour)
+	held := filepath.Join(l0, "held.parquet")
+	testparquet.WriteSegmentWithTs(t, held, old, "old", 1)
+	if err := os.WriteFile(layout.CompactedMarker(held), []byte("9999999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(held, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+	runner := NewRunner(&Config{
+		DataDir:       dataDir,
+		RetentionDays: 15,
+		MaxTier:       8,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickRetention(); err != nil {
+		t.Fatalf("TickRetention: %v", err)
+	}
+	if _, err := os.Stat(held); err != nil {
+		t.Fatalf("compacted-held L0 should remain until merge grace purge: %v", err)
+	}
+	if _, err := os.Stat(layout.CompactedMarker(held)); err != nil {
+		t.Fatalf("compacted marker should remain: %v", err)
+	}
+}
+
 func TestTickMergeContinuesAfterUnreadableSegment(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)

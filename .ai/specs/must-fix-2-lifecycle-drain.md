@@ -1,6 +1,6 @@
 # Spec: must-fix-2 lifecycle drain
 
-Status: CHANGES_REQUESTED
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/must-fix-2-lifecycle-b991`
 - **Owner phase:** developer
@@ -73,8 +73,7 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 - [x] `ScanTier`: on `StatSegment` error, `slog.Error("stat segment", "path", path, "err", err)` and continue. `ReadDir` errors other than IsNotExist still return.
 - [x] `UnreadableExpired` listing complement used only from `tickRetention` after a successful `ScanAllTiersRoots`. Delete `isSegmentFile` names not in live scan whose mtime is strictly before cutoff. Skip CompactedSet. Do not StatSegment again.
-- [ ] Tests: `TestScanTierOmitsUnreadableSegment`, `TestScanTierEmptyDir`, keep `TestScanTierSkipsRetiredSegments`; `TestTickRetentionContinuesAfterUnreadableSegment` (fresh-mtime garbage remains, expired good L0 gone); `TestTickRetentionDeletesUnreadableOlderThanRetention`; `TestTickMergeContinuesAfterUnreadableSegment`.
-  - UnreadableExpired Skip CompactedSet is untested: plant a `.compacted` held L0 older than RETENTION_DAYS and assert TickRetention leaves the segment (purge stays on merge grace, not retention mtime).
+- [x] Tests: `TestScanTierOmitsUnreadableSegment`, `TestScanTierEmptyDir`, keep `TestScanTierSkipsRetiredSegments`; `TestTickRetentionContinuesAfterUnreadableSegment` (fresh-mtime garbage remains, expired good L0 gone); `TestTickRetentionDeletesUnreadableOlderThanRetention`; `TestTickRetentionLeavesCompactedHeldSegment` (`.compacted` held L0 older than retention stays; purge is merge grace); `TestTickMergeContinuesAfterUnreadableSegment`.
 
 ### Slice #185 durable flush
 
