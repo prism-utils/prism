@@ -598,8 +598,10 @@ func (e *Engine) armFlushFromHot(tenant string, te *tenantEntry) error {
 }
 
 type tenantEntry struct {
-	db   *sql.DB
-	path string
+	db        *sql.DB
+	snap      *sql.DB // second pool on the same connector; snapshot I/O must not occupy the writer
+	connector *duckdb.Connector
+	path      string
 	// mu serializes access to the embedded database: a flush is a multi-statement
 	// catalog sequence (rename the hot table aside, recreate it), so a write must
 	// hold this exclusively while reads take it shared. Overlapping a write with
@@ -656,8 +658,10 @@ func openTenant(dataDir, tenant string, cfg Config) (*tenantEntry, error) { //no
 	// routing statements across pooled connections lets a reader observe a
 	// catalog snapshot from before a committed write on another connection.
 	db.SetMaxOpenConns(1)
+	snap := sql.OpenDB(connector)
+	snap.SetMaxOpenConns(1)
 	metrics.DuckDBOpen(metrics.RoleEngine)
-	return &tenantEntry{db: db, path: path}, nil
+	return &tenantEntry{db: db, snap: snap, connector: connector, path: path}, nil
 }
 
 func (te *tenantEntry) ensureHotCurrent() error {
@@ -807,12 +811,19 @@ func (l *tenantLRU) evictOldest() {
 }
 
 func closeTenantDB(te *tenantEntry) {
-	if te == nil || te.db == nil {
+	if te == nil {
 		return
 	}
-	_ = te.db.Close()
-	te.db = nil
-	metrics.DuckDBClose(metrics.RoleEngine)
+	if te.snap != nil {
+		_ = te.snap.Close()
+		te.snap = nil
+	}
+	if te.db != nil {
+		_ = te.db.Close()
+		te.db = nil
+		metrics.DuckDBClose(metrics.RoleEngine)
+	}
+	te.connector = nil
 }
 
 func (l *tenantLRU) closeAll() error {

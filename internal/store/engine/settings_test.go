@@ -15,7 +15,7 @@ func TestOpenTenant_unsetThreadsPreservesDefault(t *testing.T) {
 	dir := t.TempDir()
 	te, err := openTenant(dir, testTenant, Config{DataDir: dir})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = te.db.Close() })
+	t.Cleanup(func() { closeTenantDB(te) })
 
 	var threads string
 	err = te.db.QueryRowContext(context.Background(), "SELECT current_setting('threads')").Scan(&threads)
@@ -31,7 +31,7 @@ func TestOpenTenant_appliedThreadsSetting(t *testing.T) {
 	const want = 2
 	te, err := openTenant(dir, testTenant, Config{DataDir: dir, Threads: want})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = te.db.Close() })
+	t.Cleanup(func() { closeTenantDB(te) })
 
 	var threads string
 	err = te.db.QueryRowContext(context.Background(), "SELECT current_setting('threads')").Scan(&threads)
@@ -58,10 +58,10 @@ func TestOpenTenant_appliedMemoryLimitSetting(t *testing.T) {
 	dir := t.TempDir()
 	teLarge, err := openTenant(dir, testTenant+"-large", Config{DataDir: dir, MemoryLimit: "1024MB"})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = teLarge.db.Close() })
+	t.Cleanup(func() { closeTenantDB(teLarge) })
 	teSmall, err := openTenant(dir, testTenant+"-small", Config{DataDir: dir, MemoryLimit: "128MB"})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = teSmall.db.Close() })
+	t.Cleanup(func() { closeTenantDB(teSmall) })
 
 	var largeLimit, smallLimit string
 	err = teLarge.db.QueryRowContext(context.Background(), "SELECT current_setting('memory_limit')").Scan(&largeLimit)
@@ -78,10 +78,10 @@ func TestOpenTenant_unsetMemoryLimitPreservesDefault(t *testing.T) {
 	dir := t.TempDir()
 	teUnset, err := openTenant(dir, testTenant+"-unset", Config{DataDir: dir})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = teUnset.db.Close() })
+	t.Cleanup(func() { closeTenantDB(teUnset) })
 	teSet, err := openTenant(dir, testTenant+"-set", Config{DataDir: dir, MemoryLimit: "128MB"})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = teSet.db.Close() })
+	t.Cleanup(func() { closeTenantDB(teSet) })
 
 	var unsetLimit, setLimit string
 	err = teUnset.db.QueryRowContext(context.Background(), "SELECT current_setting('memory_limit')").Scan(&unsetLimit)
