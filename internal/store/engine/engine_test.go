@@ -16,10 +16,32 @@ const testTenant = "user-6f3a9c2b-apps"
 
 func testEngine(t *testing.T, start time.Time, hotWindow time.Duration) (*Engine, *time.Time) {
 	t.Helper()
+	return testEngineAt(t, t.TempDir(), start, hotWindow)
+}
+
+func testEngineAt(t *testing.T, dataDir string, start time.Time, hotWindow time.Duration) (*Engine, *time.Time) {
+	t.Helper()
 	clk := start
-	e := New(Config{DataDir: t.TempDir(), HotWindow: hotWindow}, func() time.Time { return clk })
+	e := New(Config{DataDir: dataDir, HotWindow: hotWindow}, func() time.Time { return clk })
 	t.Cleanup(func() { _ = e.Close() })
 	return e, &clk
+}
+
+func ingestOneWindow(t *testing.T, e *Engine, tenant string) {
+	t.Helper()
+	path := testparquet.WriteWindow(t, t.TempDir(), "w.parquet", []testparquet.Row{
+		{Name: "up", Labels: "{}", Value: 1, TimestampMs: 0},
+	})
+	if _, err := e.Ingest(tenant, readFile(t, path)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+}
+
+func scheduledFlush(e *Engine, tenant string) (time.Time, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	due, ok := e.flushAt[tenant]
+	return due, ok
 }
 
 func TestIngestEmptyWindowNoOp(t *testing.T) {
@@ -123,6 +145,148 @@ func TestFlushAfterHotWindowCreatesOneL0SegmentSortedByTs(t *testing.T) {
 			t.Fatalf("rows not sorted by ts: %v before %v", ts, prev)
 		}
 		prev = ts
+	}
+}
+
+func TestFlushDueWithoutIngestAfterHotWindow(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	hotWindow := 10 * time.Minute
+	e, now := testEngine(t, start, hotWindow)
+	ingestOneWindow(t, e, testTenant)
+
+	*now = start.Add(hotWindow)
+	if err := e.FlushDue(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	segments, err := ListL0(e.cfg.DataDir, testTenant)
+	if err != nil {
+		t.Fatalf("list L0: %v", err)
+	}
+	if len(segments) != 1 {
+		t.Fatalf("want exactly 1 L0 segment, got %d", len(segments))
+	}
+	if c, _ := e.HotRowCount(testTenant); c != 0 {
+		t.Fatalf("hot_current should be empty after flush, got %d", c)
+	}
+	if _, scheduled := scheduledFlush(e, testTenant); scheduled {
+		t.Fatal("flush schedule should be cleared")
+	}
+}
+
+func TestFlushScheduleSurvivesEngineRestart(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	hotWindow := 10 * time.Minute
+	dataDir := t.TempDir()
+	e, _ := testEngineAt(t, dataDir, start, hotWindow)
+	ingestOneWindow(t, e, testTenant)
+	if err := e.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, _ := testEngineAt(t, dataDir, start.Add(hotWindow), hotWindow)
+	if err := reopened.FlushDue(); err != nil {
+		t.Fatalf("flush after restart: %v", err)
+	}
+
+	segments, err := ListL0(dataDir, testTenant)
+	if err != nil {
+		t.Fatalf("list L0: %v", err)
+	}
+	if len(segments) != 1 {
+		t.Fatalf("want exactly 1 L0 segment after restart, got %d", len(segments))
+	}
+	if c, _ := reopened.HotRowCount(testTenant); c != 0 {
+		t.Fatalf("hot_current should be empty after flush, got %d", c)
+	}
+}
+
+func TestFlushScheduleArmedFromExistingHotRowsOnOpen(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	hotWindow := 10 * time.Minute
+	dataDir := t.TempDir()
+	e, _ := testEngineAt(t, dataDir, start, hotWindow)
+	ingestOneWindow(t, e, testTenant)
+	if err := e.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, now := testEngineAt(t, dataDir, start, hotWindow)
+	if _, err := reopened.HotRowCount(testTenant); err != nil {
+		t.Fatalf("open existing hot: %v", err)
+	}
+	due, ok := scheduledFlush(reopened, testTenant)
+	if !ok {
+		t.Fatal("opening a tenant with hot rows should arm the flush schedule")
+	}
+	wantDue := start.Add(hotWindow)
+	if !due.UTC().Equal(wantDue) {
+		t.Fatalf("reconstructed due %v, want %v", due.UTC(), wantDue)
+	}
+
+	*now = start.Add(time.Minute)
+	ingestOneWindow(t, reopened, testTenant)
+	dueAfter, ok := scheduledFlush(reopened, testTenant)
+	if !ok {
+		t.Fatal("light ingest should keep the reconstructed deadline")
+	}
+	if !dueAfter.UTC().Equal(wantDue) {
+		t.Fatalf("light ingest reset deadline to %v, want %v", dueAfter.UTC(), wantDue)
+	}
+
+	*now = start.Add(hotWindow)
+	if err := reopened.FlushDue(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	segments, err := ListL0(dataDir, testTenant)
+	if err != nil {
+		t.Fatalf("list L0: %v", err)
+	}
+	if len(segments) != 1 {
+		t.Fatalf("want exactly 1 L0 segment, got %d", len(segments))
+	}
+	if c, _ := reopened.HotRowCount(testTenant); c != 0 {
+		t.Fatalf("hot_current should be empty after flush, got %d", c)
+	}
+}
+
+func TestEmptyHotDoesNotArmFlush(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	hotWindow := 10 * time.Minute
+	e, now := testEngine(t, start, hotWindow)
+
+	n, err := e.Ingest(testTenant, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("ingest empty: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("want 0 rows, got %d", n)
+	}
+	if _, err := e.HotRowCount(testTenant); err != nil {
+		t.Fatalf("open empty hot: %v", err)
+	}
+	if _, scheduled := scheduledFlush(e, testTenant); scheduled {
+		t.Fatal("empty hot_current must not arm a flush")
+	}
+
+	decoy := "user-decoy000-apps"
+	if err := os.MkdirAll(filepath.Join(e.cfg.DataDir, decoy), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	*now = start.Add(hotWindow)
+	if err := e.FlushDue(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	segments, err := ListL0(e.cfg.DataDir, testTenant)
+	if err != nil {
+		t.Fatalf("list L0: %v", err)
+	}
+	if len(segments) != 0 {
+		t.Fatalf("want no L0 for empty hot, got %d", len(segments))
+	}
+	if _, err := os.Stat(filepath.Join(e.cfg.DataDir, decoy, "engine.duckdb")); !os.IsNotExist(err) {
+		t.Fatal("FlushDue must not create engine.duckdb for a dir that had none")
 	}
 }
 
