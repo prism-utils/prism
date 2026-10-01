@@ -576,6 +576,25 @@ func (r *Runner) tickRetention() error {
 					r.log.Error("retention delete segment", "tenant", tenant, "path", del.Segment.Path, "err", err)
 				}
 			}
+			roots := []string{r.cfg.DataDir}
+			if layout.ColdEnabled(r.cfg.ColdDir) {
+				roots = append(roots, r.cfg.ColdDir)
+			}
+			for _, root := range roots {
+				for tier := 0; tier <= r.cfg.MaxTier; tier++ {
+					dir := layout.TierDir(root, tenant, tier)
+					paths, listErr := merge.UnreadableExpired(dir, segs, cutoff)
+					if listErr != nil {
+						r.log.Error("retention unreadable listing", "tenant", tenant, "path", dir, "err", listErr)
+						continue
+					}
+					for _, path := range paths {
+						if err := removePath(path); err != nil {
+							r.log.Error("retention delete unreadable", "tenant", tenant, "path", path, "err", err)
+						}
+					}
+				}
+			}
 			if err := metricsmeta.SyncAfterChangeRoots(context.Background(), r.cfg.DataDir, r.cfg.ColdDir, tenant); err != nil {
 				r.log.Error("retention metrics catalog", "tenant", tenant, "err", err)
 			}

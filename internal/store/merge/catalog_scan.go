@@ -3,6 +3,7 @@ package merge
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -64,7 +65,8 @@ func scanTierDir(dir string, tier int, caps DuckDBCaps, cat *metricsmeta.Catalog
 		metrics.CatalogLookup(metrics.PlaneMetrics, metrics.CatalogMiss)
 		seg, err := statSegment(path, tier, caps)
 		if err != nil {
-			return nil, nil, err
+			slog.Error("stat segment", "path", path, "err", err)
+			continue
 		}
 		cat.Upsert(metricsmeta.ManifestFile{
 			Path:    rel,
