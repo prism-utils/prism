@@ -77,7 +77,7 @@ type Engine struct {
 
 	mu      sync.Mutex
 	lru     *tenantLRU
-	flushAt map[string]time.Time // next scheduled flush instant per tenant
+	flushAt map[string]time.Time // next flush instant per tenant; reconstructed from the oldest hot row when missing
 
 	coalesceMu sync.Mutex
 	coalesce   map[logCoalesceKey]*logCoalesceBuf
@@ -145,12 +145,11 @@ func (e *Engine) Ingest(tenant string, body io.Reader) (int64, error) {
 	}
 	defer func() { _ = os.Remove(tmp) }()
 
-	if err := e.maybeFlushDue(tenant); err != nil {
-		return 0, err
-	}
-
 	te, err := e.open(tenant)
 	if err != nil {
+		return 0, err
+	}
+	if err := e.maybeFlushDue(tenant); err != nil {
 		return 0, err
 	}
 	ts := e.clock().UTC()
@@ -186,12 +185,11 @@ func (e *Engine) IngestDuckDB(tenant string, body io.Reader) (int64, error) {
 	}
 	defer func() { _ = os.Remove(tmp); _ = os.Remove(tmp + ".wal") }()
 
-	if err := e.maybeFlushDue(tenant); err != nil {
-		return 0, err
-	}
-
 	te, err := e.open(tenant)
 	if err != nil {
+		return 0, err
+	}
+	if err := e.maybeFlushDue(tenant); err != nil {
 		return 0, err
 	}
 	ts := e.clock().UTC()
@@ -300,9 +298,25 @@ func (e *Engine) LandLogWindow(tenant, artifact string, body io.Reader) (int64, 
 	return n, nil
 }
 
-// FlushDue rolls hot tables and writes L0 segments for tenants whose hot window elapsed.
+// FlushDue rolls hot tables to L0 for every on-disk tenant whose hot window has elapsed.
 // Per-tenant failures are logged and skipped so one bad tenant cannot block others.
 func (e *Engine) FlushDue() error {
+	onDisk, err := listDataTenants(e.cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	for _, ns := range onDisk {
+		if !storetenant.TenantAllowed(ns) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(e.cfg.DataDir, ns, "engine.duckdb")); err != nil {
+			continue
+		}
+		if _, err := e.open(ns); err != nil {
+			e.log.Error("flush tenant", "tenant", ns, "err", err)
+		}
+	}
+
 	e.mu.Lock()
 	tenants := make([]string, 0, len(e.flushAt))
 	now := e.clock()
@@ -492,6 +506,15 @@ func (e *Engine) OpenTenants() int {
 	return e.lru.len()
 }
 
+// HasOpen reports whether a tenant currently holds a resident database handle.
+// The lookup does not refresh recency, so a reclaim pass cannot keep a cold
+// tenant pinned by inspecting it.
+func (e *Engine) HasOpen(tenant string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lru.contains(tenant)
+}
+
 // MaxOpenTenants reports the resident-handle ceiling actually in force, which
 // is the configured value after defaulting — not the raw config field.
 func (e *Engine) MaxOpenTenants() int {
@@ -512,7 +535,18 @@ func (e *Engine) open(tenant string) (*tenantEntry, error) {
 		return nil, fmt.Errorf("engine: invalid tenant %q", tenant)
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	ent, err := e.openLocked(tenant)
+	e.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if err := e.armFlushFromHot(tenant, ent); err != nil {
+		return nil, err
+	}
+	return ent, nil
+}
+
+func (e *Engine) openLocked(tenant string) (*tenantEntry, error) {
 	if ent, ok := e.lru.get(tenant); ok {
 		return ent, nil
 	}
@@ -532,9 +566,42 @@ func (e *Engine) open(tenant string) (*tenantEntry, error) {
 	return ent, nil
 }
 
+// armFlushFromHot reconstructs the flush deadline from the oldest hot row when
+// none is cached. An empty or missing table leaves the tenant unscheduled.
+func (e *Engine) armFlushFromHot(tenant string, te *tenantEntry) error {
+	e.mu.Lock()
+	_, armed := e.flushAt[tenant]
+	e.mu.Unlock()
+	if armed {
+		return nil
+	}
+	var min sql.NullTime
+	te.mu.RLock()
+	//nolint:gosec // G201: hot table name is a package const.
+	err := te.db.QueryRowContext(context.Background(), fmt.Sprintf("SELECT MIN(ts) FROM %s", hotCurrentTable)).Scan(&min)
+	te.mu.RUnlock()
+	if err != nil {
+		if tableMissing(errString(err)) {
+			return nil
+		}
+		return fmt.Errorf("engine: min hot ts: %w", err)
+	}
+	if !min.Valid {
+		return nil
+	}
+	e.mu.Lock()
+	if _, ok := e.flushAt[tenant]; !ok {
+		e.flushAt[tenant] = min.Time.UTC().Add(e.cfg.HotWindow)
+	}
+	e.mu.Unlock()
+	return nil
+}
+
 type tenantEntry struct {
-	db   *sql.DB
-	path string
+	db        *sql.DB
+	snap      *sql.DB // second pool on the same connector; snapshot I/O must not occupy the writer
+	connector *duckdb.Connector
+	path      string
 	// mu serializes access to the embedded database: a flush is a multi-statement
 	// catalog sequence (rename the hot table aside, recreate it), so a write must
 	// hold this exclusively while reads take it shared. Overlapping a write with
@@ -591,8 +658,10 @@ func openTenant(dataDir, tenant string, cfg Config) (*tenantEntry, error) { //no
 	// routing statements across pooled connections lets a reader observe a
 	// catalog snapshot from before a committed write on another connection.
 	db.SetMaxOpenConns(1)
+	snap := sql.OpenDB(connector)
+	snap.SetMaxOpenConns(1)
 	metrics.DuckDBOpen(metrics.RoleEngine)
-	return &tenantEntry{db: db, path: path}, nil
+	return &tenantEntry{db: db, snap: snap, connector: connector, path: path}, nil
 }
 
 func (te *tenantEntry) ensureHotCurrent() error {
@@ -707,6 +776,11 @@ func (l *tenantLRU) get(tenant string) (*tenantEntry, bool) {
 	return el.Value.(*lruItem).entry, true
 }
 
+func (l *tenantLRU) contains(tenant string) bool {
+	_, ok := l.items[tenant]
+	return ok
+}
+
 func (l *tenantLRU) add(tenant string, ent *tenantEntry) {
 	if el, ok := l.items[tenant]; ok {
 		el.Value.(*lruItem).entry = ent
@@ -737,12 +811,19 @@ func (l *tenantLRU) evictOldest() {
 }
 
 func closeTenantDB(te *tenantEntry) {
-	if te == nil || te.db == nil {
+	if te == nil {
 		return
 	}
-	_ = te.db.Close()
-	te.db = nil
-	metrics.DuckDBClose(metrics.RoleEngine)
+	if te.snap != nil {
+		_ = te.snap.Close()
+		te.snap = nil
+	}
+	if te.db != nil {
+		_ = te.db.Close()
+		te.db = nil
+		metrics.DuckDBClose(metrics.RoleEngine)
+	}
+	te.connector = nil
 }
 
 func (l *tenantLRU) closeAll() error {

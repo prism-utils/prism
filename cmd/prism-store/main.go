@@ -830,6 +830,9 @@ func runServe(ctx context.Context, cfg *serverConfig, logger *slog.Logger, owned
 	cfg.compactor = runner
 
 	if cfg.runJobs {
+		if err := runner.GCScratch(); err != nil {
+			logger.Error("boot scratch gc", "err", err)
+		}
 		startBackgroundLoop(ctx, runner, cfg, logger)
 	} else {
 		logger.Info("prism-store background jobs disabled")

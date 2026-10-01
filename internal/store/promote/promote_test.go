@@ -76,6 +76,15 @@ func TestCopyAtomicRejectsBrokenParquet(t *testing.T) {
 }
 
 func TestGCRemovesPromoteTempsLeavesFinal(t *testing.T) {
+	testPromoteGCStillRemovesPromoteTmp(t)
+}
+
+func TestPromoteGCStillRemovesPromoteTmp(t *testing.T) {
+	testPromoteGCStillRemovesPromoteTmp(t)
+}
+
+func testPromoteGCStillRemovesPromoteTmp(t *testing.T) {
+	t.Helper()
 	hot := t.TempDir()
 	cold := t.TempDir()
 	tenant := "user-a"

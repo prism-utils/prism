@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/prism-utils/prism/internal/store/testparquet"
+	"go.uber.org/goleak"
 )
 
 func TestHotSnapshotExportWithinInterval(t *testing.T) {
@@ -201,5 +203,134 @@ func TestConcurrentHotSnapshotSameTenant(t *testing.T) {
 	leftovers, _ := filepath.Glob(filepath.Join(e.cfg.DataDir, testTenant, "hot", "*.tmp"))
 	if len(leftovers) != 0 {
 		t.Fatalf("temp files should not remain: %v", leftovers)
+	}
+}
+
+func TestHotSnapshotDoesNotBlockFlushDue(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	start := time.Unix(1700000000, 0).UTC()
+	clk := start
+	e := New(Config{DataDir: t.TempDir(), HotWindow: 10 * time.Minute}, func() time.Time { return clk })
+	defer func() { _ = e.Close() }()
+
+	path := testparquet.WriteWindow(t, t.TempDir(), "w.parquet", []testparquet.Row{
+		{Name: "up", Labels: "{}", Value: 1, TimestampMs: 0},
+	})
+	if _, err := e.Ingest(testTenant, readFile(t, path)); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	clk = start.Add(10 * time.Minute)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unlock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(func() {
+		exportBarrier = nil
+		unlock()
+	})
+	exportBarrier = func() {
+		close(entered)
+		<-release
+	}
+
+	exportDone := make(chan error, 1)
+	go func() { exportDone <- e.ExportHotSnapshot(testTenant) }()
+
+	select {
+	case <-entered:
+	case err := <-exportDone:
+		t.Fatalf("export returned before barrier: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("export did not reach barrier")
+	}
+
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- e.FlushDue() }()
+
+	select {
+	case err := <-flushDone:
+		if err != nil {
+			t.Fatalf("FlushDue: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("FlushDue blocked behind hot snapshot")
+	}
+
+	segments, err := ListL0(e.cfg.DataDir, testTenant)
+	if err != nil {
+		t.Fatalf("list L0: %v", err)
+	}
+	if len(segments) != 1 {
+		t.Fatalf("want 1 L0 segment before releasing snapshot barrier, got %d", len(segments))
+	}
+
+	unlock()
+	select {
+	case err := <-exportDone:
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("export did not finish after barrier release")
+	}
+}
+
+func TestOverlappingSnapshotsStillSingleExport(t *testing.T) {
+	start := time.Unix(1700000000, 0).UTC()
+	e, _ := testEngine(t, start, time.Hour)
+	ingestOneWindow(t, e, testTenant)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var runs atomic.Int32
+	var releaseOnce sync.Once
+	unlock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(func() {
+		exportBarrier = nil
+		unlock()
+	})
+	exportBarrier = func() {
+		if runs.Add(1) == 1 {
+			close(entered)
+		}
+		<-release
+	}
+
+	const overlap = 8
+	begin := make(chan struct{})
+	errs := make(chan error, overlap)
+	var wg sync.WaitGroup
+	wg.Add(overlap)
+	for i := 0; i < overlap; i++ {
+		go func() {
+			defer wg.Done()
+			<-begin
+			errs <- e.ExportHotSnapshot(testTenant)
+		}()
+	}
+	close(begin)
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("export did not reach barrier")
+	}
+
+	unlock()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+	}
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("want 1 export, got %d", got)
+	}
+	final := filepath.Join(e.cfg.DataDir, testTenant, "hot", "current.parquet")
+	if _, err := os.Stat(final); err != nil {
+		t.Fatalf("final snapshot missing: %v", err)
 	}
 }

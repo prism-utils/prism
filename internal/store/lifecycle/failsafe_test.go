@@ -196,3 +196,157 @@ func TestExportHotSnapshotsContinuesAfterTenantError(t *testing.T) {
 		t.Fatalf("good tenant snapshot missing: %v", err)
 	}
 }
+
+func TestTickRetentionContinuesAfterUnreadableSegment(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tenant := "user-retunrd01-apps"
+	l0 := layout.TierDir(dataDir, tenant, 0)
+	if err := os.MkdirAll(l0, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	garbage := filepath.Join(l0, "garbage.parquet")
+	if err := os.WriteFile(garbage, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(garbage, now, now); err != nil {
+		t.Fatal(err)
+	}
+	expired := filepath.Join(l0, "expired.parquet")
+	testparquet.WriteSegmentWithTs(t, expired, now.Add(-16*24*time.Hour), "old", 1)
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+	runner := NewRunner(&Config{
+		DataDir:       dataDir,
+		RetentionDays: 15,
+		MaxTier:       8,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickRetention(); err != nil {
+		t.Fatalf("TickRetention: %v", err)
+	}
+	if _, err := os.Stat(garbage); err != nil {
+		t.Fatalf("fresh-mtime unreadable file should remain: %v", err)
+	}
+	if _, err := os.Stat(expired); !os.IsNotExist(err) {
+		t.Fatalf("expired L0 should be deleted, stat err = %v", err)
+	}
+}
+
+func TestTickRetentionDeletesUnreadableOlderThanRetention(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tenant := "user-retunrd02-apps"
+	l0 := layout.TierDir(dataDir, tenant, 0)
+	if err := os.MkdirAll(l0, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	garbage := filepath.Join(l0, "garbage.parquet")
+	if err := os.WriteFile(garbage, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-16 * 24 * time.Hour)
+	if err := os.Chtimes(garbage, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+	runner := NewRunner(&Config{
+		DataDir:       dataDir,
+		RetentionDays: 15,
+		MaxTier:       8,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickRetention(); err != nil {
+		t.Fatalf("TickRetention: %v", err)
+	}
+	if _, err := os.Stat(garbage); !os.IsNotExist(err) {
+		t.Fatalf("unreadable file older than retention should be deleted, stat err = %v", err)
+	}
+}
+
+func TestTickRetentionLeavesCompactedHeldSegment(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tenant := "user-retcmp01-apps"
+	l0 := layout.TierDir(dataDir, tenant, 0)
+	if err := os.MkdirAll(l0, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-16 * 24 * time.Hour)
+	held := filepath.Join(l0, "held.parquet")
+	testparquet.WriteSegmentWithTs(t, held, old, "old", 1)
+	if err := os.WriteFile(layout.CompactedMarker(held), []byte("9999999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(held, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+	runner := NewRunner(&Config{
+		DataDir:       dataDir,
+		RetentionDays: 15,
+		MaxTier:       8,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickRetention(); err != nil {
+		t.Fatalf("TickRetention: %v", err)
+	}
+	if _, err := os.Stat(held); err != nil {
+		t.Fatalf("compacted-held L0 should remain until merge grace purge: %v", err)
+	}
+	if _, err := os.Stat(layout.CompactedMarker(held)); err != nil {
+		t.Fatalf("compacted marker should remain: %v", err)
+	}
+}
+
+func TestTickMergeContinuesAfterUnreadableSegment(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tenant := "user-mergunrd01-apps"
+	l0 := layout.TierDir(dataDir, tenant, 0)
+	if err := os.MkdirAll(l0, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	garbage := filepath.Join(l0, "garbage.parquet")
+	if err := os.WriteFile(garbage, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		path := filepath.Join(l0, string(rune('a'+i))+".parquet")
+		testparquet.WriteSegmentWithTs(t, path, now.Add(time.Duration(i)*time.Minute), "up", float64(i))
+	}
+
+	eng := engine.New(engine.Config{DataDir: dataDir}, func() time.Time { return now })
+	t.Cleanup(func() { _ = eng.Close() })
+	runner := NewRunner(&Config{
+		DataDir:         dataDir,
+		SegmentsPerTier: 6,
+		MaxSegmentBytes: 1 << 30,
+		MaxTier:         8,
+	}, eng, func() time.Time { return now })
+
+	if err := runner.TickMerge(); err != nil {
+		t.Fatalf("TickMerge: %v", err)
+	}
+	if _, err := os.Stat(garbage); err != nil {
+		t.Fatalf("unreadable file should remain after merge: %v", err)
+	}
+	l1, err := os.ReadDir(layout.TierDir(dataDir, tenant, 1))
+	if err != nil {
+		t.Fatalf("L1: %v", err)
+	}
+	var dest int
+	for _, e := range l1 {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".parquet" {
+			dest++
+		}
+	}
+	if dest == 0 {
+		t.Fatal("readable segments should still merge to L1")
+	}
+}

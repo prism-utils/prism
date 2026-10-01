@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/gc"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/logmeta"
 	"github.com/prism-utils/prism/internal/store/materialize"
@@ -520,14 +521,37 @@ func (r *Runner) mergeLogsArtifact(tenant, artifact string, planner *merge.Plann
 	return errors.Join(errs...)
 }
 
-// TickRetention deletes expired tier segments and rollup files.
+// TickRetention reclaims stale scratch then deletes expired tier segments,
+// rollups, log windows, published hot snapshots, and engine hot rows.
 // Per-tenant and per-file failures are logged and skipped so one bad
 // tenant/file cannot block MAX_LOG_FILES or other tenants.
 func (r *Runner) TickRetention() error {
 	return r.observed(JobRetention, r.tickRetention)
 }
 
+// GCScratch reclaims stale snapshot temps, query pins, and engine spill for
+// every tenant. Per-tenant errors are logged and skipped; a listing failure
+// is the only error returned.
+func (r *Runner) GCScratch() error {
+	tenants, err := listTenants(r.cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	now := r.clock()
+	grace := r.cfg.DeleteGrace
+	for _, tenant := range tenants {
+		open := r.eng != nil && r.eng.HasOpen(tenant)
+		if err := gc.Tenant(r.cfg.DataDir, tenant, now, grace, open); err != nil {
+			r.log.Error("scratch gc", "tenant", tenant, "err", err)
+		}
+	}
+	return nil
+}
+
 func (r *Runner) tickRetention() error {
+	if err := r.GCScratch(); err != nil {
+		return err
+	}
 	tenants, err := listTenants(r.cfg.DataDir)
 	if err != nil {
 		return err
@@ -553,6 +577,25 @@ func (r *Runner) tickRetention() error {
 					r.log.Error("retention delete segment", "tenant", tenant, "path", del.Segment.Path, "err", err)
 				}
 			}
+			roots := []string{r.cfg.DataDir}
+			if layout.ColdEnabled(r.cfg.ColdDir) {
+				roots = append(roots, r.cfg.ColdDir)
+			}
+			for _, root := range roots {
+				for tier := 0; tier <= r.cfg.MaxTier; tier++ {
+					dir := layout.TierDir(root, tenant, tier)
+					paths, listErr := merge.UnreadableExpired(dir, segs, cutoff)
+					if listErr != nil {
+						r.log.Error("retention unreadable listing", "tenant", tenant, "path", dir, "err", listErr)
+						continue
+					}
+					for _, path := range paths {
+						if err := removePath(path); err != nil {
+							r.log.Error("retention delete unreadable", "tenant", tenant, "path", path, "err", err)
+						}
+					}
+				}
+			}
 			if err := metricsmeta.SyncAfterChangeRoots(context.Background(), r.cfg.DataDir, r.cfg.ColdDir, tenant); err != nil {
 				r.log.Error("retention metrics catalog", "tenant", tenant, "err", err)
 			}
@@ -560,6 +603,11 @@ func (r *Runner) tickRetention() error {
 		r.deleteExpiredRollups(tenant, cutoff)
 		if err := r.retainLogsTenant(tenant, now); err != nil {
 			r.log.Error("retention logs", "tenant", tenant, "err", err)
+		}
+		if r.eng != nil {
+			if err := r.eng.RetainHot(tenant, cutoff); err != nil {
+				r.log.Error("retention hot", "tenant", tenant, "err", err)
+			}
 		}
 	}
 	return nil

@@ -23,6 +23,10 @@ const (
 
 var legacyIngestNanosRe = regexp.MustCompile(`^metrics-raw-(\d+)-`)
 
+// exportBarrier parks after any tenant lock is released and before snapshot
+// COPY/ATTACH. Nil in production.
+var exportBarrier func()
+
 // ExportHotSnapshot writes hot/current.parquet for one tenant. Concurrent calls
 // for the same tenant share one export instead of running overlapping exports
 // against the same tenant database, so a dashboard firing many queries at once
@@ -64,11 +68,10 @@ func (e *Engine) exportHotSnapshot(tenant string) error {
 		return err
 	}
 	selectSQL := fmt.Sprintf("SELECT * FROM %s ORDER BY ts", hotCurrentTable)
-	// The DuckDB export ATTACHes and DETACHes a database on the tenant
-	// connection, which mutates its catalog, so the export is a writer and takes
-	// the lock exclusively.
-	te.mu.Lock()
-	defer te.mu.Unlock()
+	snap := te.snap
+	if b := exportBarrier; b != nil {
+		b()
+	}
 
 	format := e.cfg.HotSegmentFormat
 	if format == "" {
@@ -77,13 +80,13 @@ func (e *Engine) exportHotSnapshot(tenant string) error {
 	switch format {
 	case segformat.DuckDB:
 		final := filepath.Join(hotDir, hotSnapshotDuckDB)
-		if err := segformat.AtomicExportDuckDB(te.db, selectSQL, final, e.cfg.DuckDBStorageVersion, segformat.MetricsTable); err != nil {
+		if err := segformat.AtomicExportDuckDB(snap, selectSQL, final, e.cfg.DuckDBStorageVersion, segformat.MetricsTable); err != nil {
 			return fmt.Errorf("engine: hot snapshot duckdb: %w", err)
 		}
 		_ = os.Remove(filepath.Join(hotDir, hotSnapshotParquet))
 	default:
 		final := filepath.Join(hotDir, hotSnapshotParquet)
-		if err := atomicCopyTo(te.db, selectSQL, final, e.cfg.RowGroupSize); err != nil {
+		if err := atomicCopyTo(snap, selectSQL, final, e.cfg.RowGroupSize); err != nil {
 			return fmt.Errorf("engine: hot snapshot copy: %w", err)
 		}
 		_ = os.Remove(filepath.Join(hotDir, hotSnapshotDuckDB))
@@ -114,7 +117,7 @@ func (e *Engine) importLegacyMetricsRaw(tenant string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = te.db.Close() }()
+	defer closeTenantDB(te)
 	l0Dir := tierDir(e.cfg.DataDir, tenant, 0)
 	if err := os.MkdirAll(l0Dir, 0o750); err != nil {
 		return err
