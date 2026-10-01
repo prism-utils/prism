@@ -823,7 +823,7 @@ see [`STORE.md`](STORE.md).
 | `PROMQL_MAX_SAMPLES` | int | `50000000` | Max samples a single PromQL query may load into memory (mirrors Prometheus `--query.max-samples`); exceeding returns `422`. |
 | `PROMQL_TIMEOUT_SECONDS` | int (seconds) | `30` | Per-query timeout for the PromQL API. |
 | `QUERY_HOT_ONLY` | bool | `false` | When `true`, structured query, `/sql`, and PromQL sandboxes union only the hot snapshot (no tier/rollup files). A request cannot widen this. When `false`, those planes still skip files whose catalog `[min_ts, max_ts]` misses the query window, and auto-select the snapshot when the window sits inside snapshot coverage (stats first; `HOT_WINDOW_*` only if stats are missing). |
-| `RETENTION_DAYS` | int | `15` | Delete metrics tier segments, rollups, and log windows strictly older than this window. Empty/corrupt rollups are deleted without aborting the tick; per-tenant errors are logged and skipped. |
+| `RETENTION_DAYS` | int | `15` | Delete metrics tier segments, rollups, log windows, published hot snapshots, and engine hot rows strictly older than this window. Empty/corrupt rollups are deleted without aborting the tick; per-tenant errors are logged and skipped. Live `engine.duckdb` is not unlinked. |
 | `RETENTION_TICK_HOURS` | int (hours) | `1` | Retention ticker interval when `RETENTION_TICK_SECONDS` is unset. |
 | `RETENTION_TICK_SECONDS` | int (seconds) | _(unset)_ | Retention ticker in seconds; overrides hours when set to a positive integer. |
 | `ROLLUP_STEPS` | string (comma-separated) | `1m,5m,1h` | Rollup intervals materialized after L1+ merges. Label-less; PromQL and `/sql` do not read them. Use `MATERIALIZATIONS_FILE` for Grafana-queryable merge-time SQL. |

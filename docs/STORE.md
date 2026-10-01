@@ -28,7 +28,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | **Merges** | Background tier merges (`MERGE_TICK_SECONDS`); honors `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT`. |
 | **Rollups** | Downsampled Parquet under `rollups/{step}/` after L1+ merges (`ROLLUP_STEPS`); same DuckDB caps as merges. PromQL/`/sql` do not read them. |
 | **Materializations** | Named merge-time SQL parquet under `materializations/<name>/` (`MATERIALIZATIONS_FILE`); `/sql` view `mat_<name>`. |
-| **Retention** | Deletes expired tier segments and rollups (`RETENTION_DAYS`, retention ticker). |
+| **Retention** | Deletes expired tier segments, rollups, log windows, published hot snapshots, and engine hot rows (`RETENTION_DAYS`, retention ticker). |
 | **Structured query** | `GET /{ns}/query?start=&end=&step=` — union over hot + tiers + rollups; optional hot-only (`QUERY_HOT_ONLY`). |
 | **Arbitrary SQL** | `POST /{ns}/sql` — read-only SQL in a per-request sandbox; JSON (default) or Arrow IPC stream on the **same route** via `Accept`. |
 | **PromQL API** | `GET`/`POST /{ns}/api/v1/{query,query_range,series,labels,label/<name>/values}` — Prometheus-compatible read API over the tenant metrics view (`PROMQL_API_ENABLED`, default on). Metrics-only. |
@@ -531,7 +531,7 @@ Two tables, created idempotently on first open:
 
 Schema: `("__name__" VARCHAR, labels VARCHAR, value DOUBLE, timestamp_ms BIGINT, ts TIMESTAMP)`.
 
-**Ingest** streams a contract-v1 parquet window into `hot_current`. Empty bodies are a no-op `(0, nil)`. Non-empty inserts use `ts = clock().UTC()` (ingest time, bound as a SQL parameter — not `timestamp_ms`). The first insert into an empty schedule sets flush at `now + HotWindow` (default 10 minutes). If that in-memory deadline is missing (process restart, or a tenant that was never ingested in this process), it is reconstructed as `min(hot_current.ts) + HotWindow`. An empty or missing table does not arm. Later ingest does not move an already-armed deadline.
+**Ingest** streams a contract-v1 parquet window into `hot_current`. Empty bodies are a no-op `(0, nil)`. Non-empty inserts use `ts = clock().UTC()` (ingest time, bound as a SQL parameter — not `timestamp_ms`). The first insert into an empty schedule sets flush at `now + HotWindow` (default 10 minutes). If that in-memory deadline is missing (process restart, or a tenant that was never ingested in this process), it is reconstructed as `min(hot_current.ts) + HotWindow`. An empty or missing table does not arm. Later ingest does not move an already-armed deadline. Expired hot rows are dropped by the retention tick even if this window never elapsed.
 
 ### Hot → L0 flush
 
@@ -551,7 +551,11 @@ Multiple ingests within one hot window accumulate in `hot_current` and produce a
 self-contained (no required sibling `.wal`). The alternate hot filename is removed
 on successful export so a format flip does not double-count. Live tenant
 `engine.duckdb` is unchanged. Reads see in-flight rows; a background ticker
-exports every `HOT_SNAPSHOT_SECONDS` (default 15s).
+exports every `HOT_SNAPSHOT_SECONDS` (default 15s). Retention unlinks the
+published snapshot when no hot rows remain, or rewrites it from `hot_current`
+when expired rows were dropped and some rows stay. Crash temps and query pins
+under `hot/` are scratch: the retention tick (and boot when jobs run) deletes
+them after a short grace; in-flight files younger than that grace stay.
 
 The query sandbox pins `hot/current.parquet` and `hot/current.duckdb` to a unique
 sibling (`hot/.read-*`) for the request lifetime (hardlink; copy if the pin
@@ -625,7 +629,7 @@ Background work runs in one goroutine with four independent tickers started from
 | Hot snapshot | 15s | `ExportHotSnapshots` |
 | Flush | 30s | `FlushDue` (hot→L0) |
 | Merge | 60s | One bounded merge per tenant (lowest tier first) |
-| Retention | 1h | Delete expired tier segments and rollup files |
+| Retention | 1h | Delete expired tier segments, rollups, log windows, published hot snapshots, and engine hot rows |
 
 ### Tiered compaction (`internal/store/merge`)
 
@@ -739,7 +743,27 @@ does not read arbitrary-schema materializations in v1.
 
 ### Retention
 
-Tier segments with `MaxTs` **strictly before** `now − RETENTION_DAYS` are deleted (default 15 days kept, 16 days deleted at the boundary). The same `RETENTION_DAYS` window applies to metrics tiers, rollup files (by max `bucket`), and log window age. Rollup files that are empty or corrupt (`MAX(bucket)` NULL / unreadable) are deleted on the retention tick without aborting the pass. `MAX_LOG_FILES` (when set) caps log files per artifact across landing + tiers; enforcement continues even if a peer tenant's rollup step fails.
+The retention tick deletes data whose timestamp is **strictly before**
+`now − RETENTION_DAYS` (default 15 days kept; a value equal to the cutoff is
+kept). That window covers metrics tier segments (`MaxTs`), rollup files (max
+`bucket`), log window age, published hot snapshots, and rows in the live engine
+catalog (`hot_current` and `hot_prev`). Unmerged L0 older than the window is
+deleted even if it was never compacted or promoted.
+
+Live `engine.duckdb` is never unlinked while the tenant may still be open;
+expired rows are dropped in place and the catalog is checkpointed. If no hot
+rows remain, the published snapshot (`hot/current.parquet` /
+`hot/current.duckdb` and its `.wal`) is removed. If some rows remain, the
+snapshot is rewritten from `hot_current`. Retention does not flush hot rows to
+L0; flush stays on its own ticker so a quiet tenant still loses rows older than
+`RETENTION_DAYS` even when they never left the hot catalog.
+
+Rollup files that are empty or corrupt (`MAX(bucket)` NULL / unreadable) are
+deleted on the retention tick without aborting the pass. `MAX_LOG_FILES` (when
+set) caps log files per artifact on the landing zone; enforcement continues even
+if a peer tenant's rollup step fails. Scratch under `hot/` (orphan export temps,
+query pins) and engine spill are reclaimed on the same tick, and once at boot
+when jobs run, with a short grace so in-flight files stay.
 
 ### Metering (`internal/store/stats`)
 

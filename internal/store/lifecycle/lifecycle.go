@@ -521,9 +521,10 @@ func (r *Runner) mergeLogsArtifact(tenant, artifact string, planner *merge.Plann
 	return errors.Join(errs...)
 }
 
-// TickRetention reclaims stale scratch then deletes expired tier segments
-// and rollup files. Per-tenant and per-file failures are logged and skipped
-// so one bad tenant/file cannot block MAX_LOG_FILES or other tenants.
+// TickRetention reclaims stale scratch then deletes expired tier segments,
+// rollups, log windows, published hot snapshots, and engine hot rows.
+// Per-tenant and per-file failures are logged and skipped so one bad
+// tenant/file cannot block MAX_LOG_FILES or other tenants.
 func (r *Runner) TickRetention() error {
 	return r.observed(JobRetention, r.tickRetention)
 }
@@ -602,6 +603,11 @@ func (r *Runner) tickRetention() error {
 		r.deleteExpiredRollups(tenant, cutoff)
 		if err := r.retainLogsTenant(tenant, now); err != nil {
 			r.log.Error("retention logs", "tenant", tenant, "err", err)
+		}
+		if r.eng != nil {
+			if err := r.eng.RetainHot(tenant, cutoff); err != nil {
+				r.log.Error("retention hot", "tenant", tenant, "err", err)
+			}
 		}
 	}
 	return nil
