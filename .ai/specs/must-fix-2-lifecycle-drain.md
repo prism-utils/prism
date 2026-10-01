@@ -1,6 +1,6 @@
 # Spec: must-fix-2 lifecycle drain
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `cursor/must-fix-2-lifecycle-b991`
 - **Owner phase:** developer
@@ -108,21 +108,15 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 ## 6. Mandatory review gates  (reviewer owns)
 
 - [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md)
-  - Prove UnreadableExpired does not unlink a CompactedSet-held segment whose mtime is older than the retention cutoff (spec: Skip CompactedSet); listed unreadable tests never plant a `.compacted` sidecar.
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md)
 - [x] **Gate 3 — Docs & comments match the task and the delivered code**
 - [x] **Gate 4 — Comments are atomic**
-- [ ] Full docs/REVIEW.md checklist passes
-  - REVIEW.md edge-case gate fails until CompactedSet skip is covered; other checklist items held.
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-Verdict: **CHANGES_REQUESTED**.
+Verdict: **ALL_OK**.
 
-`git log origin/main..HEAD` is test-first per slice (#184 → #187 → #185 → #188 → #186): `test:` then `feat`/`fix` then `docs(specs)`. Conventional Commits; no `--no-verify` evidence.
+Re-review after `b7663b5` (`TestTickRetentionLeavesCompactedHeldSegment`): plants `held.parquet` + `.compacted` marker with mtime 16d before a 15d cutoff; `TickRetention` leaves both. `go test -count=1 -race -tags duckdb_arrow ./internal/store/lifecycle/ -run TestTickRetentionLeavesCompactedHeldSegment` PASS (0.06s). `make lint test` exit 0.
 
-`make lint test`: exit 0 (golangci-lint 0 issues; `go test -race -tags duckdb_arrow ./...` all ok). `make full-tests`: exit 0 (`full-tests: OK`; e2e 439s). Compose `deploy-http-sink-1` failed to bind `:18080` (kubectl port-forward pid 2961202); integration package was cached. Store lifecycle coverage is the unit tests, which ran.
-
-Gate 1/3/4 hold: leaf `internal/store/gc`, no pipeline cycles, no new deps, STORE.md/CONFIG.md match the listed invariants, new comments describe local intent (no file/function pointers). Extra tests beyond the named list are used (grace floor, missing dirs, HasOpen peek, boot RUN_JOBS). `TestPromoteGCStillRemovesPromoteTmp` duplicates `TestGCRemovesPromoteTempsLeavesFinal` via a shared helper — not blocking.
-
-Blocking: CompactedSet skip on the unreadable retention complement. Held merge sources are absent from the live scan; without the skip, mtime deletion would unlink them before delete-grace purge. Add that case, then re-hand IN_REVIEW.
+Prior CHANGES_REQUESTED CompactedSet gap is closed. Gates 1–4 hold. Ready to merge.
