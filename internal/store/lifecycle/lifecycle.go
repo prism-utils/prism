@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prism-utils/prism/internal/store/engine"
+	"github.com/prism-utils/prism/internal/store/gc"
 	"github.com/prism-utils/prism/internal/store/layout"
 	"github.com/prism-utils/prism/internal/store/logmeta"
 	"github.com/prism-utils/prism/internal/store/materialize"
@@ -520,14 +521,36 @@ func (r *Runner) mergeLogsArtifact(tenant, artifact string, planner *merge.Plann
 	return errors.Join(errs...)
 }
 
-// TickRetention deletes expired tier segments and rollup files.
-// Per-tenant and per-file failures are logged and skipped so one bad
-// tenant/file cannot block MAX_LOG_FILES or other tenants.
+// TickRetention reclaims stale scratch then deletes expired tier segments
+// and rollup files. Per-tenant and per-file failures are logged and skipped
+// so one bad tenant/file cannot block MAX_LOG_FILES or other tenants.
 func (r *Runner) TickRetention() error {
 	return r.observed(JobRetention, r.tickRetention)
 }
 
+// GCScratch reclaims stale snapshot temps, query pins, and engine spill for
+// every tenant. Per-tenant errors are logged and skipped; a listing failure
+// is the only error returned.
+func (r *Runner) GCScratch() error {
+	tenants, err := listTenants(r.cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	now := r.clock()
+	grace := r.cfg.DeleteGrace
+	for _, tenant := range tenants {
+		open := r.eng != nil && r.eng.HasOpen(tenant)
+		if err := gc.Tenant(r.cfg.DataDir, tenant, now, grace, open); err != nil {
+			r.log.Error("scratch gc", "tenant", tenant, "err", err)
+		}
+	}
+	return nil
+}
+
 func (r *Runner) tickRetention() error {
+	if err := r.GCScratch(); err != nil {
+		return err
+	}
 	tenants, err := listTenants(r.cfg.DataDir)
 	if err != nil {
 		return err

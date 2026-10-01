@@ -492,6 +492,15 @@ func (e *Engine) OpenTenants() int {
 	return e.lru.len()
 }
 
+// HasOpen reports whether a tenant currently holds a resident database handle.
+// The lookup does not refresh recency, so a reclaim pass cannot keep a cold
+// tenant pinned by inspecting it.
+func (e *Engine) HasOpen(tenant string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lru.contains(tenant)
+}
+
 // MaxOpenTenants reports the resident-handle ceiling actually in force, which
 // is the configured value after defaulting — not the raw config field.
 func (e *Engine) MaxOpenTenants() int {
@@ -705,6 +714,11 @@ func (l *tenantLRU) get(tenant string) (*tenantEntry, bool) {
 	}
 	l.order.MoveToFront(el)
 	return el.Value.(*lruItem).entry, true
+}
+
+func (l *tenantLRU) contains(tenant string) bool {
+	_, ok := l.items[tenant]
+	return ok
 }
 
 func (l *tenantLRU) add(tenant string, ent *tenantEntry) {
