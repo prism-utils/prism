@@ -1,6 +1,6 @@
 # Spec: must-fix-2 lifecycle drain
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/must-fix-2-lifecycle-b991`
 - **Owner phase:** developer
@@ -93,17 +93,17 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 ### Slice #186 hot retention
 
-- [ ] `Engine.RetainHot(tenant, cutoff)`: exclusive lock; DROP or DELETE expired rows in `hot_current` and `hot_prev` (`ts` strictly before cutoff); CHECKPOINT; never unlink `engine.duckdb`. If no remaining rows, unlink published `hot/current.{parquet,duckdb}` (+ wal). If mixed delete happened, `ExportHotSnapshot`.
-- [ ] `tickRetention` always calls `RetainHot` per tenant (even if tier scan failed); log and continue.
-- [ ] Tests: `TestTickRetentionDeletesExpiredHotSnapshotAndEngineRows`, `TestTickRetentionKeepsHotSnapshotInsideWindow` (inside + equal-cutoff keep), `TestTickRetentionZeroIngestStillDeletes` (INSERT via engine DB, never Ingest after runner construction), keep logs file-cap tests and L0 age deletion.
+- [x] `Engine.RetainHot(tenant, cutoff)`: exclusive lock; DROP or DELETE expired rows in `hot_current` and `hot_prev` (`ts` strictly before cutoff); CHECKPOINT; never unlink `engine.duckdb`. If no remaining rows, unlink published `hot/current.{parquet,duckdb}` (+ wal). If mixed delete happened, `ExportHotSnapshot`.
+- [x] `tickRetention` always calls `RetainHot` per tenant (even if tier scan failed); log and continue.
+- [x] Tests: `TestTickRetentionDeletesExpiredHotSnapshotAndEngineRows`, `TestTickRetentionKeepsHotSnapshotInsideWindow` (inside + equal-cutoff keep), `TestTickRetentionZeroIngestStillDeletes` (INSERT via engine DB, never Ingest after runner construction), keep logs file-cap tests and L0 age deletion.
 
 ### Cross-cutting
 
-- [ ] Tests written first (a `test:` commit precedes implementation) per slice — CONTRIBUTING.md §1
-- [ ] Atomic comments only — CONTRIBUTING.md §3.8
-- [ ] `docs/STORE.md` Hot window, Hot snapshot, Retention, Lifecycle table match the three epic invariants
-- [ ] `docs/CONFIG.md` `RETENTION_DAYS` names hot snapshot + engine rows
-- [ ] `make lint test` green; `make full-tests` green (I/O + engine wiring)
+- [x] Tests written first (a `test:` commit precedes implementation) per slice — CONTRIBUTING.md §1
+- [x] Atomic comments only — CONTRIBUTING.md §3.8
+- [x] `docs/STORE.md` Hot window, Hot snapshot, Retention, Lifecycle table match the three epic invariants
+- [x] `docs/CONFIG.md` `RETENTION_DAYS` names hot snapshot + engine rows
+- [x] `make lint test` green; `make full-tests` green (I/O + engine wiring)
 
 ## 6. Mandatory review gates  (reviewer owns)
 
