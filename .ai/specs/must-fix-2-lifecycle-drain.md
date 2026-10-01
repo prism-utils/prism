@@ -77,12 +77,12 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 ### Slice #185 durable flush
 
-- [ ] Reconstruct `flushAt` from `MIN(hot_current.ts)+HotWindow` when missing. Empty/missing table does not arm.
-- [ ] `open` arms after `ensureHotCurrent`.
-- [ ] `FlushDue` lists on-disk tenants (`listDataTenants`), arms if missing, flushes due tenants. Skip dirs with no `engine.duckdb`.
-- [ ] Ingest / IngestDuckDB: **open first**, then `maybeFlushDue`, then insert, then `scheduleFlush`.
-- [ ] `scheduleFlush` still once-if-missing. Light ingest must not reset an overdue reconstructed deadline.
-- [ ] Tests: `TestFlushDueWithoutIngestAfterHotWindow`, `TestFlushScheduleSurvivesEngineRestart` (shared DataDir, Close, New, FlushDue), `TestFlushScheduleArmedFromExistingHotRowsOnOpen`, `TestEmptyHotDoesNotArmFlush`, keep `TestFlushAfterHotWindowCreatesOneL0SegmentSortedByTs`. No schedule filename asserts.
+- [x] Reconstruct `flushAt` from `MIN(hot_current.ts)+HotWindow` when missing. Empty/missing table does not arm.
+- [x] `open` arms after `ensureHotCurrent`.
+- [x] `FlushDue` lists on-disk tenants (`listDataTenants`), arms if missing, flushes due tenants. Skip dirs with no `engine.duckdb`.
+- [x] Ingest / IngestDuckDB: **open first**, then `maybeFlushDue`, then insert, then `scheduleFlush`.
+- [x] `scheduleFlush` still once-if-missing. Light ingest must not reset an overdue reconstructed deadline.
+- [x] Tests: `TestFlushDueWithoutIngestAfterHotWindow`, `TestFlushScheduleSurvivesEngineRestart` (shared DataDir, Close, New, FlushDue), `TestFlushScheduleArmedFromExistingHotRowsOnOpen`, `TestEmptyHotDoesNotArmFlush`, keep `TestFlushAfterHotWindowCreatesOneL0SegmentSortedByTs`. No schedule filename asserts.
 
 ### Slice #188 snapshot vs flush
 
