@@ -86,10 +86,10 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 ### Slice #188 snapshot vs flush
 
-- [ ] Keep `te.db` `MaxOpenConns(1)`. Store Connector on `tenantEntry`; `te.snap = sql.OpenDB(connector)` MaxOpenConns(1). Close snap with the writer.
-- [ ] `exportHotSnapshot` runs COPY/ATTACH on `te.snap` **without** holding `te.mu` for that I/O. Keep `exportGroup.Do`.
-- [ ] Unexported `exportBarrier func()` (nil in prod) invoked after any lock release, before COPY/ATTACH. Tests only.
-- [ ] Tests: `TestHotSnapshotDoesNotBlockFlushDue` (channel barrier, FlushDue returns before release, L0 exists, goleak, -race); `TestOverlappingSnapshotsStillSingleExport`; keep existing flush/snapshot failsafe tests. No Sleep.
+- [x] Keep `te.db` `MaxOpenConns(1)`. Store Connector on `tenantEntry`; `te.snap = sql.OpenDB(connector)` MaxOpenConns(1). Close snap with the writer.
+- [x] `exportHotSnapshot` runs COPY/ATTACH on `te.snap` **without** holding `te.mu` for that I/O. Keep `exportGroup.Do`.
+- [x] Unexported `exportBarrier func()` (nil in prod) invoked after any lock release, before COPY/ATTACH. Tests only.
+- [x] Tests: `TestHotSnapshotDoesNotBlockFlushDue` (channel barrier, FlushDue returns before release, L0 exists, goleak, -race); `TestOverlappingSnapshotsStillSingleExport`; keep existing flush/snapshot failsafe tests. No Sleep.
 
 ### Slice #186 hot retention
 
