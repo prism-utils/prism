@@ -71,9 +71,9 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 ### Slice #187 ScanTier
 
-- [ ] `ScanTier`: on `StatSegment` error, `slog.Error("stat segment", "path", path, "err", err)` and continue. `ReadDir` errors other than IsNotExist still return.
-- [ ] `UnreadableExpired` listing complement used only from `tickRetention` after a successful `ScanAllTiersRoots`. Delete `isSegmentFile` names not in live scan whose mtime is strictly before cutoff. Skip CompactedSet. Do not StatSegment again.
-- [ ] Tests: `TestScanTierOmitsUnreadableSegment`, `TestScanTierEmptyDir`, keep `TestScanTierSkipsRetiredSegments`; `TestTickRetentionContinuesAfterUnreadableSegment` (fresh-mtime garbage remains, expired good L0 gone); `TestTickRetentionDeletesUnreadableOlderThanRetention`; `TestTickMergeContinuesAfterUnreadableSegment`.
+- [x] `ScanTier`: on `StatSegment` error, `slog.Error("stat segment", "path", path, "err", err)` and continue. `ReadDir` errors other than IsNotExist still return.
+- [x] `UnreadableExpired` listing complement used only from `tickRetention` after a successful `ScanAllTiersRoots`. Delete `isSegmentFile` names not in live scan whose mtime is strictly before cutoff. Skip CompactedSet. Do not StatSegment again.
+- [x] Tests: `TestScanTierOmitsUnreadableSegment`, `TestScanTierEmptyDir`, keep `TestScanTierSkipsRetiredSegments`; `TestTickRetentionContinuesAfterUnreadableSegment` (fresh-mtime garbage remains, expired good L0 gone); `TestTickRetentionDeletesUnreadableOlderThanRetention`; `TestTickMergeContinuesAfterUnreadableSegment`.
 
 ### Slice #185 durable flush
 
