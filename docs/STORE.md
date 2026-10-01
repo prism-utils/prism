@@ -22,7 +22,7 @@ segments, materializes rollups, and exposes read-only query endpoints.
 | Area | Capability |
 |---|---|
 | **Ingest** | HTTP `POST /{ns}/ingest/{artifact}` (Parquet windows) and optional Arrow Flight `DoPut` when `FLIGHT_ADDR` is set — shared validation chain, lands in `hot_current`. |
-| **Hot window** | Time-bounded ingest buffer (`HOT_WINDOW_*`); rolled to `hot_prev`, flushed to L0 on schedule (`FLUSH_TICK_SECONDS`) or opportunistically on ingest. |
+| **Hot window** | Time-bounded ingest buffer (`HOT_WINDOW_*`); rolled to `hot_prev`, flushed to L0 on schedule (`FLUSH_TICK_SECONDS`) reconstructed from on-disk hot rows (survives restart), or opportunistically on ingest. |
 | **Hot snapshot** | Near-real-time export of `hot_current` to `hot/current.parquet` or `hot/current.duckdb` (`HOT_SEGMENT_FORMAT`, default `parquet`; `HOT_SNAPSHOT_SECONDS`). |
 | **Tiered storage** | Immutable Parquet segments `L0`…`L{n}` (`MAX_TIER`); Lucene-style merge compaction when `SEGMENTS_PER_TIER` reached. |
 | **Merges** | Background tier merges (`MERGE_TICK_SECONDS`); honors `DUCKDB_THREADS` / `DUCKDB_MEMORY_LIMIT`. |
@@ -531,11 +531,11 @@ Two tables, created idempotently on first open:
 
 Schema: `("__name__" VARCHAR, labels VARCHAR, value DOUBLE, timestamp_ms BIGINT, ts TIMESTAMP)`.
 
-**Ingest** streams a contract-v1 parquet window into `hot_current`. Empty bodies are a no-op `(0, nil)`. Non-empty inserts use `ts = clock().UTC()` (ingest time, bound as a SQL parameter — not `timestamp_ms`). The first insert into an empty schedule sets flush at `now + HotWindow` (default 10 minutes).
+**Ingest** streams a contract-v1 parquet window into `hot_current`. Empty bodies are a no-op `(0, nil)`. Non-empty inserts use `ts = clock().UTC()` (ingest time, bound as a SQL parameter — not `timestamp_ms`). The first insert into an empty schedule sets flush at `now + HotWindow` (default 10 minutes). If that in-memory deadline is missing (process restart, or a tenant that was never ingested in this process), it is reconstructed as `min(hot_current.ts) + HotWindow`. An empty or missing table does not arm. Later ingest does not move an already-armed deadline.
 
 ### Hot → L0 flush
 
-When `clock ≥ scheduled` (`FlushDue`, or `maybeFlushDue` on ingest past deadline):
+`FlushDue` walks on-disk tenant directories that contain `engine.duckdb`, reconstructs a missing deadline from hot rows, then flushes tenants whose `clock ≥ scheduled` (ingest past the deadline does the same opportunistically):
 
 1. `DROP hot_prev` → `RENAME hot_current → hot_prev` → recreate empty `hot_current`
 2. If `hot_prev` is empty: drop it and clear the schedule (no L0 file)
