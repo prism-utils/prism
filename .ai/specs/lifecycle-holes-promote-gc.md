@@ -59,16 +59,16 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 ### Slice item 1 — oversized L0 convert (do this first; do not break undersized L0)
 
-- [ ] `promote.Config` grows `MaxSegmentBytes int64`. `<= 0` means "do not convert L0 duckdb" (existing skip).
-- [ ] `listHotCompacted` / `fileRef` already `Stat`s; carry `Bytes` so the skip can compare size.
-- [ ] Keep skipping L0 `.duckdb` when `Bytes < MaxSegmentBytes` **or** `MaxSegmentBytes <= 0`. `TestTenantNeverPromotesL0DuckDB` must still pass unchanged (small file, no / large cap).
-- [ ] When Eligible **and** `.duckdb` **and** tier 0 **and** `Bytes >= MaxSegmentBytes > 0`: convert via the existing L1+ convert path (`recoverOrConvert` → cold `.parquet`). Do not byte-copy `.duckdb` onto cold. Convert failure leaves the hot source; dest unpublished.
-- [ ] Undersized Eligible L0 duckdb still stays on hot (merge path unchanged). Ineligible oversized L0 duckdb (max_ts too new) stays on hot.
-- [ ] `FindMerges` / logs pack still skip `Bytes >= MaxSegmentBytes`. Do not merge oversized in this change.
-- [ ] `lifecycle.promoteConfig` sets `MaxSegmentBytes: r.cfg.MaxSegmentBytes`.
-- [ ] Logs L0 oversized duckdb uses the same rule (already listed by `listHotCompacted`).
-- [ ] `docs/STORE.md`: replace "L0 `.duckdb` never leaves" with: leftover L0 parquet stays eligible; **undersized** L0 duckdb stays on `DATA_DIR` for merge; **oversized** (`>= MAX_SEGMENT_BYTES`) L0 duckdb converts to cold parquet when Eligible.
-- [ ] Tests (fail on current main for the new ones): `TestTenantConvertsEligibleOversizedL0DuckDB` (tiny cap, Eligible, dest parquet, hot unlinked, no cold duckdb); `TestTenantDoesNotConvertIneligibleOversizedL0DuckDB`; keep `TestTenantNeverPromotesL0DuckDB`; keep L1 convert tests. Frozen clock, `t.TempDir()`, no Sleep, no multi-GiB files.
+- [x] `promote.Config` grows `MaxSegmentBytes int64`. `<= 0` means "do not convert L0 duckdb" (existing skip).
+- [x] `listHotCompacted` / `fileRef` already `Stat`s; carry `Bytes` so the skip can compare size.
+- [x] Keep skipping L0 `.duckdb` when `Bytes < MaxSegmentBytes` **or** `MaxSegmentBytes <= 0`. `TestTenantNeverPromotesL0DuckDB` must still pass unchanged (small file, no / large cap).
+- [x] When Eligible **and** `.duckdb` **and** tier 0 **and** `Bytes >= MaxSegmentBytes > 0`: convert via the existing L1+ convert path (`recoverOrConvert` → cold `.parquet`). Do not byte-copy `.duckdb` onto cold. Convert failure leaves the hot source; dest unpublished.
+- [x] Undersized Eligible L0 duckdb still stays on hot (merge path unchanged). Ineligible oversized L0 duckdb (max_ts too new) stays on hot.
+- [x] `FindMerges` / logs pack still skip `Bytes >= MaxSegmentBytes`. Do not merge oversized in this change.
+- [x] `lifecycle.promoteConfig` sets `MaxSegmentBytes: r.cfg.MaxSegmentBytes`.
+- [x] Logs L0 oversized duckdb uses the same rule (already listed by `listHotCompacted`).
+- [x] `docs/STORE.md`: replace "L0 `.duckdb` never leaves" with: leftover L0 parquet stays eligible; **undersized** L0 duckdb stays on `DATA_DIR` for merge; **oversized** (`>= MAX_SEGMENT_BYTES`) L0 duckdb converts to cold parquet when Eligible.
+- [x] Tests (fail on current main for the new ones): `TestTenantConvertsEligibleOversizedL0DuckDB` (tiny cap, Eligible, dest parquet, hot unlinked, no cold duckdb); `TestTenantDoesNotConvertIneligibleOversizedL0DuckDB`; keep `TestTenantNeverPromotesL0DuckDB`; keep L1 convert tests. Frozen clock, `t.TempDir()`, no Sleep, no multi-GiB files.
 
 ### Slice item 4 — sidecar unlink
 

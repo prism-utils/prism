@@ -785,7 +785,8 @@ func (r *Runner) promoteConfig() promote.Config {
 		AfterPromote: func(tenant string) error {
 			return r.afterPromote(tenant)
 		},
-		HoldSource: merge.HoldPath,
+		HoldSource:      merge.HoldPath,
+		MaxSegmentBytes: r.cfg.MaxSegmentBytes,
 	}
 }
 

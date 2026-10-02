@@ -88,10 +88,13 @@ type Stats struct {
 }
 
 // Tenant places eligible compacted files for one tenant from the hot root onto
-// cold. Parquet sources are byte-copied; L1+ DuckDB sources are converted to
-// parquet on the cold filesystem. L0 DuckDB stays on hot. Each file is
-// attempted once per call; a failure leaves the hot source in place so a later
-// call retries. Empty ColdDir is a no-op.
+// cold. Parquet sources are byte-copied. DuckDB sources convert to parquet on
+// the cold filesystem, except undersized L0 which stays on hot so merge can
+// compact it. An Eligible L0 DuckDB at or above the seal size converts too
+// because a sealed file will not shrink under the cap. A missing or
+// non-positive seal size leaves every L0 DuckDB on hot. Each file is attempted
+// once per call; a failure leaves the hot source in place so a later call
+// retries. Empty ColdDir is a no-op.
 func Tenant(c *Config, tenant string) (Stats, error) {
 	var st Stats
 	if c == nil || !Enabled(c.ColdDir) {
@@ -112,7 +115,7 @@ func Tenant(c *Config, tenant string) (Stats, error) {
 		if !ok || !Eligible(f.Tier, maxTs, now, c.after()) {
 			continue
 		}
-		if filepath.Ext(f.Path) == ".duckdb" && f.Tier < 1 {
+		if skipL0DuckDB(c.MaxSegmentBytes, f) {
 			continue
 		}
 		st.Attempts++
@@ -140,9 +143,23 @@ func (c *Config) maxTs(path string) (time.Time, bool) {
 }
 
 type fileRef struct {
-	Path string
-	Rel  string
-	Tier int
+	Path  string
+	Rel   string
+	Tier  int
+	Bytes int64
+}
+
+// skipL0DuckDB reports whether an L0 DuckDB must stay on the hot root. A
+// missing seal size keeps every L0 DuckDB. A file smaller than the seal stays
+// so later compaction can pack it.
+func skipL0DuckDB(maxSegmentBytes int64, f fileRef) bool {
+	if filepath.Ext(f.Path) != ".duckdb" || f.Tier >= 1 {
+		return false
+	}
+	if maxSegmentBytes <= 0 {
+		return true
+	}
+	return f.Bytes < maxSegmentBytes
 }
 
 func listHotCompacted(dataDir, tenant string, maxTier int) ([]fileRef, error) {
@@ -228,9 +245,10 @@ func listSegmentFiles(dir, relPrefix string, tier int) ([]fileRef, error) {
 			continue
 		}
 		out = append(out, fileRef{
-			Path: path,
-			Rel:  relPrefix + "/" + name,
-			Tier: tier,
+			Path:  path,
+			Rel:   relPrefix + "/" + name,
+			Tier:  tier,
+			Bytes: st.Size(),
 		})
 	}
 	return out, nil
