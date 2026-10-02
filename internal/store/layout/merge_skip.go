@@ -2,6 +2,7 @@ package layout
 
 import (
 	"io/fs"
+	"os"
 	"strings"
 )
 
@@ -53,4 +54,15 @@ func MergeSkipSet(entries []fs.DirEntry) map[string]struct{} {
 		out[segment] = struct{}{}
 	}
 	return out
+}
+
+// RemoveSidecars unlinks the skip and attempts markers named beside a segment.
+// A missing marker is success. The segment file itself is not touched.
+func RemoveSidecars(segmentPath string) error {
+	for _, p := range []string{MergeSkipMarker(segmentPath), MergeAttemptsMarker(segmentPath)} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/prism-utils/prism/internal/store/layout"
 )
 
 const gcTenant = "user-gctest-apps"
@@ -189,6 +191,107 @@ func TestTenantGCReclaimsHotAndSpill(t *testing.T) {
 	}
 	mustGone(t, hotTmp)
 	mustGone(t, spill)
+	mustRemain(t, live)
+}
+
+func TestMaterializeGCRemovesStaleDestTmp(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	grace := 120 * time.Second
+	dir := layout.MaterializationDir(dataDir, gcTenant, "last_events")
+	staleParquet := filepath.Join(dir, "seg.parquet.tmp")
+	staleDuck := filepath.Join(dir, "seg.duckdb.tmp")
+	foreign := filepath.Join(dir, "orphan.tmp")
+	writeFile(t, staleParquet, []byte("partial-parquet"), now.Add(-grace-time.Second))
+	writeFile(t, staleDuck, []byte("partial-duck"), now.Add(-grace-time.Second))
+	writeFile(t, foreign, []byte("foreign"), now.Add(-time.Hour))
+
+	if err := Materializations(dataDir, gcTenant, now, grace); err != nil {
+		t.Fatalf("Materializations: %v", err)
+	}
+	mustGone(t, staleParquet)
+	mustGone(t, staleDuck)
+	mustRemain(t, foreign)
+}
+
+func TestMaterializeGCLeavesInFlightTmp(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	grace := 120 * time.Second
+	dir := layout.MaterializationDir(dataDir, gcTenant, "last_events")
+	inFlight := filepath.Join(dir, "seg.parquet.tmp")
+	equal := filepath.Join(dir, "other.duckdb.tmp")
+	writeFile(t, inFlight, []byte("inflight"), now.Add(-grace+time.Second))
+	writeFile(t, equal, []byte("equal"), now.Add(-grace))
+
+	if err := Materializations(dataDir, gcTenant, now, grace); err != nil {
+		t.Fatalf("Materializations: %v", err)
+	}
+	mustRemain(t, inFlight)
+	mustRemain(t, equal)
+}
+
+func TestMaterializeGCLeavesLiveParquet(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	grace := 120 * time.Second
+	dir := layout.MaterializationDir(dataDir, gcTenant, "last_events")
+	liveParquet := filepath.Join(dir, "seg.parquet")
+	liveDuck := filepath.Join(dir, "seg.duckdb")
+	writeFile(t, liveParquet, []byte("live-parquet"), now.Add(-time.Hour))
+	writeFile(t, liveDuck, []byte("live-duck"), now.Add(-time.Hour))
+
+	if err := Materializations(dataDir, gcTenant, now, grace); err != nil {
+		t.Fatalf("Materializations: %v", err)
+	}
+	mustRemain(t, liveParquet)
+	mustRemain(t, liveDuck)
+}
+
+func TestMaterializeGCMissingOrEmptyRoot(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	dataDir := t.TempDir()
+	if err := Materializations(dataDir, gcTenant, now, 120*time.Second); err != nil {
+		t.Fatalf("missing materializations: %v", err)
+	}
+	root := filepath.Join(dataDir, gcTenant, "materializations")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := Materializations(dataDir, gcTenant, now, 0); err != nil {
+		t.Fatalf("empty materializations: %v", err)
+	}
+}
+
+func TestMaterializeGCZeroGraceFloorsAt120s(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	dir := layout.MaterializationDir(dataDir, gcTenant, "last_events")
+	young := filepath.Join(dir, "seg.parquet.tmp")
+	old := filepath.Join(dir, "seg.duckdb.tmp")
+	writeFile(t, young, []byte("young"), now.Add(-60*time.Second))
+	writeFile(t, old, []byte("old"), now.Add(-121*time.Second))
+
+	if err := Materializations(dataDir, gcTenant, now, 0); err != nil {
+		t.Fatalf("Materializations: %v", err)
+	}
+	mustRemain(t, young)
+	mustGone(t, old)
+}
+
+func TestTenantGCReclaimsMaterializeTmp(t *testing.T) {
+	dataDir := t.TempDir()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	grace := 120 * time.Second
+	tmp := filepath.Join(layout.MaterializationDir(dataDir, gcTenant, "last_events"), "seg.parquet.tmp")
+	live := filepath.Join(layout.MaterializationDir(dataDir, gcTenant, "last_events"), "seg.parquet")
+	writeFile(t, tmp, []byte("scratch"), now.Add(-grace-time.Second))
+	writeFile(t, live, []byte("done"), now)
+
+	if err := Tenant(dataDir, gcTenant, now, grace, false); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	mustGone(t, tmp)
 	mustRemain(t, live)
 }
 

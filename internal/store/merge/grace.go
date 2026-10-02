@@ -22,6 +22,9 @@ func retireSources(sources []Segment, now time.Time, grace time.Duration) error 
 			if err := os.Remove(s.Path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("merge: delete %s: %w", s.Path, err)
 			}
+			if err := layout.RemoveSidecars(s.Path); err != nil {
+				return err
+			}
 			continue
 		}
 		if _, err := os.Stat(s.Path); err != nil {
@@ -195,5 +198,5 @@ func removeIfPresent(path string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return nil
+	return layout.RemoveSidecars(path)
 }

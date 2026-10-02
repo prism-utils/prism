@@ -57,3 +57,33 @@ func TestIsEngineScratchAllowlist(t *testing.T) {
 		})
 	}
 }
+
+func TestIsMaterializeScratchAllowlist(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{name: "seg.parquet.tmp", want: true},
+		{name: "seg.duckdb.tmp", want: true},
+		{name: "keep.parquet.tmp", want: true},
+		{name: "keep.duckdb.tmp", want: true},
+		{name: "seg.parquet", want: false},
+		{name: "seg.duckdb", want: false},
+		{name: "current.parquet", want: false},
+		{name: "current.duckdb", want: false},
+		{name: "current.parquet.deadbeef.tmp", want: false},
+		{name: "current.duckdb.deadbeef.tmp", want: false},
+		{name: "orphan.tmp", want: false},
+		{name: "seg.parquet.aaaaaaaa.promote.tmp", want: false},
+		{name: ".read-deadbeef.duckdb", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsMaterializeScratch(tc.name); got != tc.want {
+				t.Fatalf("IsMaterializeScratch(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}

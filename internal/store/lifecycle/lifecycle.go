@@ -529,9 +529,9 @@ func (r *Runner) TickRetention() error {
 	return r.observed(JobRetention, r.tickRetention)
 }
 
-// GCScratch reclaims stale snapshot temps, query pins, and engine spill for
-// every tenant. Per-tenant errors are logged and skipped; a listing failure
-// is the only error returned.
+// GCScratch reclaims stale snapshot temps, query pins, engine spill, and
+// unfinished materialization COPY dests for every tenant. Per-tenant errors
+// are logged and skipped; a listing failure is the only error returned.
 func (r *Runner) GCScratch() error {
 	tenants, err := listTenants(r.cfg.DataDir)
 	if err != nil {
@@ -713,7 +713,7 @@ func removePath(path string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return nil
+	return layout.RemoveSidecars(path)
 }
 
 func listTenants(dataDir string) ([]string, error) {
@@ -785,7 +785,8 @@ func (r *Runner) promoteConfig() promote.Config {
 		AfterPromote: func(tenant string) error {
 			return r.afterPromote(tenant)
 		},
-		HoldSource: merge.HoldPath,
+		HoldSource:      merge.HoldPath,
+		MaxSegmentBytes: r.cfg.MaxSegmentBytes,
 	}
 }
 

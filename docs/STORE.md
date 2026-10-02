@@ -494,11 +494,13 @@ DATA_DIR/
 When `COLD_DATA_DIR` is set, compacted metrics and logs land there after their max
 timestamp is older than `COLD_AFTER` (default 12h). Aged L0 is force-packed
 same-type when a pack exists, then leftover L0 parquet is still eligible.
-**Hot stays DuckDB when configured; cold is always parquet.** Promote byte-copies
-`.parquet` sources (SHA-256 + `PAR1`). Compacted **L1+** `.duckdb` sources are
-converted on the cold filesystem (`COPY … FORMAT parquet` into `*.promote.tmp`,
-then rename) — they are not byte-copied onto HDD. **L0 `.duckdb` never leaves**
-`DATA_DIR` (ATTACH stays on SSD). `hot/`, rollups, materializations, and
+**Undersized** L0 `.duckdb` stays on `DATA_DIR` so merge can compact it to L1.
+**Oversized** L0 `.duckdb` (`Bytes >= MAX_SEGMENT_BYTES`) converts to cold parquet
+when Eligible — merge never packs a sealed file. **Hot stays DuckDB when
+configured; cold is always parquet.** Promote byte-copies `.parquet` sources
+(SHA-256 + `PAR1`). Compacted DuckDB sources that leave hot are converted on the
+cold filesystem (`COPY … FORMAT parquet` into `*.promote.tmp`, then rename) —
+they are not byte-copied onto HDD. `hot/`, rollups, materializations, and
 `_manifest.json` stay on `DATA_DIR`. Query, PromQL, Loki, and `/sql` union both
 roots (ATTACH duckdb + `read_parquet`; no Grafana glob change). Merge still writes
 new L1+ onto `DATA_DIR`, then the promote pass places them. Empty `COLD_DATA_DIR`
