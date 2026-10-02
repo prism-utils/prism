@@ -76,6 +76,77 @@ func TestRetireSourcesWithoutGraceDeletesImmediately(t *testing.T) {
 	mustNotExist(t, layout.CompactedMarker(path), "no marker when nothing is held")
 }
 
+func TestRetireSourcesImmediateDeletesSidecars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "1786140844863329878-aaaaaaaa.parquet")
+	writeSegmentFixture(t, path)
+	writeMergeSidecars(t, path)
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+
+	if err := retireSources([]Segment{{Path: path}}, now, 0); err != nil {
+		t.Fatalf("retireSources: %v", err)
+	}
+	mustNotExist(t, path, "zero grace deletes on the spot")
+	mustSidecarsGone(t, path)
+}
+
+func TestRetireSourcesHoldKeepsSidecars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "1786140844863329878-aaaaaaaa.parquet")
+	writeSegmentFixture(t, path)
+	writeMergeSidecars(t, path)
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+
+	if err := retireSources([]Segment{{Path: path}}, now, 120*time.Second); err != nil {
+		t.Fatalf("retireSources: %v", err)
+	}
+	mustExist(t, path, "held for the delete grace window")
+	mustSidecarsRemain(t, path)
+}
+
+func TestPurgeAfterGraceDeletesSidecars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "1786140844863329878-aaaaaaaa.parquet")
+	writeSegmentFixture(t, path)
+	writeMergeSidecars(t, path)
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	if err := retireSources([]Segment{{Path: path}}, now, 120*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := purgeCompactedDir(dir, now.Add(121*time.Second))
+	if err != nil {
+		t.Fatalf("purgeCompactedDir: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("purged %d segments, want 1 once the deadline passed", n)
+	}
+	mustNotExist(t, path, "grace expired")
+	mustSidecarsGone(t, path)
+}
+
+func writeMergeSidecars(t *testing.T, segmentPath string) {
+	t.Helper()
+	if err := os.WriteFile(layout.MergeSkipMarker(segmentPath), []byte("skip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.MergeAttemptsMarker(segmentPath), []byte("3"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustSidecarsGone(t *testing.T, segmentPath string) {
+	t.Helper()
+	mustNotExist(t, layout.MergeSkipMarker(segmentPath), "merge-skip leaves with the segment")
+	mustNotExist(t, layout.MergeAttemptsMarker(segmentPath), "merge-attempts leaves with the segment")
+}
+
+func mustSidecarsRemain(t *testing.T, segmentPath string) {
+	t.Helper()
+	mustExist(t, layout.MergeSkipMarker(segmentPath), "held source keeps merge-skip")
+	mustExist(t, layout.MergeAttemptsMarker(segmentPath), "held source keeps merge-attempts")
+}
+
 func TestRetireSourcesWithNegativeGraceDeletesImmediately(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "1786140844863329878-aaaaaaaa.parquet")

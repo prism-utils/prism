@@ -206,6 +206,47 @@ func TestRemovePathAlreadyGoneNoError(t *testing.T) {
 	}
 }
 
+func TestRemovePathDeletesSidecars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.parquet")
+	if err := os.WriteFile(path, []byte("seg"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	skip := layout.MergeSkipMarker(path)
+	attempts := layout.MergeAttemptsMarker(path)
+	if err := os.WriteFile(skip, []byte("skip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(attempts, []byte("3"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removePath(path); err != nil {
+		t.Fatalf("removePath: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("segment must be unlinked")
+	}
+	if _, err := os.Stat(skip); !os.IsNotExist(err) {
+		t.Fatal("merge-skip sidecar must leave with the segment")
+	}
+	if _, err := os.Stat(attempts); !os.IsNotExist(err) {
+		t.Fatal("merge-attempts sidecar must leave with the segment")
+	}
+}
+
+func TestRemovePathWithoutSidecarsStillDeletes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plain.parquet")
+	if err := os.WriteFile(path, []byte("seg"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removePath(path); err != nil {
+		t.Fatalf("removePath: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("segment without sidecars must still delete")
+	}
+}
+
 func TestTickRetentionSecondPassNoError(t *testing.T) {
 	dataDir := t.TempDir()
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)

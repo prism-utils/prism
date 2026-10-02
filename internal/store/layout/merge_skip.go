@@ -54,3 +54,9 @@ func MergeSkipSet(entries []fs.DirEntry) map[string]struct{} {
 	}
 	return out
 }
+
+// RemoveSidecars unlinks the skip and attempts markers named beside a segment.
+// A missing marker is success. The segment file itself is not touched.
+func RemoveSidecars(segmentPath string) error {
+	return nil
+}

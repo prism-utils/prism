@@ -123,6 +123,60 @@ func TestTenantParquetL1ByteCopies(t *testing.T) {
 	}
 }
 
+func TestTenantUnlinkRemovesSidecars(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.TierDir(hot, tenant, 1), "seg.parquet")
+	writeFile(t, src, parquetFixture("with-sidecars"))
+	skip := layout.MergeSkipMarker(src)
+	attempts := layout.MergeAttemptsMarker(src)
+	writeFile(t, skip, []byte("skip"))
+	writeFile(t, attempts, []byte("3"))
+	cfg := agedPromoteCfg(hot, cold, now)
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatal("hot source must be unlinked")
+	}
+	if _, err := os.Stat(skip); !os.IsNotExist(err) {
+		t.Fatal("promote unlink must remove merge-skip")
+	}
+	if _, err := os.Stat(attempts); !os.IsNotExist(err) {
+		t.Fatal("promote unlink must remove merge-attempts")
+	}
+}
+
+func TestTenantHoldSourceKeepsSidecars(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.TierDir(hot, tenant, 1), "seg.parquet")
+	writeFile(t, src, parquetFixture("held-sidecars"))
+	skip := layout.MergeSkipMarker(src)
+	attempts := layout.MergeAttemptsMarker(src)
+	writeFile(t, skip, []byte("skip"))
+	writeFile(t, attempts, []byte("3"))
+	cfg := agedPromoteCfg(hot, cold, now)
+	cfg.Grace = time.Minute
+	cfg.HoldSource = func(string, time.Time) error { return nil }
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("held hot source must remain")
+	}
+	if _, err := os.Stat(skip); err != nil {
+		t.Fatal("held source must keep merge-skip until unlink")
+	}
+	if _, err := os.Stat(attempts); err != nil {
+		t.Fatal("held source must keep merge-attempts until unlink")
+	}
+}
+
 func TestTenantNeverPromotesL0DuckDB(t *testing.T) {
 	hot := t.TempDir()
 	cold := t.TempDir()
