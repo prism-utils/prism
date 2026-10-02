@@ -1,9 +1,9 @@
 # Spec: lifecycle holes — oversized L0 convert, sidecar unlink, materialize tmp GC
 
-Status: READY
+Status: IN_REVIEW
 
 - **Slug / branch:** `cursor/lifecycle-holes-b991`
-- **Owner phase:** developer
+- **Owner phase:** reviewer
 - **PLAN phase(s):** store lifecycle / cold promote
 - **Worktree:** `/home/masoas/workdir/cursor-lifecycle-holes-b991/prism`
 
@@ -87,9 +87,9 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 ### Shared
 
-- [ ] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1 — **per slice**.
-- [ ] `make lint test` green locally (+ `make full-tests` because this touches I/O / lifecycle wiring).
-- [ ] No unused tests, no stale comments, no extra features.
+- [x] Tests written first (a `test:` commit precedes implementation) — CONTRIBUTING.md §1 — **per slice**.
+- [x] `make lint test` green locally (+ `make full-tests` because this touches I/O / lifecycle wiring).
+- [x] No unused tests, no stale comments, no extra features.
 
 ## 6. Mandatory review gates  (reviewer owns — unchecks with a reason on failure)
 
