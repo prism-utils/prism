@@ -30,6 +30,11 @@ type Config struct {
 	// HoldSource marks the hot source for delete grace instead of unlinking it
 	// immediately. Nil unlinks as soon as dest verifies.
 	HoldSource func(path string, until time.Time) error
+	// MaxSegmentBytes is the seal size. A non-positive value leaves every L0
+	// DuckDB on the hot root. When positive, an Eligible L0 DuckDB at or above
+	// this size converts onto cold parquet instead of waiting for a merge that
+	// will never pick it.
+	MaxSegmentBytes int64
 }
 
 // Enabled reports whether promote should run.

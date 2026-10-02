@@ -229,6 +229,17 @@ func TestTickRetentionSecondPassNoError(t *testing.T) {
 	}
 }
 
+func TestPromoteConfigPassesMaxSegmentBytes(t *testing.T) {
+	want := int64(42)
+	runner := NewRunner(&Config{MaxSegmentBytes: want}, nil, func() time.Time {
+		return time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	})
+	got := runner.promoteConfig()
+	if got.MaxSegmentBytes != want {
+		t.Fatalf("promoteConfig MaxSegmentBytes=%d, want %d", got.MaxSegmentBytes, want)
+	}
+}
+
 func TestTickMergePromotesEligibleL1LeavesL0(t *testing.T) {
 	hot := t.TempDir()
 	cold := t.TempDir()

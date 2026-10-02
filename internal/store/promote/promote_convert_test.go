@@ -151,6 +151,101 @@ func TestTenantNeverPromotesL0DuckDB(t *testing.T) {
 	}
 }
 
+func TestTenantConvertsEligibleOversizedL0DuckDB(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.TierDir(hot, tenant, 0), "old.duckdb")
+	writeMetricsDuckDB(t, src, 3)
+	cfg := agedPromoteCfg(hot, cold, now)
+	cfg.MaxSegmentBytes = 1
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatal("eligible oversized L0 duckdb must be unlinked after dest verifies")
+	}
+	if _, err := os.Stat(filepath.Join(layout.TierDir(cold, tenant, 0), "old.duckdb")); !os.IsNotExist(err) {
+		t.Fatal("cold dest must not keep a .duckdb copy")
+	}
+	dest := filepath.Join(layout.TierDir(cold, tenant, 0), "old.parquet")
+	if err := verifyParquetMagic(dest); err != nil {
+		t.Fatalf("cold dest parquet magic: %v", err)
+	}
+	assertParquetValue(t, dest, 3)
+	assertNoPromoteTemps(t, hot, cold, tenant)
+}
+
+func TestTenantDoesNotConvertIneligibleOversizedL0DuckDB(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.TierDir(hot, tenant, 0), "new.duckdb")
+	writeMetricsDuckDB(t, src, 3)
+	cfg := agedPromoteCfg(hot, cold, now)
+	cfg.MaxSegmentBytes = 1
+	cfg.MaxTs = func(string) (time.Time, bool) { return now.Add(-30 * time.Minute), true }
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("ineligible oversized L0 duckdb must stay on hot")
+	}
+	if _, err := os.Stat(filepath.Join(layout.TierDir(cold, tenant, 0), "new.parquet")); !os.IsNotExist(err) {
+		t.Fatal("ineligible oversized L0 duckdb must not convert onto cold")
+	}
+	if _, err := os.Stat(filepath.Join(layout.TierDir(cold, tenant, 0), "new.duckdb")); !os.IsNotExist(err) {
+		t.Fatal("ineligible oversized L0 duckdb must not land on cold")
+	}
+}
+
+func TestTenantLeavesUndersizedEligibleL0DuckDBWhenCapExceedsSize(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.TierDir(hot, tenant, 0), "small.duckdb")
+	writeMetricsDuckDB(t, src, 3)
+	cfg := agedPromoteCfg(hot, cold, now)
+	cfg.MaxSegmentBytes = 1 << 30
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("undersized eligible L0 duckdb must stay on hot")
+	}
+	if _, err := os.Stat(filepath.Join(layout.TierDir(cold, tenant, 0), "small.parquet")); !os.IsNotExist(err) {
+		t.Fatal("undersized L0 duckdb must not convert onto cold")
+	}
+}
+
+func TestTenantConvertsEligibleOversizedLogsL0DuckDB(t *testing.T) {
+	hot := t.TempDir()
+	cold := t.TempDir()
+	tenant := "user-a"
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	src := filepath.Join(layout.LogsTierDir(hot, tenant, "logs-raw", 0), "seg.duckdb")
+	writeLogsDuckDB(t, src)
+	cfg := agedPromoteCfg(hot, cold, now)
+	cfg.MaxSegmentBytes = 1
+	if _, err := Tenant(&cfg, tenant); err != nil {
+		t.Fatalf("Tenant: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatal("eligible oversized logs L0 duckdb must be unlinked after dest verifies")
+	}
+	if _, err := os.Stat(filepath.Join(layout.LogsTierDir(cold, tenant, "logs-raw", 0), "seg.duckdb")); !os.IsNotExist(err) {
+		t.Fatal("cold dest must not keep a logs .duckdb copy")
+	}
+	dest := filepath.Join(layout.LogsTierDir(cold, tenant, "logs-raw", 0), "seg.parquet")
+	if err := verifyParquetMagic(dest); err != nil {
+		t.Fatalf("cold logs dest parquet magic: %v", err)
+	}
+	assertParquetRowCount(t, dest, 1)
+}
+
 func TestTenantPromotesLogsL1DuckDBToColdParquet(t *testing.T) {
 	hot := t.TempDir()
 	cold := t.TempDir()
