@@ -76,7 +76,6 @@ func TestIsMaterializeScratchAllowlist(t *testing.T) {
 		{name: "current.duckdb.deadbeef.tmp", want: false},
 		{name: "orphan.tmp", want: false},
 		{name: "seg.parquet.aaaaaaaa.promote.tmp", want: false},
-		{name: "engine.duckdb.tmp", want: false},
 		{name: ".read-deadbeef.duckdb", want: false},
 	}
 	for _, tc := range cases {

@@ -89,9 +89,12 @@ func EngineSpill(dataDir, tenant string, now time.Time, grace time.Duration, ope
 	return removeScratch(path)
 }
 
-// Tenant runs hot-directory and engine-spill reclaim for one tenant.
+// Tenant runs hot-directory, materialization, and engine-spill reclaim for one tenant.
 func Tenant(dataDir, tenant string, now time.Time, grace time.Duration, open bool) error {
 	if err := HotDir(dataDir, tenant, now, grace); err != nil {
+		return err
+	}
+	if err := Materializations(dataDir, tenant, now, grace); err != nil {
 		return err
 	}
 	return EngineSpill(dataDir, tenant, now, grace, open)
@@ -102,5 +105,53 @@ func Tenant(dataDir, tenant string, now time.Time, grace time.Duration, open boo
 // grace. A missing or empty root is a no-op. Grace of zero is treated as two
 // minutes.
 func Materializations(dataDir, tenant string, now time.Time, grace time.Duration) error {
+	root := filepath.Join(dataDir, tenant, "materializations")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("gc: materializations: %w", err)
+	}
+	grace = applyGrace(grace)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if err := materializeNamedDir(filepath.Join(root, e.Name()), now, grace); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func materializeNamedDir(dir string, now time.Time, grace time.Duration) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("gc: materialize dir: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !layout.IsMaterializeScratch(name) {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		info, err := e.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("gc: stat: %w", err)
+		}
+		if !stale(info.ModTime(), now, grace) {
+			continue
+		}
+		if err := removeScratch(path); err != nil {
+			return err
+		}
+	}
 	return nil
 }

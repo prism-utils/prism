@@ -35,7 +35,7 @@ func IsEngineScratch(name string) bool {
 // an unfinished COPY dest. Live parquet/duckdb and unrelated temps are not
 // scratch.
 func IsMaterializeScratch(name string) bool {
-	return false
+	return strings.HasSuffix(name, ".parquet.tmp") || strings.HasSuffix(name, ".duckdb.tmp")
 }
 
 func isHotReadPin(name string) bool {

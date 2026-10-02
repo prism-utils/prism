@@ -72,18 +72,18 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 ### Slice item 4 — sidecar unlink
 
-- [ ] `layout.RemoveSidecars(segmentPath)` unlinks `MergeSkipMarker` and `MergeAttemptsMarker`; `IsNotExist` is success.
-- [ ] Call it when a **segment file** is actually unlinked: `lifecycle.removePath`, `merge.retireSources` (grace <= 0), `merge.removeIfPresent` (grace expire / compacted purge), promote source `os.Remove(f.Path)`. Do not call it when `HoldSource` keeps the file.
-- [ ] Missing sidecars are not an error. Do not glob. Do not add orphan-sidecar GC.
-- [ ] Tests: retention/removePath deletes segment **and** both sidecars; grace-expire / `removeIfPresent` deletes sidecars; a segment without sidecars still deletes; held source keeps sidecars until unlink.
+- [x] `layout.RemoveSidecars(segmentPath)` unlinks `MergeSkipMarker` and `MergeAttemptsMarker`; `IsNotExist` is success.
+- [x] Call it when a **segment file** is actually unlinked: `lifecycle.removePath`, `merge.retireSources` (grace <= 0), `merge.removeIfPresent` (grace expire / compacted purge), promote source `os.Remove(f.Path)`. Do not call it when `HoldSource` keeps the file.
+- [x] Missing sidecars are not an error. Do not glob. Do not add orphan-sidecar GC.
+- [x] Tests: retention/removePath deletes segment **and** both sidecars; grace-expire / `removeIfPresent` deletes sidecars; a segment without sidecars still deletes; held source keeps sidecars until unlink.
 
 ### Slice item 5 — materialize scratch GC
 
-- [ ] `layout.IsMaterializeScratch(name)` true only for `*.parquet.tmp` and `*.duckdb.tmp` (the `final+".tmp"` dest from materialize COPY). Live `*.parquet` / `*.duckdb`, hot snapshot tmps, `orphan.tmp`, promote temps are false.
-- [ ] `gc.Materializations(dataDir, tenant, now, grace)` walks `materializations/<name>/` only. Missing/empty root → nil. Same `stale` / 2m floor as `HotDir`.
-- [ ] `gc.Tenant` also runs `Materializations`. Fresh tmp (mtime within / equal grace) stays. Live parquet stays. Foreign `orphan.tmp` under that dir stays (not allowlisted).
-- [ ] Never glob all `*.tmp` under the tenant.
-- [ ] Tests: `TestMaterializeGCRemovesStaleDestTmp`, `TestMaterializeGCLeavesInFlightTmp`, `TestMaterializeGCLeavesLiveParquet`, `TestIsMaterializeScratchAllowlist`. Frozen clock, `os.Chtimes`, no Sleep.
+- [x] `layout.IsMaterializeScratch(name)` true only for `*.parquet.tmp` and `*.duckdb.tmp` (the `final+".tmp"` dest from materialize COPY). Live `*.parquet` / `*.duckdb`, hot snapshot tmps, `orphan.tmp`, promote temps are false.
+- [x] `gc.Materializations(dataDir, tenant, now, grace)` walks `materializations/<name>/` only. Missing/empty root → nil. Same `stale` / 2m floor as `HotDir`.
+- [x] `gc.Tenant` also runs `Materializations`. Fresh tmp (mtime within / equal grace) stays. Live parquet stays. Foreign `orphan.tmp` under that dir stays (not allowlisted).
+- [x] Never glob all `*.tmp` under the tenant.
+- [x] Tests: `TestMaterializeGCRemovesStaleDestTmp`, `TestMaterializeGCLeavesInFlightTmp`, `TestMaterializeGCLeavesLiveParquet`, `TestIsMaterializeScratchAllowlist`. Frozen clock, `os.Chtimes`, no Sleep.
 
 ### Shared
 
