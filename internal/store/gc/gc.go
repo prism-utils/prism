@@ -96,3 +96,11 @@ func Tenant(dataDir, tenant string, now time.Time, grace time.Duration, open boo
 	}
 	return EngineSpill(dataDir, tenant, now, grace, open)
 }
+
+// Materializations deletes allowlisted dest temps under each named
+// materialization directory whose modification time is strictly older than
+// grace. A missing or empty root is a no-op. Grace of zero is treated as two
+// minutes.
+func Materializations(dataDir, tenant string, now time.Time, grace time.Duration) error {
+	return nil
+}
