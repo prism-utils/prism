@@ -1,9 +1,9 @@
 # Spec: lifecycle holes — oversized L0 convert, sidecar unlink, materialize tmp GC
 
-Status: IN_REVIEW
+Status: ALL_OK
 
 - **Slug / branch:** `cursor/lifecycle-holes-b991`
-- **Owner phase:** reviewer
+- **Owner phase:** orchestrator
 - **PLAN phase(s):** store lifecycle / cold promote
 - **Worktree:** `/home/masoas/workdir/cursor-lifecycle-holes-b991/prism`
 
@@ -95,12 +95,20 @@ Implement **one slice at a time**. Each slice: `test:` commit first, then implem
 
 Definitions live in docs/REVIEW.md ("Mandatory gates"); do not restate them here.
 
-- [ ] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
-- [ ] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
-- [ ] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
-- [ ] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
-- [ ] Full docs/REVIEW.md checklist passes
+- [x] **Gate 1 — Follows the guidelines** (CONTRIBUTING.md + DESIGN.md)
+- [x] **Gate 2 — Tests cover edge cases** (TESTING.md: failure paths, boundaries, empty/oversized, cancellation, Validate rejection)
+- [x] **Gate 3 — Docs & comments match the task and the delivered code** (no drift)
+- [x] **Gate 4 — Comments are atomic** — none reference another code location (CONTRIBUTING.md §3.8)
+- [x] Full docs/REVIEW.md checklist passes
 
 ## 7. Reviewer notes
 
-_(empty until first review)_
+**Verdict: ALL_OK** (2026-10-02)
+
+- **TDD:** per-slice `test:` then `feat:` (`8fd4473`→`e4ae533`, `85e036f`→`554ddfc`, `15a2eb2`→`16d0682`). Test commits are stubs only (`RemoveSidecars`/`Materializations` return nil; `IsMaterializeScratch` returns false; `MaxSegmentBytes` field with no convert path). HEAD not behind `origin/main`.
+- **Gate 1:** existing store packages; no new component/dep; merge planner/logs pack still skip `Bytes >= MaxSegmentBytes`; no cap raise (`defaultMaxSegmentBytes` still 2147483648); no L0→L1 rename; no FlushDue split; convert uses existing `recoverOrConvert`.
+- **Gate 2:** oversized Eligible convert (metrics+logs), ineligible oversized stay, undersized with large cap stay, omitted cap (`MaxSegmentBytes=0`) stay, convert failure unpublished dest, sidecar missing/held/immediate/grace-expire, materialize stale/in-flight/equal-grace/live/foreign/missing/zero-grace/`gc.Tenant`. Frozen clocks, `t.TempDir()`, no Sleep.
+- **Gate 3:** `docs/STORE.md`, `docs/CONFIG.md` `COLD_DATA_DIR`, and `cmd/prism-store` file comment match delivered convert rule. `gc/doc.go` mentions materialize dest temps.
+- **Gate 4:** new comments describe local intent only (seal size, sidecar unlink, COPY dest allowlist); no file/package/symbol pointers.
+- **Checks (reviewer-run, not trusted from developer):** `make lint test` green (golangci-lint 0 issues; `go test -race -tags duckdb_arrow ./...` ok). `make full-tests` green (`full-tests: OK`, exit 0). Compose logged `18080/tcp: address already in use` then tore down; integration/e2e packages were cached ok — not a test failure.
+- **Item 1 risk: none.** `TestTenantNeverPromotesL0DuckDB` body is identical to `origin/main` (still omits `MaxSegmentBytes` → 0 → skip all L0 duckdb). Undersized Eligible with a real cap is `TestTenantLeavesUndersizedEligibleL0DuckDBWhenCapExceedsSize` (`1<<30`). Convert only when Eligible and `Bytes >= MaxSegmentBytes > 0`. Merge skip of `Bytes >= MaxSegmentBytes` unchanged.
