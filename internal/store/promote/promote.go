@@ -275,6 +275,9 @@ func promoteOne(c *Config, tenant string, f fileRef, now time.Time) (int64, bool
 	if err := os.Remove(f.Path); err != nil && !os.IsNotExist(err) {
 		return 0, retried, fmt.Errorf("promote: unlink source: %w", err)
 	}
+	if err := layout.RemoveSidecars(f.Path); err != nil {
+		return 0, retried, err
+	}
 	return fi.Size(), retried, nil
 }
 

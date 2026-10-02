@@ -713,7 +713,7 @@ func removePath(path string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return nil
+	return layout.RemoveSidecars(path)
 }
 
 func listTenants(dataDir string) ([]string, error) {
